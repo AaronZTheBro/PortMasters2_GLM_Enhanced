@@ -133,6 +133,7 @@ export async function PUT(req: NextRequest) {
       ...data,
       rulesVersion: rules.version,
       forecasts: rules.forecasts,
+      specialties: rules.specialties,
     });
     const key = { userId: user.id, roomId };
     const previous = await tx.gameState.findUnique({

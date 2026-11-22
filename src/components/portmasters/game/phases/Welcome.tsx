@@ -27,7 +27,15 @@ import {
   type Difficulty,
 } from "@/lib/game/difficulty";
 import { motion } from "framer-motion";
-import { expanded, RAID_TERMS } from "@/lib/game/expansion";
+import {
+  expanded,
+  raidTerms,
+  voyageMaintenance,
+  REBALANCED_RULES,
+  SPECIALTIES,
+  specialtyChoices,
+  specialtyOpens,
+} from "@/lib/game/expansion";
 import { ShipMark, ShipIcon } from "../../ShipVisualizer";
 
 // === Wave Divider ========================================================
@@ -297,15 +305,14 @@ export function Welcome({
   isHost,
   onShowTutorial,
   difficulty,
-  rulesVersion,
 }: {
   phaseSync: PhaseSync;
   members: PublicUser[];
   isHost: boolean;
   onShowTutorial: () => void;
   difficulty?: Difficulty;
-  rulesVersion?: number;
 }) {
+  const rulesVersion = REBALANCED_RULES;
   const harborIds = phaseSync.ready?.requiredUserIds ?? [];
   const canStart = harborIds.length >= 2;
   const cfg = difficultyConfig(difficulty);
@@ -337,6 +344,40 @@ export function Welcome({
         <HarborRoster members={members} ids={harborIds} />
         {isHost ? (
           <>
+            <fieldset className="grid w-full max-w-xl gap-3 text-left sm:grid-cols-2">
+              <legend className="mb-2 text-sm font-semibold">
+                Voyage specialties
+              </legend>
+              {specialtyChoices(difficulty).map((group, index) => (
+                <label key={group[0]} className="grid min-w-0 gap-1 text-sm">
+                  Opens in round {specialtyOpens(difficulty, index)}
+                  <select
+                    className="min-w-0 rounded-md border bg-background p-2"
+                    value={phaseSync.specialties[index]}
+                    onChange={(event) => {
+                      const option = group.find(
+                        (key) => key === event.target.value,
+                      );
+                      if (option)
+                        phaseSync.setSpecialtySelection(
+                          phaseSync.specialties.map((key, slot) =>
+                            slot === index ? option : key,
+                          ),
+                        );
+                    }}
+                  >
+                    {group.map((key) => (
+                      <option key={key} value={key}>
+                        {SPECIALTIES[key].name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-muted-foreground">
+                    {SPECIALTIES[phaseSync.specialties[index]].goods.join(", ")}
+                  </span>
+                </label>
+              ))}
+            </fieldset>
             <Button
               size="lg"
               className={cn(
@@ -424,7 +465,7 @@ export function Welcome({
           tone="sea"
           title="Round end costs"
           rows={[
-            `Base maintenance is ${cfg.maintenance} Gold every round`,
+            `Base maintenance is ${voyageMaintenance(difficulty, rulesVersion)} Gold every round`,
             "Wages settle at Phase 3, not on hire",
           ]}
           icon={Coins}
@@ -444,7 +485,7 @@ export function Welcome({
           rows={[
             raidCopy,
             expanded({ rulesVersion })
-              ? `A raid can take ${Math.round(RAID_TERMS[cfg.key].lossRate * 100)}% of exposed Gold`
+              ? `A raid can take ${Math.round(raidTerms(cfg.key, { rulesVersion }).lossRate * 100)}% of exposed Gold`
               : "A raid takes all Gold on hand",
             "Hire an escort for safe passage. Request Financial Aid if bills are due.",
           ]}

@@ -113,11 +113,13 @@ export function priceAwareTermContent(game: GameState, itemType: string) {
     game.difficulty,
     game.currentRound,
     game.rulesVersion,
+    game.specialties,
   );
   const openProducts = unlockedProducts(
     game.difficulty,
     game.currentRound,
     game.rulesVersion,
+    game.specialties,
   );
   if (!openResources.includes(itemType) && !openProducts.includes(itemType))
     return undefined;

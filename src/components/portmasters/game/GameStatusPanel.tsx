@@ -242,6 +242,7 @@ export function GameStatusPanel({
             game.difficulty,
             game.currentRound,
             game.rulesVersion,
+            game.specialties,
           ).map((r) => (
             <InvItem
               key={r}
@@ -261,6 +262,7 @@ export function GameStatusPanel({
             game.difficulty,
             game.currentRound,
             game.rulesVersion,
+            game.specialties,
           ).map((r) => (
             <InvItem
               key={r}

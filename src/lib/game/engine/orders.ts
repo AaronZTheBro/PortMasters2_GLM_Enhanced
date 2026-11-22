@@ -1,3 +1,10 @@
+import {
+  brokerOfferItem,
+  convergingBuyer,
+  prepareWhisperOrder,
+  productMidpoint,
+} from "./market";
+import { canProduce, isOceanCargo, unlockedProducts } from "../pools";
 // Generates and settles trade orders, mandates, and Broker favors.
 import {
   BROKERS_FAVOR_UNLOCK_LEVEL,
@@ -21,6 +28,9 @@ import {
   EFFECT,
   expanded,
   effectUses,
+  REBALANCE,
+  rebalanced,
+  forecastFor,
   isOceanMaterial,
   spendEffect,
 } from "../expansion";
@@ -63,15 +73,22 @@ export function quoteOrder(state: GameState, order: OrderCard) {
     name: string,
     rate: number,
     eligible: (item: string) => boolean,
+    effect?: string,
+    cap = Infinity,
   ) => {
-    if (order.isMandate) return;
+    if (order.isMandate || order.clearance) return;
     const units = order.resources.reduce(
       (sum, item) => sum + (eligible(item.type) ? (item.required ?? 0) : 0),
       0,
     );
     if (units === 0) return;
-    const gold = Math.floor(((reward * units) / order.totalItems) * rate);
-    bonuses.push({ name, gold });
+    const base = rebalanced(state) ? order.reward - totalVat : reward;
+    const gold = Math.min(
+      cap,
+      Math.floor(((base * units) / order.totalItems) * rate),
+    );
+    if (gold <= 0 && rebalanced(state)) return;
+    bonuses.push({ name, gold, effect });
     reward += gold;
   };
 
@@ -97,45 +114,86 @@ export function quoteOrder(state: GameState, order: OrderCard) {
       PRODUCTS_TIER2.some((good) => good === item),
     );
   }
-  if (expanded(state) && !order.isMandate && !order.isBrokerFavor) {
+  if (
+    expanded(state) &&
+    !order.isMandate &&
+    !order.isBrokerFavor &&
+    !order.clearance
+  ) {
     const addFlat = (effect: string, name: string, gold: number) => {
       if (effectUses(state, effect)) return;
       bonuses.push({ effect, name, gold });
       reward += gold;
     };
     if (state.modifierFlags.reliable_buyer && order.staple)
-      addFlat("reliable_buyer", "Reliable Buyer", EFFECT.reliableBuyer);
-    if (
-      state.modifierFlags.ceramic_commission &&
-      order.resources.some(
-        ({ type }) => type === "Celadon Ware" || type === "Lacquered Jar",
+      addFlat(
+        "reliable_buyer",
+        "Reliable Buyer",
+        rebalanced(state) ? REBALANCE.reliableBuyer : EFFECT.reliableBuyer,
+      );
+    if (rebalanced(state)) {
+      const ocean = (item: string) => isOceanCargo(item, state.rulesVersion);
+      const ceramic = (item: string) =>
+        item === "Celadon Ware" || item === "Lacquered Jar";
+      if (state.modifierFlags.ceramic_commission)
+        applyBonus(
+          "Ceramic Commission",
+          REBALANCE.ceramicRate,
+          ceramic,
+          "ceramic_commission",
+          REBALANCE.ceramicCap - effectUses(state, "ceramic_commission"),
+        );
+      if (state.modifierFlags.rare_cargo_charter)
+        applyBonus(
+          "Rare Cargo Charter",
+          REBALANCE.rareRate,
+          ocean,
+          "rare_cargo_charter",
+          REBALANCE.rareCap - effectUses(state, "rare_cargo_charter"),
+        );
+      if (hasModule(state, "ocean_exchange_ledger"))
+        applyBonus(
+          "Ocean Exchange Ledger",
+          REBALANCE.oceanRate,
+          ocean,
+          "ocean_exchange_ledger",
+          REBALANCE.oceanCap - effectUses(state, "ocean_exchange_ledger"),
+        );
+      if (hasModule(state, "convoy_pennant") && forecastFor(state))
+        addFlat("convoy_pennant", "Convoy Pennant", REBALANCE.convoyReward);
+    } else {
+      if (
+        state.modifierFlags.ceramic_commission &&
+        order.resources.some(
+          ({ type }) => type === "Celadon Ware" || type === "Lacquered Jar",
+        )
       )
-    )
-      addFlat(
-        "ceramic_commission",
-        "Ceramic Commission",
-        EFFECT.ceramicCommission,
-      );
-    if (
-      state.modifierFlags.rare_cargo_charter &&
-      order.resources.some(
-        ({ type, required }) => isOceanMaterial(type) && (required ?? 0) >= 2,
+        addFlat(
+          "ceramic_commission",
+          "Ceramic Commission",
+          EFFECT.ceramicCommission,
+        );
+      if (
+        state.modifierFlags.rare_cargo_charter &&
+        order.resources.some(
+          ({ type, required }) => isOceanMaterial(type) && (required ?? 0) >= 2,
+        )
       )
-    )
-      addFlat(
-        "rare_cargo_charter",
-        "Rare Cargo Charter",
-        EFFECT.rareCargoCharter,
-      );
-    if (
-      hasModule(state, "ocean_exchange_ledger") &&
-      order.resources.some(({ type }) => isOceanMaterial(type))
-    )
-      addFlat(
-        "ocean_exchange_ledger",
-        "Ocean Exchange Ledger",
-        EFFECT.oceanExchangeLedger,
-      );
+        addFlat(
+          "rare_cargo_charter",
+          "Rare Cargo Charter",
+          EFFECT.rareCargoCharter,
+        );
+      if (
+        hasModule(state, "ocean_exchange_ledger") &&
+        order.resources.some(({ type }) => isOceanMaterial(type))
+      )
+        addFlat(
+          "ocean_exchange_ledger",
+          "Ocean Exchange Ledger",
+          EFFECT.oceanExchangeLedger,
+        );
+    }
   }
   const commissionBase = reward;
   const commission = order.isBrokerFavor
@@ -163,6 +221,7 @@ export function completeOrder(
   orderId: number,
   logs: string[],
 ) {
+  if (rebalanced(state) && state.phase !== 2) return;
   const order = state.customerCards.find((o) => o.id === orderId);
   if (!order) return;
   if (state.completedOrders.includes(order.id)) return;
@@ -193,22 +252,44 @@ export function completeOrder(
     logs.push(`🧾 Product Sales VAT: ${totalVat} Gold`);
   }
   for (const { name, gold, effect } of bonuses) {
-    if (effect) spendEffect(state, effect);
+    if (effect)
+      spendEffect(
+        state,
+        effect,
+        rebalanced(state) &&
+          [
+            "ceramic_commission",
+            "rare_cargo_charter",
+            "ocean_exchange_ledger",
+          ].includes(effect)
+          ? gold
+          : 1,
+      );
     logs.push(`${name} added ${gold} Gold to the reward`);
   }
   const fleetDiscount = freight.steps.find(
     (step) => step.label === "Fleet of Treasures module",
   );
-  if (fleetDiscount && fleetDiscount.delta < 0) {
+  if (!rebalanced(state) && fleetDiscount && fleetDiscount.delta < 0) {
     logs.push(
       `⛵ Fleet of Treasures: Saved ${-fleetDiscount.delta} Gold on freight`,
     );
   }
   for (const { label, delta, effect } of freight.steps) {
-    if (!effect) continue;
-    spendEffect(state, effect);
+    if (!effect && !rebalanced(state)) continue;
+    if (effect && !(rebalanced(state) && effect === "convoy_pennant"))
+      spendEffect(state, effect);
     if (delta < 0) logs.push(`${label} saved ${-delta} Gold on freight`);
   }
+  if (
+    rebalanced(state) &&
+    hasModule(state, "convoy_pennant") &&
+    !order.isMandate &&
+    !order.isBrokerFavor &&
+    !order.clearance &&
+    !effectUses(state, "convoy_pennant")
+  )
+    spendEffect(state, "convoy_pennant");
   const random = voyageRandom(state, `settleOrder:${order.id}`);
   let transport = freight.final;
   if (salvageChance && random() < salvageChance) {
@@ -231,21 +312,24 @@ export function completeOrder(
   state.totalCosts += transport + audit;
   state.roundRevenue += reward;
   state.totalRevenue += reward;
-  state.score += netBeforeAudit - audit;
+  if (!order.clearance) state.score += netBeforeAudit - audit;
   state.completedOrders.push(order.id);
   state.orderCount++;
-  state.totalOrdersCompleted++;
+  if (!order.clearance) state.totalOrdersCompleted++;
   const txt = order.resources
     .map((r) => `${ICONS[r.type]}${r.type}×${r.required}`)
     .join(" + ");
   const demandPort = whisperForOrder(state, order)?.port ?? order.demandPort;
   logs.push(`📦 Completed Order at ${demandPort}: ${txt}`);
   logs.push(
-    `   💰 Reward: ${reward} Gold · ⚓ Freight: ${transport} Gold = 📊 Net Profit: ${netBeforeAudit - audit} Gold${audit > 0 ? ` after ${audit} Gold audit` : ""}`,
+    `   💰 Reward: ${reward} Gold · ⚓ Freight: ${transport} Gold = 📊 ${rebalanced(state) ? "Net Proceeds" : "Net Profit"}: ${netBeforeAudit - audit} Gold${audit > 0 ? ` after ${audit} Gold audit` : ""}`,
   );
   logs.push(`📊 Completed ${state.orderCount} transactions`);
   // Signals the server when this captain first reaches the race threshold.
-  if (state.totalOrdersCompleted === WORD_ON_THE_DOCKS_THRESHOLD) {
+  if (
+    !order.clearance &&
+    state.totalOrdersCompleted === WORD_ON_THE_DOCKS_THRESHOLD
+  ) {
     state._pendingDocksClaim = { total: state.totalOrdersCompleted };
   }
 }
@@ -322,7 +406,11 @@ export function intelPurchaseCount(state: GameState): number {
   );
 }
 
-export function purchaseIntel(state: GameState, logs: string[]) {
+export function purchaseIntel(
+  state: GameState,
+  logs: string[],
+  preferred?: string,
+) {
   if (state.phase !== 1) return;
   const count = intelPurchaseCount(state);
   if (!count) {
@@ -339,13 +427,32 @@ export function purchaseIntel(state: GameState, logs: string[]) {
   const cfg = difficultyConfig(state.difficulty);
   const random = voyageRandom(state, `whisper:${state.revealedIntel.length}`);
   state.money -= cost;
+  if (rebalanced(state)) {
+    state.roundCosts += cost;
+    state.totalCosts += cost;
+  }
   for (let i = 0; i < count; i++) {
-    const tip = revealBrokerWhisper(state, random, openPorts);
-    if (!tip) break;
-    const { item, port } = tip;
-    logs.push(
-      `🗣️ Broker's Whisper: 'Word from ${port}: High demand for ${item}!'`,
+    const tip = revealBrokerWhisper(
+      state,
+      random,
+      openPorts,
+      rebalanced(state)
+        ? i === 0
+          ? (preferred ?? brokerOfferItem(state))
+          : brokerOfferItem(state)
+        : undefined,
     );
+    if (!tip) break;
+    prepareWhisperOrder(state, tip);
+    const { item, port } = tip;
+    if (rebalanced(state))
+      logs.push(
+        `Broker guaranteed ${tip.quantity} ${item} at ${port} for ${tip.reward} Gold before costs.`,
+      );
+    else
+      logs.push(
+        `🗣️ Broker's Whisper: 'Word from ${port}: High demand for ${item}!'`,
+      );
   }
   if (
     cfg.brokerCorruption &&
@@ -380,10 +487,12 @@ export function startPhase2(
   const extraOrders = state.modifierFlags.extra_order ?? 0;
   for (let i = 0; i < extraOrders; i++) {
     const nextId = orderCount + i;
-    state.customerCards.push({
-      id: nextId,
-      ...genMixedOrder(orderRng, orderPools),
-    });
+    const scouted = state.scoutedOrders?.find(({ id }) => id === nextId);
+    state.customerCards.push(
+      rebalanced(state)
+        ? (scouted ?? convergingBuyer(state, ctx, nextId))
+        : { id: nextId, ...genMixedOrder(orderRng, orderPools) },
+    );
     logs.push("🛍️ Merchants Converge: One extra order appeared.");
   }
   // Applies Broker guarantees after the seeded draw.
@@ -403,9 +512,22 @@ export function startPhase2(
       id,
       whisperIndex: i,
       ...guaranteed,
+      ...(rebalanced(state) && intel.quantity && intel.reward !== undefined
+        ? {
+            resources: [{ type: intel.item, required: intel.quantity }],
+            totalItems: intel.quantity,
+            reward: intel.reward,
+          }
+        : {}),
       demandPort: intel.port,
     };
   }
+  const workshop = workshopBuyer(state, state.currentRound);
+  if (workshop) state.customerCards.push(workshop);
+  if (state.workshopContracts)
+    state.workshopContracts = state.workshopContracts.filter(
+      ({ round }) => round >= state.currentRound,
+    );
   // Adds the same fixed, VAT exempt mandate to every captain's board.
   const mandateIdx = mandateIndexFor(state.difficulty, state.currentRound);
   const mandate =
@@ -433,4 +555,117 @@ export function startPhase2(
       `📜 Imperial Mandate at ${mandate.port}: ${need} for ${mandate.reward} Gold. The Emperor's commission is exempt from VAT.`,
     );
   }
+}
+
+export function workshopOptions(state: GameState, round = state.currentRound) {
+  return unlockedProducts(
+    state.difficulty,
+    round,
+    state.rulesVersion,
+    state.specialties,
+  ).filter((item) =>
+    Object.entries(state.workers).some(
+      ([type, crew]) => crew.length && canProduce(type, item),
+    ),
+  );
+}
+
+export function chooseWorkshopContract(
+  state: GameState,
+  item: string,
+  quantity: number,
+  logs: string[],
+) {
+  if (
+    !rebalanced(state) ||
+    state.phase !== "worker_mgmt" ||
+    state.currentRound >= state.maxRounds ||
+    !workshopOptions(state).includes(item) ||
+    ![1, 2].includes(quantity)
+  )
+    return;
+  const round = state.currentRound + 1;
+  const previous = state.workshopContracts?.find(
+    (contract) => contract.round === round,
+  );
+  if (previous?.item === item && previous.quantity === quantity) return;
+  state.workshopContracts = [
+    ...(state.workshopContracts ?? []).filter(
+      (contract) => contract.round === state.currentRound,
+    ),
+    { round, item, quantity },
+  ];
+  const order = workshopBuyer(state, round)!;
+  logs.push(
+    `Workshop buyer booked for round ${round}. Deliver ${quantity} ${item} at ${order.demandPort} for ${order.reward} Gold before costs.`,
+  );
+}
+
+export function workshopBuyer(
+  state: GameState,
+  round: number,
+): OrderCard | undefined {
+  const contract = state.workshopContracts?.find(
+    (entry) => entry.round === round,
+  );
+  if (!rebalanced(state) || !contract || contract.round !== round) return;
+  const { item, quantity } = contract;
+  return {
+    id: 50,
+    demandPort: "Quanzhou Port",
+    resources: [{ type: item, required: quantity }],
+    reward:
+      Math.floor(productMidpoint(item, state.rulesVersion) * 0.85) * quantity,
+    totalItems: quantity,
+    isProductOrder: true,
+    workshop: true,
+  };
+}
+
+export const CLEARANCE_ID = 100;
+export function quoteClearance(
+  state: GameState,
+  item: string,
+  quantity: number,
+): OrderCard | undefined {
+  if (
+    !rebalanced(state) ||
+    state.phase !== 2 ||
+    state.completedOrders.includes(CLEARANCE_ID) ||
+    ![1, 2].includes(quantity) ||
+    (state.inventory[item] ?? 0) < quantity ||
+    !unlockedProducts(
+      state.difficulty,
+      state.currentRound,
+      state.rulesVersion,
+      state.specialties,
+    ).includes(item)
+  )
+    return;
+  return {
+    id: CLEARANCE_ID,
+    demandPort: "Clearance Buyer",
+    resources: [{ type: item, required: quantity }],
+    reward:
+      Math.floor(
+        productMidpoint(item, state.rulesVersion) * REBALANCE.clearanceRate,
+      ) * quantity,
+    totalItems: quantity,
+    isProductOrder: true,
+    clearance: true,
+  };
+}
+
+export function sellClearance(
+  state: GameState,
+  item: string,
+  quantity: number,
+  logs: string[],
+) {
+  const order = quoteClearance(state, item, quantity);
+  if (!order) return;
+  const quote = quoteOrder(state, order);
+  if (state.money + quote.reward < quote.freight.final) return;
+  state.customerCards.push(order);
+  completeOrder(state, order.id, logs);
 }

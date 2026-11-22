@@ -1,22 +1,30 @@
+import { quoteRecipe } from "./workers";
 // Seeded market draws depend only on captain, room, voyage, and unlocked
 // pools so reloads reproduce the same board. Phase 2 shares these generators.
-import {
-  COMMODITIES,
-  ICONS,
-  PRODUCT_PRICES,
-  RECIPES,
-  RESOURCE_WEIGHTS,
-} from "../constants";
+import { COMMODITIES, ICONS, RESOURCE_WEIGHTS } from "../constants";
 import { brokerWhisperCapacity, revealBrokerWhisper } from "../broker-whispers";
 import { describeForecast } from "../forecast";
-import { expanded, forecastFor, spendEffect } from "../expansion";
+import { expanded, forecastFor, rebalanced, spendEffect } from "../expansion";
 import { charterOpensOn, marketCountsFor } from "../difficulty";
-import { unlockedPorts, unlockedProducts, unlockedResources } from "../pools";
+import {
+  unlockedPorts,
+  unlockedProducts,
+  unlockedResources,
+  voyageRecipe,
+  productPriceRange,
+} from "../pools";
 import { createRng, pick, randInt, weightedPick, type Rng } from "../rng";
-import type { GameContext, GameState, OrderCard, ResourceCard } from "../types";
+import type {
+  GameContext,
+  GameState,
+  IntelItem,
+  OrderCard,
+  ResourceCard,
+} from "../types";
 import { addOwnedAmount } from "./core";
 import {
   explainCardPrice,
+  getCardFinalCost,
   portResourcePrice,
   marketResourceAdjustment,
   productPurchasePrice,
@@ -29,15 +37,27 @@ export type MarketPools = {
   products: string[];
   ports: string[];
   expanded?: boolean;
+  rulesVersion?: number;
 };
 
 export function poolsFor(state: GameState): MarketPools {
   const { difficulty, currentRound, rulesVersion } = state;
   return {
-    resources: unlockedResources(difficulty, currentRound, rulesVersion),
-    products: unlockedProducts(difficulty, currentRound, rulesVersion),
+    resources: unlockedResources(
+      difficulty,
+      currentRound,
+      rulesVersion,
+      state.specialties,
+    ),
+    products: unlockedProducts(
+      difficulty,
+      currentRound,
+      rulesVersion,
+      state.specialties,
+    ),
     ports: unlockedPorts(difficulty, currentRound),
     expanded: expanded(state),
+    rulesVersion,
   };
 }
 
@@ -103,11 +123,8 @@ export function genProductOrder(
       : pick(rng, pools.products);
   const req = quantityOverride ?? randInt(rng, 1, 3);
   const port = pick(rng, pools.ports);
-  const basePrice = randInt(
-    rng,
-    PRODUCT_PRICES[product][0],
-    PRODUCT_PRICES[product][1],
-  );
+  const [lo, hi] = productPriceRange(product, pools.rulesVersion);
+  const basePrice = randInt(rng, lo, hi);
   return {
     demandPort: port,
     resources: [{ type: product, required: req }],
@@ -130,15 +147,18 @@ export function genMixedOrder(
 function genProductPurchaseCard(
   rng: Rng,
   pools: MarketPools,
+  state: GameState,
 ): Omit<ResourceCard, "id"> {
   const product = pick(rng, pools.products);
   const qty = randInt(rng, 1, 2);
   const port = pick(rng, pools.ports);
-  const matCost = recipeMaterialCost(product);
-  const details = Object.entries(RECIPES[product].materials)
+  const matCost = recipeMaterialCost(product, state.rulesVersion);
+  const details = Object.entries(
+    voyageRecipe(product, state.rulesVersion).materials,
+  )
     .map(([item, amount]) => `${item}×${amount}`)
     .join(" + ");
-  const unitPrice = productPurchasePrice(product, matCost, rng());
+  const unitPrice = productPurchasePrice(product, matCost, rng(), state);
   return {
     port,
     resources: [
@@ -161,7 +181,8 @@ function genResourceCard(
   pools: MarketPools,
   state: GameState,
 ): Omit<ResourceCard, "id"> {
-  if (rng() < 0.3) return genProductPurchaseCard(rng, pools);
+  if (rng() < (rebalanced(state) ? 0.15 : 0.3))
+    return genProductPurchaseCard(rng, pools, state);
   const num = randInt(rng, 1, 3);
   const resources: { type: string; quantity: number; price: number }[] = [];
   const available = pools.resources.map((item): [string, number] => [
@@ -240,15 +261,19 @@ function stapleGood(state: GameState, ctx: GameContext) {
   );
 }
 
-function stapleOrder(state: GameState, ctx: GameContext): OrderCard {
-  const type = stapleGood(state, ctx);
+export function stapleOrder(state: GameState, ctx?: GameContext): OrderCard {
+  const type = rebalanced(state)
+    ? (state.resourceCards[0]?.resources[0]?.type ?? "Hemp")
+    : stapleGood(state, ctx!);
   const [, high] = COMMODITIES[type].basePrice;
   const { quantity, premium } = STAPLE_TERMS[state.difficulty];
   return {
     id: 0,
     demandPort: "Quanzhou Port",
     resources: [{ type, required: quantity }],
-    reward: high * quantity + premium,
+    reward: rebalanced(state)
+      ? stapleReward(state, type)
+      : high * quantity + premium,
     totalItems: quantity,
     isProductOrder: false,
     staple: true,
@@ -263,7 +288,12 @@ export function featuredDemand(
   if (!expanded(state) || round > state.maxRounds) return undefined;
   const forecast = forecastFor(state, round);
   if (forecast?.kind === "guild" && forecast.item) return forecast.item;
-  const pool = unlockedProducts(state.difficulty, round, state.rulesVersion);
+  const pool = unlockedProducts(
+    state.difficulty,
+    round,
+    state.rulesVersion,
+    state.specialties,
+  );
   return pick(
     createRng(
       `${ctx.roomSeed ?? ctx.seedBase}:V${state.voyageEpoch}:R${round}:demand`,
@@ -285,16 +315,24 @@ export function ordinaryOrders(state: GameState, ctx: GameContext) {
   if (expanded(state)) {
     cards[0] = stapleOrder(state, ctx);
     const item = featuredDemand(state, ctx);
-    cards[count - 1] = {
-      id: count - 1,
-      ...genProductOrder(random, pools, item),
-    };
+    cards[count - 1] = rebalanced(state)
+      ? upcomingBuyer(state, ctx, state.currentRound)!
+      : { id: count - 1, ...genProductOrder(random, pools, item) };
     if (forecastFor(state)?.kind === "guild") {
       cards[count - 2] = {
         id: count - 2,
-        ...genProductOrder(random, pools, item),
+        ...genProductOrder(
+          random,
+          pools,
+          item,
+          rebalanced(state) ? 1 : undefined,
+        ),
       };
     }
+  }
+  if (rebalanced(state)) {
+    const scout = upcomingBuyer(state, ctx, state.currentRound, true);
+    if (scout) cards[scout.id] = scout;
   }
   return { cards, random };
 }
@@ -330,7 +368,7 @@ function featuredLot(
 
 export function purchaseCard(state: GameState, cardId: number, logs: string[]) {
   const card = state.resourceCards.find((c) => c.id === cardId);
-  if (!card) return;
+  if (!card || (rebalanced(state) && state.phase !== 1)) return;
   if (state.purchasedCards.includes(card.id)) return;
   const { final: cost, steps } = explainCardPrice(state, card);
   if (state.money < cost) {
@@ -366,7 +404,15 @@ export function purchaseCard(state: GameState, cardId: number, logs: string[]) {
     logs.push(`🛒 Bought at ${card.port}: ${txt}, Total ${cost} Gold`);
   }
   for (const { label, delta, effect } of steps) {
-    if (effect) spendEffect(state, effect);
+    if (effect)
+      spendEffect(
+        state,
+        effect,
+        rebalanced(state) &&
+          ["bamboo_fair", "deep_market", "merchant_scales"].includes(effect)
+          ? -delta
+          : 1,
+      );
     if (delta < 0) logs.push(`✨ ${label} saved ${-delta} Gold`);
   }
   logs.push(`📊 Purchased ${state.purchaseCount} cargo batches`);
@@ -392,16 +438,29 @@ export function startPhase1(
     const index = Math.floor(intelRng() * allItems.length);
     state.phase2DemandTags.push(allItems.splice(index, 1)[0]);
   }
+  if (rebalanced(state))
+    state.phase2DemandTags = allItems.concat(state.phase2DemandTags);
   state.revealedIntel = [];
   // Farsight draws from this pool without consuming paid intel.
   const freeIntel = state.modifierFlags.free_intel ?? 0;
   for (let i = 0; i < freeIntel; i++) {
-    const tip = revealBrokerWhisper(state, intelRng, marketPools.ports);
-    if (!tip) break;
-    const { item, port } = tip;
-    logs.push(
-      `🔮 Farsight: 'Word from ${port}: High demand for ${item}!' (free)`,
+    const tip = revealBrokerWhisper(
+      state,
+      intelRng,
+      marketPools.ports,
+      brokerOfferItem(state),
     );
+    if (!tip) break;
+    prepareWhisperOrder(state, tip);
+    const { item, port } = tip;
+    if (rebalanced(state))
+      logs.push(
+        `Farsight guaranteed ${tip.quantity} ${item} at ${port} for ${tip.reward} Gold before costs.`,
+      );
+    else
+      logs.push(
+        `🔮 Farsight: 'Word from ${port}: High demand for ${item}!' (free)`,
+      );
   }
   logs.push(
     `\n⚓=== Round ${state.currentRound} · Phase 1: Port Merchant Exchange ===`,
@@ -420,7 +479,9 @@ export function startPhase1(
   // Announces a charter only on its opening round.
   if (charterOpensOn(state.difficulty, state.currentRound)) {
     logs.push(
-      `🗺️ The Silk Road Charter opens! The harbor grows busier: ${tierPurchaseCount} cargo lots and as many buyers from this voyage on.`,
+      rebalanced(state)
+        ? `🗺️ The Silk Road Charter opens. The harbor now lists ${tierPurchaseCount} cargo lots and ${tierPurchaseCount} ordinary buyers before bonuses.`
+        : `🗺️ The Silk Road Charter opens! The harbor grows busier: ${tierPurchaseCount} cargo lots and as many buyers from this voyage on.`,
     );
   }
   // Tidewatch adds one card without repeating its activation message.
@@ -429,6 +490,20 @@ export function startPhase1(
     state.modifierFlags.coastal_forecast && expanded(state)
       ? ordinaryOrders(state, ctx).cards.at(-1)
       : undefined;
+  if (rebalanced(state)) {
+    state.scoutedOrder = undefined;
+    const orders = ordinaryOrders(state, ctx).cards;
+    const reports = state.modifierFlags.coastal_forecast
+      ? [orders.at(-1)!, upcomingBuyer(state, ctx, state.currentRound, true)!]
+      : [];
+    if (state.modifierFlags.extra_order)
+      reports.push(convergingBuyer(state, ctx, orders.length));
+    state.scoutedOrders = reports;
+    for (const order of reports)
+      logs.push(
+        `Scouted buyer at ${order.demandPort}: ${order.resources.map(({ type, required }) => `${required} ${type}`).join(", ")} for ${order.reward} Gold before costs.`,
+      );
+  }
   if (state.scoutedOrder)
     logs.push(
       `Coastal Forecast spotted an order at ${state.scoutedOrder.demandPort}.`,
@@ -443,7 +518,7 @@ export function startPhase1(
   if (expanded(state))
     state.resourceCards[0] = featuredLot(
       state,
-      stapleGood(state, ctx),
+      rebalanced(state) ? "Hemp" : stapleGood(state, ctx),
       0,
       true,
     );
@@ -453,7 +528,7 @@ export function startPhase1(
     marketPools.resources.includes(forecast.item)
   ) {
     state.resourceCards[1] = featuredLot(state, forecast.item, 1);
-    logs.push(describeForecast(forecast).detail);
+    logs.push(describeForecast(forecast, state).detail);
   }
 }
 
@@ -461,4 +536,164 @@ export function completePhase1(state: GameState, logs: string[]) {
   if (state.purchaseCount === 0) logs.push("⏭️ Purchasing skipped");
   else logs.push(`✅ Purchasing ended, bought ${state.purchaseCount} batches`);
   state.phase = "barter";
+}
+
+export function productMidpoint(product: string, version?: number) {
+  const [lo, hi] = productPriceRange(product, version);
+  return (lo + hi) / 2;
+}
+
+export function upcomingBuyer(
+  state: GameState,
+  ctx: GameContext,
+  round: number,
+  additional = false,
+): OrderCard | undefined {
+  const item = featuredDemand(state, ctx, round);
+  if (!rebalanced(state) || !item) return;
+  const rng = createRng(
+    `${ctx.roomSeed ?? ctx.seedBase}:V${state.voyageEpoch}:R${round}:buyer:${additional}`,
+  );
+  const pool = unlockedProducts(
+    state.difficulty,
+    round,
+    state.rulesVersion,
+    state.specialties,
+  );
+  const ports = unlockedPorts(state.difficulty, round);
+  const count = marketCountsFor(state.difficulty, round).order;
+  const featuredCount = forecastFor(state, round)?.kind === "guild" ? 2 : 1;
+  const product = additional
+    ? pick(
+        rng,
+        pool.filter((candidate) => candidate !== item),
+      )
+    : item;
+  return {
+    id: additional ? count - featuredCount - 1 : count - 1,
+    ...genProductOrder(
+      rng,
+      {
+        resources: [],
+        products: pool,
+        ports,
+        expanded: true,
+        rulesVersion: state.rulesVersion,
+      },
+      product,
+      additional ? randInt(rng, 1, 2) : 1,
+    ),
+  };
+}
+
+export function convergingBuyer(
+  state: GameState,
+  ctx: GameContext,
+  id: number,
+): OrderCard {
+  const rng = createRng(
+    `${ctx.seedBase}:V${state.voyageEpoch}:R${state.currentRound}:converge`,
+  );
+  const pools = poolsFor(state);
+  return {
+    id,
+    ...genProductOrder(
+      rng,
+      pools,
+      pools.products.reduce((best, item) =>
+        (state.inventory[item] ?? 0) > (state.inventory[best] ?? 0)
+          ? item
+          : best,
+      ),
+      1,
+    ),
+  };
+}
+
+export const WORKSHOP_SUPPLY_ID = 100;
+export const STAPLE_CHOICES = ["Hemp", "Silk", "Tea"] as const;
+
+export function stapleReward(state: GameState, item: string) {
+  const { quantity, premium } = STAPLE_TERMS[state.difficulty];
+  return (COMMODITIES[item].basePrice[0] + 2) * quantity + premium + 9;
+}
+
+export function chooseStaple(state: GameState, item: string, logs: string[]) {
+  if (
+    !rebalanced(state) ||
+    state.phase !== 1 ||
+    state.purchasedCards.includes(0) ||
+    !STAPLE_CHOICES.some((choice) => choice === item)
+  )
+    return;
+  state.resourceCards[0] = featuredLot(state, item, 0, true);
+  logs.push(`Staple contract selected for ${item}.`);
+}
+
+export function quoteWorkshopSupply(
+  state: GameState,
+  product: string,
+): ResourceCard | undefined {
+  if (
+    !rebalanced(state) ||
+    state.phase !== 1 ||
+    state.currentRound >= state.maxRounds ||
+    state.purchasedCards.includes(WORKSHOP_SUPPLY_ID) ||
+    !poolsFor(state).products.includes(product)
+  )
+    return;
+  const { inputs } = quoteRecipe(state, product);
+  const resources = Object.entries(inputs).flatMap(([type, amount]) => {
+    const quantity = Math.max(0, amount - (state.inventory[type] ?? 0));
+    const [lo, hi] = COMMODITIES[type].basePrice;
+    return quantity
+      ? [{ type, quantity, price: Math.ceil((lo + hi) / 2) }]
+      : [];
+  });
+  if (!resources.length) return;
+  return {
+    id: WORKSHOP_SUPPLY_ID,
+    port: "Workshop Supplier",
+    workshopSupply: true,
+    resources,
+    totalCost: resources.reduce(
+      (sum, { price, quantity }) => sum + price * quantity,
+      0,
+    ),
+    isProductCard: false,
+  };
+}
+
+export function buyWorkshopSupply(
+  state: GameState,
+  product: string,
+  logs: string[],
+) {
+  const card = quoteWorkshopSupply(state, product);
+  if (!card || getCardFinalCost(state, card) > state.money) return;
+  state.resourceCards.push(card);
+  purchaseCard(state, card.id, logs);
+}
+
+export function brokerOfferItem(state: GameState) {
+  if (!rebalanced(state)) return undefined;
+  return state.phase2DemandTags.reduce<string | undefined>(
+    (best, item) =>
+      !best || (state.inventory[item] ?? 0) > (state.inventory[best] ?? 0)
+        ? item
+        : best,
+    undefined,
+  );
+}
+
+export function prepareWhisperOrder(state: GameState, intel: IntelItem) {
+  if (!rebalanced(state)) return;
+  const rng = createRng(
+    `${state.seatSeed}:V${state.voyageEpoch}:R${state.currentRound}:whisperOrder:${intel.item}:${intel.port}`,
+  );
+  const pools = poolsFor(state);
+  const order = pools.resources.includes(intel.item)
+    ? genRawOrder(rng, pools, intel.item, intel.quantity, intel.port)
+    : genProductOrder(rng, pools, intel.item, intel.quantity);
+  intel.reward = order.reward;
 }

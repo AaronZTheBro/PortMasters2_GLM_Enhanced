@@ -1,5 +1,7 @@
 "use client";
 
+import { VoyageGlossary } from "./Term";
+
 import { ShipIcon } from "./ShipVisualizer";
 import { quoteDues } from "@/lib/game/engine";
 import {
@@ -1426,7 +1428,7 @@ export function GameRoom({
     </Tabs>
   );
 
-  return (
+  const view = (
     <div className="pm-canvas flex h-dvh min-h-0 w-full flex-col overflow-hidden">
       <header className="z-30 shrink-0 px-2 py-2 sm:px-4 sm:py-3">
         <div className="pm-glass-strong mx-auto flex max-w-[1440px] items-center justify-between gap-2 rounded-2xl px-2.5 py-2 sm:px-4">
@@ -1727,24 +1729,27 @@ export function GameRoom({
         onOpenChange={setGuideOpen}
         difficulty={state.game.difficulty}
         rulesVersion={state.game.rulesVersion}
+        specialties={state.game.specialties}
       />
       <TipsModal
         open={tipsOpen}
         onOpenChange={setTipsOpen}
         difficulty={state.game.difficulty}
         rulesVersion={state.game.rulesVersion}
+        specialties={state.game.specialties}
       />
       <RumorBoardModal
         open={rumorOpen}
         onOpenChange={setRumorOpen}
         game={state.game}
-        onBuy={() => act((g, l) => purchaseIntel(g, l))}
+        onBuy={(item) => act((g, l) => purchaseIntel(g, l, item))}
       />
       <TutorialModal
         open={tutOpen}
         onOpenChange={handleTutorialOpenChange}
         difficulty={state.game.difficulty}
         rulesVersion={state.game.rulesVersion}
+        specialties={state.game.specialties}
       />
       <RestartConfirmModal
         open={restartConfirmOpen}
@@ -1773,6 +1778,7 @@ export function GameRoom({
         isMe={selectedPlayerId === me.id}
         difficulty={state.game.difficulty}
         rulesVersion={state.game.rulesVersion}
+        specialties={state.game.specialties}
         colorFor={colorFor}
         detail={
           selectedPlayerId ? playerDetail.detail[selectedPlayerId] : undefined
@@ -1806,6 +1812,9 @@ export function GameRoom({
         </motion.button>
       )}
     </div>
+  );
+  return (
+    <VoyageGlossary value={state.game.rulesVersion}>{view}</VoyageGlossary>
   );
 }
 

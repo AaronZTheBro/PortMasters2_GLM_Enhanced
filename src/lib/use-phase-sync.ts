@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  voyageMaintenance,
+  voyageSpecialties,
+  type Specialty,
+} from "./game/expansion";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import type { GameContext, GameState } from "@/lib/game/types";
@@ -95,6 +101,11 @@ export function usePhaseSync(
             if (data.rules) {
               state.rulesVersion = data.rules.version;
               state.forecasts = data.rules.forecasts;
+              state.specialties = data.rules.specialties;
+              state.fixedCost = voyageMaintenance(
+                state.difficulty,
+                data.rules.version,
+              );
             }
             state.seatSeed = ctx.seedBase;
             startBoonDrafting(state, logs);
@@ -275,10 +286,15 @@ export function usePhaseSync(
     }
   }, [act, flush, getGame, roomId, socket]);
 
+  const [specialtySelection, setSpecialtySelection] = useState<Specialty[]>([]);
+  const specialties = voyageSpecialties(game.difficulty, specialtySelection);
   const startGame = useCallback(() => {
     setStartError(null);
-    socket?.emit("room:start", { roomId });
-  }, [roomId, socket]);
+    socket?.emit("room:start", {
+      roomId,
+      specialties: voyageSpecialties(game.difficulty, specialtySelection),
+    });
+  }, [game.difficulty, roomId, socket, specialtySelection]);
 
   const restartVoyage = useCallback(() => {
     socket?.emit("room:restart", { roomId });
@@ -298,6 +314,8 @@ export function usePhaseSync(
     markReady,
     cancelReady,
     startGame,
+    specialties,
+    setSpecialtySelection,
     restartVoyage,
     startError,
   };

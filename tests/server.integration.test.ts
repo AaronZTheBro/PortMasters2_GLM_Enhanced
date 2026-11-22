@@ -6,7 +6,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { io, type Socket } from "socket.io-client";
-import { EXPANDED_RULES, type VoyageRules } from "../src/lib/game/expansion";
+import { REBALANCED_RULES, type VoyageRules } from "../src/lib/game/expansion";
 import { WORD_ON_THE_DOCKS_THRESHOLD } from "../src/lib/game/constants";
 import { createInitialGameState } from "../src/lib/game/types";
 import type { VoyageCompleteEvent } from "../src/lib/realtime";
@@ -252,7 +252,11 @@ test(
 
       const created = await request("/api/rooms", {
         cookie: alphaCookie,
-        body: { name: "Integration harbor", isPublic: true },
+        body: {
+          name: "Integration harbor",
+          isPublic: true,
+          difficulty: "open_waters",
+        },
       });
       const room = created.data.room as { id: string; code: string };
 
@@ -321,14 +325,18 @@ test(
         "room:started",
         ({ roomId }) => roomId === room.id,
       );
-      alphaSocket.emit("room:start", { roomId: room.id });
+      alphaSocket.emit("room:start", {
+        roomId: room.id,
+        specialties: ["wax", "lacquer"],
+      });
       const [start, otherStart] = await Promise.all([
         alphaStarted,
         betaStarted,
       ]);
       assert.deepEqual(start, otherStart);
-      assert.equal(start.rules.version, EXPANDED_RULES);
+      assert.equal(start.rules.version, REBALANCED_RULES);
       assert.ok(start.rules.forecasts.length > 0);
+      assert.deepEqual(start.rules.specialties, ["wax", "lacquer"]);
       const recoverySocket = await connectCaptain(betaRegistration.data.token);
       sockets.push(recoverySocket);
       const checkpoint = waitForEvent<Started & { phase: string }>(

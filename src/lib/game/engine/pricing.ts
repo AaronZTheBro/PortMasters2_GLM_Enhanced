@@ -3,17 +3,23 @@ import {
   BOONS,
   BROKERS_FAVOR_PAYOUT_CAP,
   COMMODITIES,
-  PRODUCT_PRICES,
-  RECIPES,
   RESOURCES,
   WAGES,
   WORKER_TYPES,
 } from "../constants";
-import { isSilkProduct, unlockedPorts } from "../pools";
+import {
+  isSilkProduct,
+  unlockedPorts,
+  voyageRecipe,
+  productPriceRange,
+} from "../pools";
 import type { GameState, OrderCard, ResourceCard, Worker } from "../types";
 import { hasModule, maintenanceSurcharge } from "./core";
 import {
   EFFECT,
+  REBALANCE,
+  rebalanced,
+  type VoyageRules,
   expanded,
   effectUses,
   forecastFor,
@@ -44,7 +50,7 @@ export function explainTransportCost(
   state: GameState,
   cargo: Pick<
     OrderCard,
-    "totalItems" | "resources" | "isMandate" | "isBrokerFavor"
+    "totalItems" | "resources" | "isMandate" | "isBrokerFavor" | "clearance"
   >,
 ): PriceBreakdown {
   const { totalItems } = cargo;
@@ -65,10 +71,11 @@ export function explainTransportCost(
       Math.max(5, cost - shipDiscount),
     );
   }
-  if (boonDiscount > 0) {
+  const ordinary = !cargo.isMandate && !cargo.isBrokerFavor && !cargo.clearance;
+  if (boonDiscount > 0 && (!rebalanced(state) || ordinary)) {
     setCost(
       boonNameForModifierKey("transport_flat_discount"),
-      Math.max(5, cost - boonDiscount),
+      Math.max(rebalanced(state) ? 0 : 5, cost - boonDiscount),
     );
   }
   if (hasModule(state, "bulk_hauler")) {
@@ -112,7 +119,21 @@ export function explainTransportCost(
       setCost("Fleet of Treasures module", Math.max(0, cost - eligible * 3));
     }
   }
-  if (expanded(state) && !cargo.isMandate && !cargo.isBrokerFavor) {
+  if (rebalanced(state) && ordinary) {
+    if (hasModule(state, "cargo_net"))
+      setCost("Cargo Net", Math.max(0, cost - REBALANCE.cargoNet));
+    if (
+      hasModule(state, "convoy_pennant") &&
+      !effectUses(state, "convoy_pennant")
+    )
+      cost = applyDiscount(
+        steps,
+        cost,
+        "Convoy Pennant",
+        REBALANCE.convoyFreight,
+        "convoy_pennant",
+      );
+  } else if (!rebalanced(state) && expanded(state) && ordinary) {
     const rawCount = new Set(
       cargo.resources
         .filter(({ type }) => type in COMMODITIES)
@@ -148,8 +169,11 @@ export function explainTransportCost(
   return { base, steps, final: cost };
 }
 
-export function recipeMaterialCost(product: string): number {
-  return Object.entries(RECIPES[product].materials).reduce(
+export function recipeMaterialCost(
+  product: string,
+  version?: VoyageRules["version"],
+): number {
+  return Object.entries(voyageRecipe(product, version).materials).reduce(
     (total, [item, amount]) => {
       const [min, max] = COMMODITIES[item].basePrice;
       return total + ((min + max) / 2) * amount;
@@ -162,10 +186,13 @@ export function productPurchasePrice(
   product: string,
   materialCost: number,
   roll: number,
+  state: { rulesVersion?: number } = {},
 ) {
-  const [min, max] = PRODUCT_PRICES[product];
+  const [min, max] = productPriceRange(product, state.rulesVersion);
   const price = Math.floor(materialCost * (1.4 + roll * 0.4));
-  return Math.max(min, Math.min(price, max));
+  return rebalanced(state)
+    ? Math.max(price, Math.ceil((min + max) * 0.6))
+    : Math.max(min, Math.min(price, max));
 }
 
 export function explainVAT(
@@ -173,8 +200,8 @@ export function explainVAT(
   product: string,
   sellingPrice: number,
 ) {
-  const recipe = RECIPES[product];
-  const matCost = recipeMaterialCost(product);
+  const recipe = voyageRecipe(product, state.rulesVersion);
+  const matCost = recipeMaterialCost(product, state.rulesVersion);
   const workerCost = WAGES[recipe.worker_type];
   const margin = sellingPrice - matCost - workerCost;
   const base = Math.floor(Math.max(0, margin) * 0.05);
@@ -306,7 +333,47 @@ export function explainCardPrice(
     steps.push({ label: "Floor at 0 Gold", delta: -cost });
     cost = 0;
   }
-  if (expanded(state)) {
+  if (rebalanced(state)) {
+    const units = (matches: (item: string) => boolean) =>
+      card.resources.reduce(
+        (sum, { type, quantity }) =>
+          sum + (matches(type) ? (quantity ?? 0) : 0),
+        0,
+      );
+    const capped = (
+      key: string,
+      label: string,
+      discount: number,
+      limit: number,
+    ) => {
+      const available = Math.min(discount, limit - effectUses(state, key));
+      if (available > 0)
+        cost = applyDiscount(steps, cost, label, available, key);
+    };
+    if (state.modifierFlags.bamboo_fair)
+      capped(
+        "bamboo_fair",
+        "Bamboo Fair",
+        units((item) => item === "Bamboo") * REBALANCE.bambooUnit,
+        REBALANCE.bambooCap,
+      );
+    if (state.modifierFlags.deep_market)
+      capped(
+        "deep_market",
+        "Deep Market",
+        units(isOceanMaterial) * REBALANCE.deepUnit,
+        REBALANCE.deepCap,
+      );
+    if (hasModule(state, "merchant_scales") && card.port)
+      capped(
+        "merchant_scales",
+        "Merchant Scales",
+        units(
+          (item) => COMMODITIES[item]?.ports.includes(card.port!) ?? false,
+        ) * REBALANCE.scalesUnit,
+        REBALANCE.scalesCap,
+      );
+  } else if (expanded(state)) {
     if (
       state.modifierFlags.bamboo_fair &&
       !effectUses(state, "bamboo_fair") &&
@@ -373,7 +440,7 @@ export function marketResourceAdjustment(state: GameState, item: string) {
   const forecast = forecastFor(state);
   const change =
     forecast?.kind === "market" && forecast.item === item
-      ? -EFFECT.marketDay
+      ? -(rebalanced(state) ? REBALANCE.marketDay : EFFECT.marketDay)
       : 0;
   return Math.max(-0.15, Math.min(0.15, pulse + change));
 }
@@ -406,10 +473,10 @@ export function explainExpectedPrice(
       }),
     );
   } else {
-    const materialCost = recipeMaterialCost(itemType);
+    const materialCost = recipeMaterialCost(itemType, state.rulesVersion);
     lows = [
       explainCardPrice(state, {
-        totalCost: productPurchasePrice(itemType, materialCost, 0),
+        totalCost: productPurchasePrice(itemType, materialCost, 0, state),
         resources,
       }),
     ];
@@ -419,6 +486,7 @@ export function explainExpectedPrice(
           itemType,
           materialCost,
           1 - Number.EPSILON,
+          state,
         ),
         resources,
       }),
@@ -474,8 +542,13 @@ export function quoteWages(state: GameState) {
     for (const worker of crew) if (worker.task) recipes.add(worker.task);
   }
   const discount =
-    expanded(state) && hasModule(state, "wage_ledger") && recipes.size >= 2
-      ? Math.min(base, EFFECT.wageLedger)
+    expanded(state) &&
+    hasModule(state, "wage_ledger") &&
+    recipes.size >= (rebalanced(state) ? 1 : 2)
+      ? Math.min(
+          base,
+          rebalanced(state) ? REBALANCE.wageLedger : EFFECT.wageLedger,
+        )
       : 0;
   return { base, discount, due: base - discount };
 }

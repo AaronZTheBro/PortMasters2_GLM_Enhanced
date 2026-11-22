@@ -7,7 +7,7 @@ import {
   WORKER_TYPES,
   workerType,
 } from "./constants";
-import { canProduce } from "./pools";
+import { canProduce, voyageBoon, voyageModule, voyageRecipe } from "./pools";
 
 export const GLOSSARY: Record<string, string> = {
   // Core stats
@@ -62,4 +62,19 @@ for (const worker of WORKER_TYPES) {
     .join(", ");
   GLOSSARY[worker.label] =
     `Can make ${recipes} when the recipes are available. The base wage is ${worker.wage} Gold per round, including idle rounds.`;
+}
+
+export function glossaryEntry(term: string, rulesVersion?: number) {
+  if (RECIPES[term]) {
+    const recipe = voyageRecipe(term, rulesVersion);
+    const inputs = Object.entries(recipe.materials)
+      .map(([name, qty]) => `${qty} ${name}`)
+      .join(" and ");
+    return `A finished good made by a ${workerType(recipe.worker_type)!.label}. The base recipe uses ${inputs} and completes at settlement.`;
+  }
+  const boon = BOONS.find(({ name }) => name === term);
+  if (boon) return voyageBoon(boon, rulesVersion).desc;
+  const shipModule = MODULES.find(({ name }) => name === term);
+  if (shipModule) return voyageModule(shipModule, rulesVersion).desc;
+  return GLOSSARY[term];
 }

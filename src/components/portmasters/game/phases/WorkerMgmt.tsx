@@ -2,6 +2,14 @@
 
 import { ShipIcon } from "../../ShipVisualizer";
 import { useState } from "react";
+import { rebalanced } from "@/lib/game/expansion";
+import {
+  chooseWorkshopContract,
+  quoteOrder,
+  workshopBuyer,
+  workshopOptions,
+} from "@/lib/game/engine/orders";
+import { quoteDues } from "@/lib/game/engine/pricing";
 import { Button } from "@/components/ui/button";
 import { WAGES } from "@/lib/game/constants";
 import {
@@ -218,7 +226,7 @@ function WorkerList({
               )}
               onClick={() => act((g, l) => assignTask(g, type, t, l))}
             >
-              <Hammer className="h-3 w-3" />
+              <ItemIcon item={t} className="size-4" />
               {t}
               <span className="opacity-70 inline-flex items-center gap-0.5">
                 {materials.map(([m, a]) => {
@@ -233,7 +241,8 @@ function WorkerList({
                       )}
                       style={enough ? { color: resolveColor(m) } : undefined}
                     >
-                      <ItemIcon item={m} className="h-2.5 w-2.5" />×{a}
+                      <ItemIcon item={m} className="h-2.5 w-2.5" />
+                      {rebalanced(game) ? `${m} ${have}/${a}` : `×${a}`}
                     </span>
                   );
                 })}
@@ -306,6 +315,7 @@ export function WorkerMgmt({
     game.difficulty,
     game.currentRound,
     game.rulesVersion,
+    game.specialties,
   );
   const roster = unlockedWorkerTypes(game.difficulty, game.currentRound).map(
     (w) => {
@@ -321,10 +331,46 @@ export function WorkerMgmt({
     },
   );
   const totalWages = quoteWages(game).due;
+  const due = quoteDues(game);
+  const updated = rebalanced(game);
+  const finalRound = updated && game.currentRound >= game.maxRounds;
+  const workshops = updated && !finalRound ? workshopOptions(game) : [];
+  const [workshopItem, setWorkshopItem] = useState("");
+  const [workshopQuantity, setWorkshopQuantity] = useState(1);
+  const existing = workshopBuyer(game, game.currentRound + 1);
+  const selected = workshops.includes(workshopItem)
+    ? workshopItem
+    : (existing?.resources[0]?.type ?? workshops[0]);
+  const projectedContract = selected
+    ? workshopBuyer(
+        {
+          ...game,
+          workshopContracts: [
+            {
+              round: game.currentRound + 1,
+              item: selected,
+              quantity: workshopQuantity,
+            },
+          ],
+        },
+        game.currentRound + 1,
+      )
+    : undefined;
+  const projectedQuote = projectedContract
+    ? quoteOrder(
+        {
+          ...game,
+          modifierFlags: {},
+          effectUses: {},
+          currentRound: game.currentRound + 1,
+        },
+        projectedContract,
+      )
+    : undefined;
   const nW = roster.reduce((sum, r) => sum + r.list.length, 0);
 
   // Projected balance & bankruptcy warning
-  const projectedBalance = game.money - totalWages;
+  const projectedBalance = game.money - (updated ? due.total : totalWages);
   const bankrupt = projectedBalance < 0;
 
   // Production preview: items currently being crafted (one entry per
@@ -350,6 +396,7 @@ export function WorkerMgmt({
     game.difficulty,
     game.currentRound,
     game.rulesVersion,
+    game.specialties,
   );
 
   const [showPreview, setShowPreview] = useState(true);
@@ -459,6 +506,83 @@ export function WorkerMgmt({
           </span>
         </div>
       </div>
+
+      {updated && (
+        <section className="mb-4 grid gap-2 rounded-xl border bg-card p-4 text-sm">
+          <h3 className="font-semibold">Workshop contract</h3>
+          <p className="text-muted-foreground">
+            This settlement includes {due.wages.due} Gold in wages and{" "}
+            {due.maintenance} Gold in maintenance.
+          </p>
+          {finalRound ? (
+            <p>
+              Buyers leave before the final settlement. Production is closed for
+              this voyage.
+            </p>
+          ) : workshops.length ? (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="grid min-w-0 gap-1">
+                  Finished good
+                  <select
+                    className="min-w-0 rounded-md border bg-background p-2"
+                    value={selected}
+                    onChange={(event) => setWorkshopItem(event.target.value)}
+                  >
+                    {workshops.map((item) => (
+                      <option key={item}>{item}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  Contract quantity
+                  <select
+                    className="rounded-md border bg-background p-2"
+                    value={workshopQuantity}
+                    onChange={(event) =>
+                      setWorkshopQuantity(Number(event.target.value))
+                    }
+                  >
+                    <option value={1}>One unit</option>
+                    <option value={2}>Two units</option>
+                  </select>
+                </label>
+              </div>
+              {projectedQuote && (
+                <p>
+                  Estimated proceeds next round at Quanzhou Port are{" "}
+                  {projectedQuote.reward - projectedQuote.freight.final} Gold
+                  after VAT and freight, before any new Boon.
+                </p>
+              )}
+              {existing && (
+                <p role="status">
+                  Booked for round {game.currentRound + 1}. Deliver{" "}
+                  {existing.resources[0].required} {existing.resources[0].type}.
+                </p>
+              )}
+              <Button
+                size="sm"
+                className="justify-self-start"
+                onClick={() =>
+                  act((g, logs) =>
+                    chooseWorkshopContract(g, selected, workshopQuantity, logs),
+                  )
+                }
+              >
+                {existing
+                  ? "Update workshop contract"
+                  : "Book workshop contract"}
+              </Button>
+            </>
+          ) : (
+            <p>
+              Hire an artisan to choose a buyer for one of their recipes next
+              round.
+            </p>
+          )}
+        </section>
+      )}
 
       {/* === Inventory grid with active production indicators ========= */}
       <div className="rounded-xl border border-teal-500/15 bg-teal-500/[0.03] p-4 mb-4">
@@ -646,7 +770,7 @@ export function WorkerMgmt({
           >
             <span className="flex items-center gap-1.5">
               <Coins className="h-3.5 w-3.5" />
-              Projected balance after wages
+              Projected balance after {updated ? "settlement bills" : "wages"}
             </span>
             <b
               className={cn(
@@ -720,6 +844,9 @@ export function WorkerMgmt({
                 artisanTint(r.id),
                 "pm-artisan-chip rounded-lg border font-medium gap-1.5",
               )}
+              disabled={
+                finalRound || (updated && game.money < due.total + r.cost)
+              }
               onClick={() => act((g, l) => hireWorker(g, r.id, l))}
             >
               <span className="text-sm">{r.icon}</span>
@@ -747,7 +874,7 @@ export function WorkerMgmt({
               icon={r.icon}
               list={r.list}
               name={r.label}
-              tasks={r.tasks}
+              tasks={finalRound ? [] : r.tasks}
               act={act}
               game={game}
               resolveColor={resolveColor}

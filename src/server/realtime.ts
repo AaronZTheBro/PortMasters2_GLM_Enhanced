@@ -44,8 +44,12 @@ import {
 } from "../lib/game/convoy";
 import { computeBackingResolution } from "../lib/game/backing";
 import { computeHarborPulse } from "../lib/game/harborPulse";
-import { EXPANDED_RULES, type VoyageRules } from "../lib/game/expansion";
-import { buildForecasts, readVoyageRules } from "../lib/game/forecast";
+import {
+  REBALANCED_RULES,
+  expanded,
+  type VoyageRules,
+} from "../lib/game/expansion";
+import { buildVoyageRules, readVoyageRules } from "../lib/game/forecast";
 import { unlockedResources } from "../lib/game/pools";
 import type { GameState } from "../lib/game/types";
 import type { BarterUpdate } from "../lib/game/barter-ledger";
@@ -375,8 +379,13 @@ export function attachRealtime(httpServer: HttpServer): Server {
       cp.phase === "5"
         ? computeHarborPulse(
             roomPulseTallies.get(roomId)?.get(cp.round - 1),
-            cp.rules.version === EXPANDED_RULES
-              ? unlockedResources(cp.difficulty, cp.round - 1, cp.rules.version)
+            expanded({ rulesVersion: cp.rules.version })
+              ? unlockedResources(
+                  cp.difficulty,
+                  cp.round - 1,
+                  cp.rules.version,
+                  cp.rules.specialties,
+                )
               : undefined,
           )
         : undefined;
@@ -2429,7 +2438,8 @@ export function attachRealtime(httpServer: HttpServer): Server {
     // Starting the voyage
     // The host starts a room with at least two captains. Each client begins
     // Boon drafting from the room:started event.
-    socket.on("room:start", async (payload: { roomId?: string }) => {
+    type StartRoom = { roomId?: string; specialties?: unknown };
+    socket.on("room:start", async (payload: StartRoom) => {
       const s = requireAuth();
       if (!s) return;
       const roomId = payload?.roomId ?? s.roomId;
@@ -2472,12 +2482,12 @@ export function attachRealtime(httpServer: HttpServer): Server {
       if (startingRooms.has(roomId)) return;
       startingRooms.add(roomId);
       try {
-        const forecasts = buildForecasts(
+        const rules = buildVoyageRules(
           roomId,
           room.voyageEpoch,
           room.difficulty,
+          payload?.specialties,
         );
-        const rules = { version: EXPANDED_RULES, forecasts };
         await db.room.update({
           where: { id: roomId },
           data: {
@@ -2488,7 +2498,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
             phasePulse: "{}",
             voyageResult: "",
             rulesVersion: rules.version,
-            forecastPlan: JSON.stringify(forecasts),
+            forecastPlan: JSON.stringify(rules),
             tidewatchSurge: false,
             docksWinnerId: null,
           },
@@ -2559,7 +2569,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
               phasePulse: "{}",
               barterLedger: "{}",
               voyageResult: null,
-              rulesVersion: EXPANDED_RULES,
+              rulesVersion: REBALANCED_RULES,
               forecastPlan: "[]",
               tidewatchSurge: false,
               docksWinnerId: null,

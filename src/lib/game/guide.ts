@@ -1,8 +1,11 @@
 import {
   CLASSIC_RULES,
-  EXPANDED_RULES,
+  expanded,
+  rebalanced,
+  raidTerms,
+  voyageMaintenance,
+  type Specialty,
   FORECAST_WINDOWS,
-  RAID_TERMS,
 } from "./expansion";
 // =====================================================================
 // PortMasters 2: structured guide content
@@ -46,6 +49,7 @@ export type GuideSection = {
   intro?: string;
   bullets?: string[];
   callout?: Callout;
+  cargo?: readonly string[];
 };
 
 export type GuideTab = {
@@ -77,12 +81,24 @@ function mandateRounds(cfg: DifficultyConfig): number[] {
 export function guideTabs(
   difficulty: Difficulty,
   rulesVersion = CLASSIC_RULES,
+  specialties?: Specialty[],
 ): GuideTab[] {
   const cfg = difficultyConfig(difficulty);
-  const newRules = rulesVersion === EXPANDED_RULES;
+  const newRules = expanded({ rulesVersion });
+  const updated = rebalanced({ rulesVersion });
   const mandates = mandateRounds(cfg);
-  const resources = unlockedResources(difficulty, cfg.rounds, rulesVersion);
-  const products = unlockedProducts(difficulty, cfg.rounds, rulesVersion);
+  const resources = unlockedResources(
+    difficulty,
+    cfg.rounds,
+    rulesVersion,
+    specialties,
+  );
+  const products = unlockedProducts(
+    difficulty,
+    cfg.rounds,
+    rulesVersion,
+    specialties,
+  );
   const workers = unlockedWorkerTypes(difficulty, cfg.rounds);
   const workerCopy = workers.map((worker) => {
     const output = products
@@ -142,11 +158,24 @@ export function guideTabs(
       {
         icon: "📦",
         title: "Goods System",
+        cargo: updated ? [...resources, ...products] : undefined,
+        ...(rebalanced({ rulesVersion })
+          ? {
+              callout: {
+                tone: "info",
+                text: "Choose staple cargo before buying. The Workshop Supplier sells the missing inputs for one recipe per round. During Artisan Management, check next round's featured buyer and book one personal buyer. Sell up to two surplus finished goods to the Clearance Buyer once per round, without earning Reputation.",
+              },
+            }
+          : {}),
         intro:
           "Raw materials are bought at ports and either sold directly or assigned to artisans. Production lands at settlement, after that round's order phase.",
         bullets: [
-          `Raw materials available during this voyage: ${resources.join(", ")}`,
-          `Finished goods available during this voyage: ${products.join(", ")}`,
+          ...(!updated
+            ? [
+                `Raw materials available during this voyage: ${resources.join(", ")}`,
+                `Finished goods available during this voyage: ${products.join(", ")}`,
+              ]
+            : []),
         ],
       },
       {
@@ -172,10 +201,14 @@ export function guideTabs(
         icon: "⚓",
         title: "Freight and order bonuses",
         bullets: [
-          "Start at 2 Gold per cargo unit. Subtract the ship level and Favorable Tides reductions, keeping a base minimum of 5 Gold.",
+          updated
+            ? "Start at 2 Gold per cargo unit. Ship level discounts leave a minimum of 5 Gold. Favorable Tides then reduces ordinary freight by up to 4 Gold."
+            : "Start at 2 Gold per cargo unit. Subtract the ship level and Favorable Tides reductions, keeping a base minimum of 5 Gold.",
           `Then apply Bulk Hauler Rigging and Overdrive Engine. Split the remaining freight by unit count for Silk Winds and Silk Road Monopoly, rounding down. Apply Fleet of Treasures${newRules ? ", then Cargo Net and Convoy Pennant when eligible" : " last"}. Freight cannot fall below zero.`,
           "Salvage Crane can refund the quoted freight. Tax Evasion Ledger can charge an audit after an order. The order card shows those chances when they apply.",
-          "Reward bonuses apply to the eligible share by cargo units after VAT. Apply Silk Road Monopoly, Kiln and Forge Guild, Maritime Bureau Token, then Exotic Treasures, rounding down each bonus. Mandate rewards are fixed.",
+          updated
+            ? "Percentage bonuses use the eligible share of the original reward after VAT. They add together without compounding. The buyer card shows each bonus. Mandate rewards are fixed."
+            : "Reward bonuses apply to the eligible share by cargo units after VAT. Apply Silk Road Monopoly, Kiln and Forge Guild, Maritime Bureau Token, then Exotic Treasures, rounding down each bonus. Mandate rewards are fixed.",
         ],
       },
       {
@@ -185,6 +218,11 @@ export function guideTabs(
           "Open the Broker's Rumor Board during buying. It shows how many rumors the current price buys.",
         bullets: [
           "Each revealed rumor guarantees exactly one order at the named port in Phase 2. Look for the Guaranteed badge on that buyer.",
+          ...(updated
+            ? [
+                "Choose a good to ask about. Each revealed buyer shows the exact quantity, port, and gross reward before trading.",
+              ]
+            : []),
           "The usual price is 5 Gold for one rumor. Broker's Network charges 2 Gold for up to two, and Ocean Interpreter adds one when available.",
           "Farsight costs no Gold and draws from the same pool. Modules only add rumors to paid purchases.",
         ],
@@ -267,7 +305,7 @@ export function guideTabs(
   });
 
   // Risk and race
-  const terms = RAID_TERMS[difficulty];
+  const terms = raidTerms(difficulty, { rulesVersion });
   const riskSections: GuideSection[] = [
     {
       icon: "🏴‍☠️",
@@ -295,10 +333,10 @@ export function guideTabs(
       intro: `Check the briefing before drafting in rounds ${FORECAST_WINDOWS[difficulty].join(", ")}.`,
       bullets: [
         "Market Day features a material lot and adds a discount to its listed prices. The combined adjustment from the forecast and Harbor Pulse is capped at 15% in either direction. Guild Exhibition reserves two buyers for the named finished good.",
-        "Heavy Seas raises base raid risk by four percentage points, capped at 50% before personal effects.",
+        `Heavy Seas raises base raid risk by ${rebalanced({ rulesVersion }) ? "six" : "four"} percentage points, capped at 50% before personal effects.`,
         "Every round has a staple lot and a staple contract. Confirmed Broker rumors occupy separate slots.",
         "Emergency Loan can be offered when your Gold is below the estimated bills and you have yet to use the Boon this voyage.",
-        "Imperial Mandate cargo is announced up to two rounds in advance. Production lands at settlement.",
+        `Imperial Mandate cargo is announced up to ${rebalanced({ rulesVersion }) ? "three" : "two"} rounds in advance. Production lands at settlement.`,
       ],
     });
   }
@@ -431,9 +469,15 @@ export type TipsGroup = {
 export function tipsGroups(
   difficulty: Difficulty,
   rulesVersion = CLASSIC_RULES,
+  specialties?: Specialty[],
 ): TipsGroup[] {
   const cfg = difficultyConfig(difficulty);
-  const resources = unlockedResources(difficulty, cfg.rounds, rulesVersion);
+  const resources = unlockedResources(
+    difficulty,
+    cfg.rounds,
+    rulesVersion,
+    specialties,
+  );
   const workers = unlockedWorkerTypes(difficulty, cfg.rounds);
   return [
     {
@@ -441,7 +485,7 @@ export function tipsGroups(
       title: "Financial Management",
       items: [
         "Always maintain reserve funds for expenses",
-        `Base maintenance is ${cfg.maintenance} Gold per round before modifiers`,
+        `Base maintenance is ${voyageMaintenance(difficulty, rulesVersion)} Gold per round before modifiers`,
         "Wages are charged every round for every hired artisan, including idle ones",
         "Calculate total expenditure before buying",
       ],
@@ -454,6 +498,11 @@ export function tipsGroups(
           (worker) => `${worker.label}: ${worker.wage} Gold per round`,
         ),
         "Hire only as needed",
+        ...(rebalanced({ rulesVersion })
+          ? [
+              "Book a workshop buyer for stock you expect to have next round. Keep enough Gold for the upcoming wages and maintenance.",
+            ]
+          : []),
       ],
     },
     {
@@ -535,6 +584,7 @@ export function tipsGroups(
 export function tutorialSteps(
   difficulty: Difficulty,
   rulesVersion = CLASSIC_RULES,
+  specialties?: Specialty[],
 ): { title: string; content: string }[] {
   const cfg = difficultyConfig(difficulty);
   const mandates = mandateRounds(cfg);
@@ -542,19 +592,21 @@ export function tutorialSteps(
     difficulty,
     cfg.rounds,
     rulesVersion,
+    specialties,
   );
   const availableProducts = unlockedProducts(
     difficulty,
     cfg.rounds,
     rulesVersion,
+    specialties,
   );
   const workerRoster = unlockedWorkerTypes(difficulty, cfg.rounds);
   const workerWages = workerRoster.map((worker) => worker.wage);
   const minimumWage = Math.min(...workerWages);
   const maximumWage = Math.max(...workerWages);
-  const newRules = rulesVersion === EXPANDED_RULES;
+  const newRules = expanded({ rulesVersion });
   const charterResources = availableResources.slice(
-    unlockedResources(difficulty, 1, rulesVersion).length,
+    unlockedResources(difficulty, 1, rulesVersion, specialties).length,
   );
   const marketCopy = charterResources.length
     ? `The market begins with Hemp, Silk, and Tea. Later rounds add ${charterResources.join(", ")}.`
@@ -593,6 +645,7 @@ export function tutorialSteps(
     {
       title: "🏪 Phase 1: Buying",
       content: `<p>${marketCopy} Prices and card selection change each round. Buy now, barter if you need to, then sell in Phase 2. That is the core loop.${newRules ? " The opening briefing highlights any forecast event. Look for the staple lot and its matching staple contract each round." : ""}</p>
+${rebalanced({ rulesVersion }) ? "<p>Choose your staple cargo and check the matching buyer before paying. Buy missing inputs for one recipe from the Workshop Supplier.</p>" : ""}
 <p>One thing worth knowing about: the <strong>Broker</strong>. Pay a small fee for a demand rumor and a specific trade order is <em>guaranteed</em> to appear when Phase 2 opens. Useful when you have stocked a particular good and want to make sure a buyer shows up.</p>
 <div style="background:#FFF8DC;color:#17212a;border:1px solid #FFA000;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
   💡 Early on, raw materials are easier to manage because they can be sold in the same round. Finished goods need materials, an artisan, and one production cycle.
@@ -620,13 +673,13 @@ ${mandates.length ? `<p style="font-size:13px;margin-top:10px">📜 On round${ma
       title: "⚠️ The artisan trap",
       content: `<p>Artisans turn raw materials into valuable finished goods and collect wages at each Phase 3. That part is simple. What catches most new players is this:</p>
 <div style="background:#C62828;color:#fff;border-radius:6px;padding:12px;margin:12px 0;text-align:center;font-size:14px;font-weight:bold;line-height:1.7">
-  Assign a task this round.<br>Production lands at settlement, after this round's order phase.
+  Assign a task this round.<br>Production lands at settlement, after this round's order phase.${rebalanced({ rulesVersion }) ? " Check next round's featured buyer or book a personal workshop contract. Surplus can go to the Clearance Buyer. The workshop closes for assignments in the final round." : ""}
 </div>
 <p style="font-size:13px;color:var(--foreground);line-height:1.6">Artisans available during this voyage are ${workerCopy}. Every hired artisan charges wages <strong>each round</strong>, even when idle. Hire only when you can cover payroll alongside maintenance.</p>`,
     },
     {
       title: "🏴‍☠️ Pirates at Phase 3",
-      content: `<p>After production and before the bills come due each round, there is ${raidCopy(cfg)} that pirates find your ship. ${newRules ? `A raid takes ${Math.round(RAID_TERMS[difficulty].lossRate * 100)}% of exposed Gold before personal reductions.` : "A raid takes all Gold you are carrying."}</p>
+      content: `<p>After production and before the bills come due each round, there is ${raidCopy(cfg)} that pirates find your ship. ${newRules ? `A raid takes ${Math.round(raidTerms(difficulty, { rulesVersion }).lossRate * 100)}% of exposed Gold before personal reductions.` : "A raid takes all Gold you are carrying."}</p>
 <p>You get one choice before that roll happens: hire an escort for ${escortPct(cfg)} of ${newRules ? "Gold beyond the reserve for bills" : "your current Gold"} and sail through guaranteed safe, or set sail anyway and keep the Gold if the pirates don't show.</p>
 ${cfg.brokerCorruption ? `<p>In these waters a broker can be corrupt. The rumor you buy is still true and still arrives, always, but a corrupt one also leaks your position to the pirates. The log says so plainly when it happens, and the odds you see already include it.</p>` : ""}
 <div style="background:#FFF8DC;color:#17212a;border:1px solid #FFA000;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
@@ -640,7 +693,7 @@ ${cfg.brokerCorruption ? `<p>In these waters a broker can be corrupt. The rumor 
   <div style="background:#E3F2FD;color:#17212a;border-radius:6px;padding:10px;text-align:center">
     <div style="font-size:22px;margin-bottom:4px">🔧</div>
     <strong>Ship Maintenance</strong><br>
-    <span style="font-size:12px;color:#444">${cfg.maintenance} Gold per round before modifiers</span>
+    <span style="font-size:12px;color:#444">${voyageMaintenance(difficulty, rulesVersion)} Gold per round before modifiers</span>
   </div>
   <div style="background:#FCE4EC;color:#17212a;border-radius:6px;padding:10px;text-align:center">
     <div style="font-size:22px;margin-bottom:4px">👥</div>

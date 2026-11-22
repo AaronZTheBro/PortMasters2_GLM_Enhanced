@@ -18,9 +18,17 @@ import { Shipyard, ModuleDraft, ModuleSwap } from "./phases/Shipyard";
 import { Bankruptcy } from "./phases/Bankruptcy";
 import { CalendarDays, Compass, Telescope } from "lucide-react";
 import { MANDATE_TEMPLATES, mandateIndexFor } from "@/lib/game/difficulty";
-import { expanded, forecastFor } from "@/lib/game/expansion";
+import {
+  expanded,
+  forecastFor,
+  rebalanced,
+  SPECIALTIES,
+  specialtyOpens,
+} from "@/lib/game/expansion";
 import { announcedMandateRound, describeForecast } from "@/lib/game/forecast";
-import { featuredDemand } from "@/lib/game/engine/market";
+import { featuredDemand, upcomingBuyer } from "@/lib/game/engine/market";
+import { quoteOrder } from "@/lib/game/engine/orders";
+import { ItemIcon } from "../shared";
 import { hasModule } from "@/lib/game/engine";
 import { Endgame } from "./phases/Endgame";
 
@@ -110,7 +118,6 @@ export function GamePhasePanel({
           isHost={isHost}
           onShowTutorial={onShowTutorial}
           difficulty={game.difficulty}
-          rulesVersion={game.rulesVersion}
         />
       );
     if (p === 5)
@@ -222,9 +229,29 @@ function VoyageBrief({
 }) {
   if (!expanded(game) || ![5, 1, "worker_mgmt", 2, 3].includes(game.phase))
     return null;
-  const forecast = forecastFor(game);
-  const briefing = forecast && describeForecast(forecast);
-  const announced = announcedMandateRound(game.difficulty, game.currentRound);
+  const updated = rebalanced(game);
+  const forecast =
+    forecastFor(game) ??
+    (updated ? forecastFor(game, game.currentRound + 1) : undefined);
+  const briefing = forecast && describeForecast(forecast, game);
+  const announced = announcedMandateRound(
+    game.difficulty,
+    game.currentRound,
+    updated ? 3 : 2,
+  );
+  const lantern = hasModule(game, "signal_lantern");
+  const includesPreview = game.phase === 1 || game.phase === "worker_mgmt";
+  const nextBuyers =
+    updated && includesPreview
+      ? [
+          upcomingBuyer(game, context, game.currentRound + 1),
+          lantern
+            ? upcomingBuyer(game, context, game.currentRound + 1, true)
+            : undefined,
+        ]
+      : [];
+  const specialties =
+    updated && game.phase === 5 ? game.specialties : undefined;
   const mandateIndex =
     announced === undefined
       ? undefined
@@ -232,24 +259,49 @@ function VoyageBrief({
   const mandate =
     mandateIndex === undefined ? undefined : MANDATE_TEMPLATES[mandateIndex];
   const nextDemand =
-    game.phase === "worker_mgmt" && hasModule(game, "signal_lantern")
+    !updated && game.phase === "worker_mgmt" && lantern
       ? featuredDemand(game, context, game.currentRound + 1)
       : undefined;
   const scout =
     game.phase === 1 || game.phase === "worker_mgmt"
       ? game.scoutedOrder
       : undefined;
-  if (!briefing && !mandate && !nextDemand && !scout) return null;
+  if (
+    !briefing &&
+    !mandate &&
+    !nextDemand &&
+    !scout &&
+    !nextBuyers.some(Boolean) &&
+    !game.scoutedOrders?.length &&
+    !specialties?.length
+  )
+    return null;
   return (
     <aside
       aria-label="Voyage briefing"
       className="pm-brief mb-4 grid min-w-0 gap-2 rounded-xl border p-3 text-sm"
     >
+      {specialties?.length ? (
+        <p>
+          <strong>Voyage specialties</strong> ·{" "}
+          {specialties
+            .map(
+              (key, index) =>
+                `${SPECIALTIES[key].name} in round ${specialtyOpens(game.difficulty, index)}`,
+            )
+            .join(", ")}
+        </p>
+      ) : null}
       {briefing && (
         <div className="flex min-w-0 gap-2">
           <Compass className="mt-0.5 size-4 shrink-0" aria-hidden />
           <div>
-            <strong>{briefing.title}</strong>
+            <strong>
+              {briefing.title}
+              {forecast && forecast.round > game.currentRound
+                ? ` in round ${forecast.round}`
+                : ""}
+            </strong>
             <p>{briefing.detail}</p>
           </div>
         </div>
@@ -264,6 +316,21 @@ function VoyageBrief({
                 .map(({ type, required }) => `${required} ${type}`)
                 .join(", ")}{" "}
               for {mandate.reward} Gold at {mandate.port}.
+              {updated && (
+                <span className="block text-muted-foreground">
+                  Missing now{" "}
+                  {mandate.resources
+                    .filter(
+                      ({ type, required }) => game.inventory[type] < required,
+                    )
+                    .map(
+                      ({ type, required }) =>
+                        `${required - game.inventory[type]} ${type}`,
+                    )
+                    .join(", ") || "none"}
+                  .
+                </span>
+              )}
             </p>
           </div>
         </div>
@@ -277,6 +344,47 @@ function VoyageBrief({
           </p>
         </div>
       )}
+      {nextBuyers.map((buyer, index) => {
+        if (!buyer) return null;
+        const quote = quoteOrder(
+          {
+            ...game,
+            modifierFlags: {},
+            effectUses: {},
+            currentRound: game.currentRound + 1,
+          },
+          buyer,
+        );
+        const cargo = buyer.resources[0];
+        return (
+          <div key={buyer.id} className="flex min-w-0 gap-2">
+            <Telescope className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <p>
+              <strong>
+                {index === 0 ? "Next round featured buyer" : "Signal Lantern"}
+              </strong>{" "}
+              · {buyer.demandPort} requests <ItemIcon item={cargo.type} />{" "}
+              {cargo.required} {cargo.type} for {buyer.reward} Gold. Estimated
+              proceeds {quote.reward - quote.freight.final} Gold after freight
+              and VAT, before any new Boon.
+            </p>
+          </div>
+        );
+      })}
+      {includesPreview &&
+        game.scoutedOrders?.map((buyer) => (
+          <div key={buyer.id} className="flex min-w-0 gap-2">
+            <Telescope className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <p>
+              <strong>Scouted buyer this round</strong> · {buyer.demandPort}{" "}
+              requests{" "}
+              {buyer.resources
+                .map(({ type, required }) => `${required} ${type}`)
+                .join(", ")}{" "}
+              for {buyer.reward} Gold before costs.
+            </p>
+          </div>
+        ))}
       {scout && (
         <div className="flex min-w-0 gap-2">
           <Telescope className="mt-0.5 size-4 shrink-0" aria-hidden />

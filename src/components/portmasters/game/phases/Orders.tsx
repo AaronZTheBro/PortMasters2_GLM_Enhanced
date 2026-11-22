@@ -1,12 +1,19 @@
 "use client";
 
+import { rebalanced } from "@/lib/game/expansion";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { QuantityInput } from "@/components/ui/quantity-input";
 import { BROKERS_FAVOR_UNLOCK_LEVEL } from "@/lib/game/constants";
 import { callBrokersFavor, completeOrder } from "@/lib/game/engine";
 import { poolsFor } from "@/lib/game/engine/market";
-import { quoteOrder, whisperForOrder } from "@/lib/game/engine/orders";
+import {
+  CLEARANCE_ID,
+  quoteClearance,
+  quoteOrder,
+  sellClearance,
+  whisperForOrder,
+} from "@/lib/game/engine/orders";
 import type { GameState } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
 import { itemColorResolver } from "@/lib/use-color-preference";
@@ -41,6 +48,20 @@ export function Orders({
   const sellableGoods = [...pool.resources, ...pool.products].filter(
     (it) => (game.inventory[it] || 0) > 0,
   );
+  const [clearanceItem, setClearanceItem] = useState("");
+  const [clearanceQuantity, setClearanceQuantity] = useState(1);
+  const clearanceGoods = pool.products.filter(
+    (item) => game.inventory[item] > 0,
+  );
+  const clearanceGood = clearanceGoods.includes(clearanceItem)
+    ? clearanceItem
+    : clearanceGoods[0];
+  const clearanceAmount = Math.min(
+    clearanceQuantity,
+    game.inventory[clearanceGood] ?? 0,
+  );
+  const clearance = quoteClearance(game, clearanceGood, clearanceAmount);
+  const clearanceQuote = clearance ? quoteOrder(game, clearance) : undefined;
   const favorHeld = favorItem ? game.inventory[favorItem] || 0 : 0;
   const closeFavor = () => {
     setFavorOpen(false);
@@ -225,11 +246,15 @@ export function Orders({
                   <span className="text-muted-foreground">
                     {o.isMandate
                       ? "· Imperial Commission"
-                      : o.isProductOrder
-                        ? "· Finished Product Demand"
-                        : o.staple
-                          ? "· Staple contract"
-                          : "· Raw Material Demand"}
+                      : o.workshop
+                        ? "· Workshop contract"
+                        : o.clearance
+                          ? "· Clearance sale"
+                          : o.isProductOrder
+                            ? "· Finished Product Demand"
+                            : o.staple
+                              ? "· Staple contract"
+                              : "· Raw Material Demand"}
                   </span>
                 </span>
                 {o.isMandate ? (
@@ -337,6 +362,68 @@ export function Orders({
           );
         })}
       </div>
+      {rebalanced(game) && (
+        <section className="my-4 space-y-2 rounded-xl border bg-card p-3 text-sm">
+          <h3 className="font-semibold">Clearance Buyer</h3>
+          {game.completedOrders.includes(CLEARANCE_ID) ? (
+            <p>Clearance sale completed this round.</p>
+          ) : clearanceQuote ? (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="grid min-w-0 gap-1">
+                  Finished good
+                  <select
+                    className="min-w-0 rounded-md border bg-background p-2"
+                    value={clearanceGood}
+                    onChange={(event) => setClearanceItem(event.target.value)}
+                  >
+                    {clearanceGoods.map((item) => (
+                      <option key={item}>{item}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  Units to clear
+                  <select
+                    className="rounded-md border bg-background p-2"
+                    value={clearanceAmount}
+                    onChange={(event) =>
+                      setClearanceQuantity(Number(event.target.value))
+                    }
+                  >
+                    <option value={1}>One unit</option>
+                    {game.inventory[clearanceGood] >= 2 && (
+                      <option value={2}>Two units</option>
+                    )}
+                  </select>
+                </label>
+              </div>
+              <p>
+                Receive {clearanceQuote.reward - clearanceQuote.freight.final}{" "}
+                Gold after {clearanceQuote.totalVat} Gold VAT and{" "}
+                {clearanceQuote.freight.final} Gold freight
+                {clearanceQuote.auditChance ? ", before any audit" : ""}.
+                Clearance sales grant no Reputation.
+              </p>
+              <Button
+                size="sm"
+                onClick={() =>
+                  act((g, logs) =>
+                    sellClearance(g, clearanceGood, clearanceAmount, logs),
+                  )
+                }
+              >
+                Sell surplus goods
+              </Button>
+            </>
+          ) : (
+            <p>
+              Bring up to two finished goods of one kind to sell here once each
+              round.
+            </p>
+          )}
+        </section>
+      )}
       <ReadyFooter
         phaseSync={phaseSync}
         members={members}

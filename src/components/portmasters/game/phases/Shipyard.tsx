@@ -1,5 +1,7 @@
 "use client";
 
+import { rebalanced } from "@/lib/game/expansion";
+import { voyageBoon } from "@/lib/game/pools";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +30,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import {
+  explainTransportCost,
   finalizeModuleSwap,
   handleModuleSelect,
   shipUpgradeSurcharge,
@@ -217,7 +220,8 @@ function StatChip({
 }
 
 function ShipStatsPanel({ game }: { game: GameState }) {
-  const canUpgrade = game.shipLevel < 3;
+  const finalRound = rebalanced(game) && game.currentRound >= game.maxRounds;
+  const canUpgrade = game.shipLevel < 3 && !finalRound;
   const cargoUnits = cargoUnitsOf(game);
   const crew = crewCountOf(game);
   const slotsUsed = game.equippedModules.length;
@@ -263,8 +267,7 @@ function ShipStatsPanel({ game }: { game: GameState }) {
             {slotsUsed} / {slotsMax}
             {canUpgrade && (
               <span className="ml-1 text-emerald-600 dark:text-emerald-400">
-                → {Math.min(slotsUsed + 1, slotsMax + 1)} / {slotsMax + 1} after
-                upgrade
+                → {slotsUsed} / {slotsMax + 1} after upgrade
               </span>
             )}
           </span>
@@ -376,13 +379,26 @@ export function Shipyard({
   phaseSync: PhaseSync;
   members: PublicUser[];
 }) {
-  const canUpgrade = game.shipLevel < 3;
+  const finalRound = rebalanced(game) && game.currentRound >= game.maxRounds;
+  const canUpgrade = game.shipLevel < 3 && !finalRound;
   const surcharge = shipUpgradeSurcharge(game);
   const upgCost = canUpgrade
     ? game.shipUpgradeCost[game.shipLevel] + surcharge
     : 0;
   const affordable = game.money >= upgCost;
-  const canDraft = game.shipLevel > 0;
+  const canDraft = game.shipLevel > 0 && !finalRound;
+  const baseFreight = {
+    ...game,
+    modifierFlags: {},
+    effectUses: {},
+    currentRound: game.currentRound + 1,
+  };
+  const sample = { totalItems: 4, resources: [{ type: "Hemp", required: 4 }] };
+  const currentFreight = explainTransportCost(baseFreight, sample).final;
+  const upgradedFreight = explainTransportCost(
+    { ...baseFreight, shipLevel: game.shipLevel + 1 },
+    sample,
+  ).final;
   const slotsFull =
     game.equippedModules.length >= game.shipLevel && game.shipLevel > 0;
   const cargoUnits = cargoUnitsOf(game);
@@ -531,6 +547,19 @@ export function Shipyard({
                   />
                 </TooltipContent>
               </Tooltip>
+            )}
+            {rebalanced(game) && canUpgrade && (
+              <p className="text-sm text-muted-foreground">
+                Upgrade for {upgCost} Gold to open one module slot. With your
+                current modules, four Hemp would cost {currentFreight} Gold to
+                ship now and {upgradedFreight} Gold at the next level, before
+                any new Boon.
+              </p>
+            )}
+            {finalRound && (
+              <p className="text-sm text-muted-foreground">
+                The voyage ends after this settlement.
+              </p>
             )}
             <Button
               size="lg"
@@ -729,7 +758,9 @@ function ModuleCard({
 }) {
   const tier = moduleTierOf(mod);
   const style = MODULE_TIER_STYLE[tier];
-  const synergies = synergisticBoons(mod);
+  const synergies = synergisticBoons(mod).map((boon) =>
+    voyageBoon(boon, game.rulesVersion),
+  );
   const similar = game.equippedModules.filter(
     (eq) =>
       eq.id !== mod.id &&

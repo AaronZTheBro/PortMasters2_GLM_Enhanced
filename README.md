@@ -27,11 +27,11 @@ Register a captain, create or join a harbor, and start when two captains are pre
 
 ## Voyage rules
 
-New voyages use the expanded cargo, recipe, Boon, and ship module catalogues. Fair Winds runs for eight rounds and introduces staple contracts and forecasts. Open Waters runs for twelve rounds and opens the wider charters in rounds four and eight. Monsoon Season runs for sixteen rounds, opens its charters in rounds six and eleven, and adds Broker leaks and heavier raid pressure.
+New voyages draw cargo, recipes, Boons, and modules from the founding catalog and the specialties chosen for that harbor. Fair Winds runs for eight rounds and introduces staple contracts and forecasts. Open Waters runs for twelve rounds and opens the wider charters in rounds four and eight. Monsoon Season runs for sixteen rounds, opens its charters in rounds six and eleven, and adds Broker leaks and heavier raid pressure.
 
 The harbor shares one forecast schedule. Each captain has a personal market and order board. Every Broker's Whisper creates one guaranteed buyer at the named port. Free and paid rumors share the available slots, while staple contracts and forecast buyers keep their places. The harbor also keeps its Tidewatch bonus and order race winner across reconnects.
 
-Voyages already underway keep their saved rules and boards. Starting a fresh voyage uses the expanded rules.
+Voyages already underway keep their saved rules and boards. Starting a fresh voyage uses the current balance rules.
 
 ## Runtime
 
@@ -108,6 +108,16 @@ Back up a persistent production database before changing the schema. Schema push
 `npm run db:push` applies the Prisma schema to the configured SQLite database.
 
 `npm run db:generate` regenerates the Prisma client.
+
+## Voyage economy
+
+New voyages use rules version 3. The host chooses shared specialties before launch. Fair Winds opens one specialty in round four. Open Waters adds a charter specialty in round five. Monsoon Season adds charter specialties in rounds seven and eleven. Starting Gold stays at 100, 100, and 90 respectively. Base maintenance is 15, 20, and 29 Gold per round.
+
+Choose Hemp, Silk, or Tea for the staple lot and its matching buyer. The Workshop Supplier quotes the missing inputs for one recipe each round before the final round. Artisan Management previews the next featured buyer and allows one personal workshop contract for the following round. The Clearance Buyer accepts up to two units of one finished good each round and pays Gold without awarding Reputation. Broker rumors retain a one to one link with their buyers.
+
+A voyage already underway finishes with its saved rules. Host selection, shared forecasts, workshop commitments, revealed buyer terms, and completed sales survive reconnects.
+
+`npm run test:balance -- 5000 rebalanced` runs the revised economy on the same seeds as the existing rules. The simulation reports solvency, shortages, workshop sales, unsold goods by product, rounds spent with low liquidity, and the quoted value of Boons and modules. The quoted effect totals measure each group with the other group in place, so they can overlap. Add `advanced` after `rebalanced` to exercise mixed trading and several founding recipes, including recovery from a Gold loss in round four.
 
 ## Verification
 

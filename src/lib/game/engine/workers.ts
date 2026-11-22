@@ -2,24 +2,49 @@
 import {
   COMMODITIES,
   ICONS,
-  RECIPES,
   WAGES,
   WORKER_TYPES,
   workerType,
   type WorkerTypeId,
 } from "../constants";
 import type { GameState, Worker } from "../types";
-import { canProduce } from "../pools";
+import {
+  canProduce,
+  unlockedProducts,
+  unlockedWorkerTypes,
+  voyageRecipe,
+} from "../pools";
 import { hasModule, maintenanceSurcharge } from "./core";
 import { getHireCost, quoteWages, workerWagesFor } from "./pricing";
-import { expanded, effectUses, spendEffect } from "../expansion";
+import {
+  expanded,
+  effectUses,
+  REBALANCE,
+  rebalanced,
+  spendEffect,
+} from "../expansion";
 
 export function hireWorker(state: GameState, type: string, logs: string[]) {
   const def = workerType(type);
   if (!def) return;
+  if (
+    rebalanced(state) &&
+    (state.phase !== "worker_mgmt" ||
+      state.currentRound >= state.maxRounds ||
+      !unlockedWorkerTypes(state.difficulty, state.currentRound).some(
+        ({ id }) => id === def.id,
+      ))
+  )
+    return;
   const list = state.workers[def.id];
   const wage = getHireCost(state, type);
-  if (state.money < wage) {
+  if (
+    state.money <
+    wage +
+      (rebalanced(state)
+        ? quoteWages(state).due + state.fixedCost + maintenanceSurcharge(state)
+        : 0)
+  ) {
     logs.push("❌ Insufficient funds to hire workers!");
     return;
   }
@@ -54,12 +79,13 @@ export function fireWorker(
 }
 
 export function quoteRecipe(state: GameState, product: string) {
-  const recipe = RECIPES[product];
+  const recipe = voyageRecipe(product, state.rulesVersion);
   const inputs = { ...recipe.materials };
   if (
     !expanded(state) ||
     !state.modifierFlags.guild_turnover ||
-    effectUses(state, "guild_turnover") ||
+    effectUses(state, "guild_turnover") >=
+      (rebalanced(state) ? REBALANCE.guildUses : 1) ||
     !workerType(recipe.worker_type)?.tier ||
     Object.values(inputs).reduce((sum, amount) => sum + amount, 0) <= 1
   ) {
@@ -82,6 +108,18 @@ export function assignTask(
 ) {
   const list = state.workers[type as WorkerTypeId];
   if (!list || !canProduce(type, task)) return;
+  if (
+    rebalanced(state) &&
+    (state.phase !== "worker_mgmt" ||
+      state.currentRound >= state.maxRounds ||
+      !unlockedProducts(
+        state.difficulty,
+        state.currentRound,
+        state.rulesVersion,
+        state.specialties,
+      ).includes(task))
+  )
+    return;
   const { inputs, saved } = quoteRecipe(state, task);
   for (const worker of list) {
     if (worker.task === null) {
@@ -119,20 +157,32 @@ export function assignTask(
 }
 
 export function productionOutput(state: GameState, worker: Worker) {
-  const inspiration = state.modifierFlags.worker_bonus_production ?? 0;
-  const workshop = hasModule(state, "artisans_workshop") ? 1 : 0;
+  const firstAssigned = WORKER_TYPES.flatMap(
+    ({ id }) => state.workers[id] ?? [],
+  ).find(({ task }) => task !== null);
+  const eligible = !rebalanced(state) || worker === firstAssigned;
+  const inspiration = eligible
+    ? (state.modifierFlags.worker_bonus_production ?? 0)
+    : 0;
+  const workshop = eligible && hasModule(state, "artisans_workshop") ? 1 : 0;
   const total = (worker.isSkilled ? 2 : 1) + inspiration + workshop;
   return { total, inspiration, workshop };
 }
 
 export function processProduction(state: GameState, logs: string[]) {
   const finished = new Set(state.producedRecipes ?? []);
+  const output = new Map(
+    Object.values(state.workers)
+      .flat()
+      .filter((worker) => worker.task)
+      .map((worker) => [worker, productionOutput(state, worker)]),
+  );
   for (const type of WORKER_TYPES) {
     const name = type.label;
     for (const w of state.workers[type.id] ?? []) {
       if (w.task) {
         finished.add(w.task);
-        const { total, inspiration, workshop } = productionOutput(state, w);
+        const { total, inspiration, workshop } = output.get(w)!;
         state.inventory[w.task] = (state.inventory[w.task] || 0) + total;
         w.producedCount = (w.producedCount || 0) + total;
         const bonuses = [];

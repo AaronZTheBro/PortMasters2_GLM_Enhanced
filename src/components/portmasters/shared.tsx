@@ -13,7 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { MeritId } from "@/lib/game/merits";
-import { ICONS } from "@/lib/game/constants";
+import { CommodityIcon } from "./CommodityIcon";
 import { cn } from "@/lib/utils";
 
 // A circular gradient avatar keyed off the user's avatarHue.
@@ -148,19 +148,6 @@ export function MeritIcon({
   return <Icon className={className} aria-hidden />;
 }
 
-// Hemp, Silk, and Tea have real cropped artwork (see public/icons, sourced
-// from the modern UI pass); every other good still falls back to its own
-// emoji from ICONS, exactly as before. The source images are a big circle
-// already, so this only ever needs a plain circular clip, no separate
-// masking: the black square corners the source files ship with are already
-// cropped out ahead of time, this just fits the remaining circle into the
-// surrounding text.
-const ITEM_IMAGES: Record<string, string> = {
-  Hemp: "/icons/hemp.png",
-  Silk: "/icons/silk.png",
-  Tea: "/icons/tea.png",
-};
-
 export function ItemIcon({
   item,
   className,
@@ -168,23 +155,5 @@ export function ItemIcon({
   item: string;
   className?: string;
 }) {
-  const src = ITEM_IMAGES[item];
-  if (!src) {
-    return (
-      <span className={className} aria-hidden>
-        {ICONS[item] ?? ""}
-      </span>
-    );
-  }
-  return (
-    <img
-      src={src}
-      alt=""
-      className={cn(
-        "inline-block h-4 w-4 shrink-0 rounded-full object-cover align-[-3px]",
-        className,
-      )}
-      aria-hidden
-    />
-  );
+  return <CommodityIcon item={item} className={className} />;
 }

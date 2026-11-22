@@ -1,13 +1,27 @@
 // Drafts round boons and voyage modules from the current content pool.
 import { RECIPES, type Boon, type Module } from "../constants";
-import { expanded, forecastFor } from "../expansion";
+import {
+  expanded,
+  forecastFor,
+  rebalanced,
+  SPECIALTIES,
+  specialtyOpens,
+} from "../expansion";
 import { describeForecast } from "../forecast";
 import { voyageRandom } from "../voyage-rng";
 import { quoteDues } from "./pricing";
-import { unlockedBoons, unlockedModules } from "../pools";
+import {
+  canProduce,
+  isOceanCargo,
+  unlockedBoons,
+  unlockedModules,
+  unlockedProducts,
+  voyageRecipe,
+} from "../pools";
 import { weightedPick } from "../rng";
 import type { GameContext, GameState } from "../types";
 import { hasModule, shipUpgradeSurcharge } from "./core";
+import { quoteRecipe } from "./workers";
 import { startPhase1 } from "./market";
 
 export function draftBoons(state: GameState, reroll = false): Boon[] {
@@ -50,16 +64,65 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
     merchants_converge: () => 1.6,
   };
   const usesExpandedRules = expanded(state);
+  const updated = rebalanced(state);
+  const crewProducts = updated
+    ? unlockedProducts(
+        state.difficulty,
+        state.currentRound,
+        state.rulesVersion,
+        state.specialties,
+      ).filter((item) =>
+        Object.entries(state.workers).some(
+          ([type, crew]) => crew.length && canProduce(type, item),
+        ),
+      )
+    : [];
+  const affordableInputs = (inputs: Record<string, number>) =>
+    Object.entries(inputs).every(([good, qty]) => state.inventory[good] >= qty);
+  const compatible = (boon: Boon) => {
+    if (!updated) return true;
+    if (boon.id === "artisan_inspiration")
+      return (
+        state.currentRound < state.maxRounds &&
+        crewProducts.some((item) =>
+          affordableInputs(voyageRecipe(item, state.rulesVersion).materials),
+        )
+      );
+    if (boon.id === "guild_turnover")
+      return (
+        state.currentRound < state.maxRounds &&
+        crewProducts.some((item) => {
+          const quote = quoteRecipe(
+            { ...state, modifierFlags: boon.modifiers, effectUses: {} },
+            item,
+          );
+          return quote.saved && affordableInputs(quote.inputs);
+        })
+      );
+    if (boon.id === "ceramic_commission")
+      return (
+        state.inventory["Celadon Ware"] > 0 ||
+        state.inventory["Lacquered Jar"] > 0
+      );
+    if (boon.id === "master_apprentice")
+      return (
+        state.currentRound < state.maxRounds &&
+        state.money >= quoteDues(state).total + 8
+      );
+    return true;
+  };
   const canRescue =
     !state.emergencyLoanUsed && state.money < quoteDues(state).total;
   const available: Array<[Boon, number]> = unlockedBoons(
     state.difficulty,
     state.currentRound,
     state.rulesVersion,
+    state.specialties,
   )
     .filter(
       (boon) => !usesExpandedRules || boon.id !== "emergency_loan" || canRescue,
     )
+    .filter(compatible)
     .map((boon) => [boon, weightFuncs[boon.id]?.() ?? 1])
     .filter(
       (entry): entry is [Boon, number] =>
@@ -82,7 +145,7 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
             "reliable_buyer",
             "merchant_charm",
             "safe_anchorage",
-            "favorable_tides",
+            ...(updated ? [] : ["favorable_tides"]),
           ].includes(boon.id),
     );
     if (safe.length) take(weightedPick(random, safe));
@@ -102,6 +165,10 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
       if (boon.id === "ceramic_commission")
         return ["Celadon Ware", "Lacquered Jar"].some(
           (item) => state.inventory[item] > 0,
+        );
+      if (boon.id === "rare_cargo_charter" && updated)
+        return Object.entries(state.inventory).some(
+          ([item, qty]) => qty > 0 && isOceanCargo(item, state.rulesVersion),
         );
       if (boon.id === "rare_cargo_charter")
         return ["Frankincense", "Lapis Lazuli"].some(
@@ -136,7 +203,11 @@ export function applyBoon(state: GameState, boon: Boon, logs: string[]) {
 }
 
 export function upgradeShip(state: GameState, logs: string[]) {
-  if (state.shipLevel >= 3) return;
+  if (
+    state.shipLevel >= 3 ||
+    (rebalanced(state) && state.currentRound >= state.maxRounds)
+  )
+    return;
   const cost =
     state.shipUpgradeCost[state.shipLevel] + shipUpgradeSurcharge(state);
   if (state.money < cost) {
@@ -156,6 +227,7 @@ export function startBoonDrafting(state: GameState, logs: string[]) {
   state.effectUses = {};
   state.producedRecipes = [];
   state.scoutedOrder = undefined;
+  state.scoutedOrders = undefined;
   state.moduleSwapUsed = false;
   state._draftChoices = undefined;
   state._newModule = undefined;
@@ -166,9 +238,16 @@ export function startBoonDrafting(state: GameState, logs: string[]) {
   logs.push("\n🧭=== The Navigator's Compass ===");
   const forecast = forecastFor(state);
   if (forecast) {
-    const { title, detail } = describeForecast(forecast);
+    const { title, detail } = describeForecast(forecast, state);
     logs.push(`${title}: ${detail}`);
   }
+  if (rebalanced(state))
+    state.specialties?.forEach((key, index) => {
+      if (specialtyOpens(state.difficulty, index) === state.currentRound)
+        logs.push(
+          `${SPECIALTIES[key].name} opens this round. Available cargo includes ${SPECIALTIES[key].goods.join(", ")}.`,
+        );
+    });
   logs.push("Choose a Boon for this round.");
 }
 
@@ -207,9 +286,29 @@ function rollModuleChoices(state: GameState, reroll = false): Module[] {
     state.difficulty,
     state.currentRound,
     state.rulesVersion,
+    state.specialties,
   ).filter((m) => !hasModule(state, m.id));
   const picks: Module[] = [];
   const random = voyageRandom(state, reroll ? "moduleReroll" : "moduleDraft");
+  if (rebalanced(state)) {
+    const broad = available.filter(({ id }) =>
+      [
+        "cargo_net",
+        "merchant_scales",
+        "convoy_pennant",
+        "smugglers_hold",
+        "brokers_network",
+        "bulk_hauler",
+        "salvage_crane",
+        "overdrive_engine",
+      ].includes(id),
+    );
+    if (broad.length) {
+      const choice = broad[Math.floor(random() * broad.length)];
+      picks.push(choice);
+      available.splice(available.indexOf(choice), 1);
+    }
+  }
   while (picks.length < 3 && available.length) {
     const idx = Math.floor(random() * available.length);
     picks.push(available.splice(idx, 1)[0]);
@@ -219,6 +318,11 @@ function rollModuleChoices(state: GameState, reroll = false): Module[] {
 
 // Reuses the existing module pool when the draft is reopened.
 export function startModuleDrafting(state: GameState) {
+  if (
+    rebalanced(state) &&
+    (state.shipLevel === 0 || state.currentRound >= state.maxRounds)
+  )
+    return;
   state._newModule = undefined;
   if (state._draftChoices === undefined) {
     state._draftChoices = rollModuleChoices(state);

@@ -1,6 +1,8 @@
 "use client";
 
-import { useId } from "react";
+import { Fragment, useId } from "react";
+import { commodityLedgerText } from "./CommodityIcon";
+
 import { Anchor, Package, Settings2, Users } from "lucide-react";
 import type { Module } from "@/lib/game/constants";
 import { cn } from "@/lib/utils";
@@ -234,7 +236,13 @@ export function ShipIcon({ className }: { className?: string }) {
 export function TextWithShipIcons({ children }: { children: string }) {
   return children
     .split(/([⛵🚢]\uFE0F?)/u)
-    .map((part, index) => (index % 2 === 1 ? <ShipIcon key={index} /> : part));
+    .map((part, index) =>
+      index % 2 === 1 ? (
+        <ShipIcon key={index} />
+      ) : (
+        <Fragment key={index}>{commodityLedgerText(part)}</Fragment>
+      ),
+    );
 }
 
 export function ShipVisualizer({

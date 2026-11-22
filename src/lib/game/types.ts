@@ -19,6 +19,8 @@ import {
   CLASSIC_RULES,
   type HarborForecast,
   type VoyageRules,
+  type Specialty,
+  voyageMaintenance,
 } from "./expansion";
 
 export type Phase =
@@ -51,6 +53,7 @@ export type ResourceCard = {
   totalCost: number;
   isProductCard: boolean;
   featured?: boolean;
+  workshopSupply?: boolean;
   staple?: boolean;
 };
 
@@ -63,6 +66,8 @@ export type OrderCard = {
   isProductOrder: boolean;
   staple?: boolean;
   whisperIndex?: number;
+  workshop?: boolean;
+  clearance?: boolean;
   // Set only on the extra order a captain conjures with Broker's Favor (see
   // callBrokersFavor in engine.ts). completeOrder reads it to take the
   // Broker's commission off this order's reward; every other order leaves it
@@ -75,7 +80,13 @@ export type OrderCard = {
   isMandate?: boolean;
 };
 
-export type IntelItem = { item: string; port: string; orderId?: number };
+export type IntelItem = {
+  item: string;
+  port: string;
+  orderId?: number;
+  quantity?: number;
+  reward?: number;
+};
 
 export type Worker = {
   task: string | null;
@@ -110,10 +121,13 @@ export type GameState = {
   rulesVersion?: number;
   seatSeed?: string;
   forecasts?: HarborForecast[];
+  specialties?: Specialty[];
   effectUses?: Record<string, number>;
   emergencyLoanUsed?: boolean;
   producedRecipes?: string[];
   scoutedOrder?: OrderCard;
+  scoutedOrders?: OrderCard[];
+  workshopContracts?: { round: number; item: string; quantity: number }[];
   // The room's voyage epoch (see Room.voyageEpoch in prisma/schema.prisma),
   // stamped onto this state when the voyage is created and folded into the
   // deterministic seed so a restart (which bumps the epoch) rerolls every
@@ -334,10 +348,13 @@ export function createInitialGameState(
     rulesVersion: rules.version,
     seatSeed: undefined,
     forecasts: rules.forecasts,
+    specialties: rules.specialties,
     effectUses: {},
     emergencyLoanUsed: false,
     producedRecipes: [],
     scoutedOrder: undefined,
+    scoutedOrders: undefined,
+    workshopContracts: undefined,
     renownLevel,
     brokersFavorUsed: false,
     voyageEpoch,
@@ -358,7 +375,7 @@ export function createInitialGameState(
     roundRevenue: 0,
     roundCosts: 0,
     workers: emptyWorkerRoster(),
-    fixedCost: cfg.maintenance,
+    fixedCost: voyageMaintenance(difficulty, rules.version),
     shipLevel: 0,
     shipUpgradeCost: [15, 25, 40],
     phase: 0,

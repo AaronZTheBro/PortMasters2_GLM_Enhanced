@@ -14,7 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { APP_NAME } from "@/lib/game/constants";
 import { difficultyConfig, type Difficulty } from "@/lib/game/difficulty";
-import { expanded } from "@/lib/game/expansion";
+import { expanded, rebalanced, type Specialty } from "@/lib/game/expansion";
 import {
   guideTabs,
   tipsGroups,
@@ -29,6 +29,7 @@ import {
 } from "@/lib/game/pools";
 import type { GameState } from "@/lib/game/types";
 import { phaseLabel, whisperCost } from "@/lib/game/engine";
+import { brokerOfferItem } from "@/lib/game/engine/market";
 import { intelPurchaseCount } from "@/lib/game/engine/orders";
 import type { PlayerDetailData } from "@/lib/use-player-detail";
 import type { PublicUser } from "@/lib/api";
@@ -115,6 +116,15 @@ function GuideSectionCard({
           ))}
         </ul>
       )}
+      {section.cargo && (
+        <ul className="mt-3 flex flex-wrap gap-2 text-xs">
+          {section.cargo.map((item) => (
+            <li key={item} className="rounded-full border px-2 py-1">
+              <ItemIcon item={item} /> {item}
+            </li>
+          ))}
+        </ul>
+      )}
       {section.callout && (
         <CalloutBox tone={section.callout.tone} text={section.callout.text} />
       )}
@@ -127,15 +137,17 @@ export function GuideModal({
   onOpenChange,
   difficulty,
   rulesVersion,
+  specialties,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   difficulty: Difficulty;
   rulesVersion?: number;
+  specialties?: Specialty[];
 }) {
   const tabs = useMemo(
-    () => guideTabs(difficulty, rulesVersion),
-    [difficulty, rulesVersion],
+    () => guideTabs(difficulty, rulesVersion, specialties),
+    [difficulty, rulesVersion, specialties],
   );
   // Tabs needs a controlled value to survive difficulty changes. Rather
   // than resetting state in an effect (which triggers cascading renders
@@ -207,15 +219,17 @@ export function TipsModal({
   onOpenChange,
   difficulty,
   rulesVersion,
+  specialties,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   difficulty: Difficulty;
   rulesVersion?: number;
+  specialties?: Specialty[];
 }) {
   const groups = useMemo(
-    () => tipsGroups(difficulty, rulesVersion),
-    [difficulty, rulesVersion],
+    () => tipsGroups(difficulty, rulesVersion, specialties),
+    [difficulty, rulesVersion, specialties],
   );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -371,12 +385,16 @@ export function RumorBoardModal({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   game: GameState;
-  onBuy: () => void;
+  onBuy: (item?: string) => void;
 }) {
   const count = intelPurchaseCount(game);
   const cost = whisperCost(game);
   const canBuy = game.phase === 1 && count > 0 && game.money >= cost;
   const broker = difficultyConfig(game.difficulty);
+  const [requested, setRequested] = useState("");
+  const selected = game.phase2DemandTags.includes(requested)
+    ? requested
+    : brokerOfferItem(game);
   const leakProtected = expanded(game) && game.modifierFlags.false_colors;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -391,10 +409,31 @@ export function RumorBoardModal({
             2.
           </DialogDescription>
         </DialogHeader>
+        {rebalanced(game) &&
+          game.phase === 1 &&
+          game.phase2DemandTags.length > 0 && (
+            <label className="grid min-w-0 gap-1 text-sm">
+              Request a buyer for
+              <select
+                className="min-w-0 rounded-md border bg-background p-2"
+                value={selected}
+                onChange={(event) => setRequested(event.target.value)}
+              >
+                {game.phase2DemandTags
+                  .slice()
+                  .sort()
+                  .map((item) => (
+                    <option key={item} value={item}>
+                      {item} ({game.inventory[item] ?? 0} held)
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
         <div className="flex justify-center my-2">
           <Button
             className="pm-grad-gold text-amber-950 rounded-xl"
-            onClick={onBuy}
+            onClick={() => onBuy(selected)}
             disabled={!canBuy}
           >
             {count === 0
@@ -419,7 +458,13 @@ export function RumorBoardModal({
               </div>
               {game.revealedIntel.map((i, idx) => (
                 <div key={idx} className="text-[13px] py-0.5">
-                  <strong>Guaranteed</strong> · {i.port} wants {i.item}
+                  <strong>Guaranteed</strong> · {i.port} wants{" "}
+                  <ItemIcon item={i.item} />{" "}
+                  {i.quantity ? `${i.quantity} ` : ""}
+                  {i.item}
+                  {i.reward !== undefined
+                    ? ` for ${i.reward} Gold before costs.`
+                    : ""}
                 </div>
               ))}
             </>
@@ -493,16 +538,18 @@ export function TutorialModal({
   onOpenChange,
   difficulty,
   rulesVersion,
+  specialties,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   difficulty: Difficulty;
   rulesVersion?: number;
+  specialties?: Specialty[];
 }) {
   const [step, setStep] = useState(0);
   const steps = useMemo(
-    () => tutorialSteps(difficulty, rulesVersion),
-    [difficulty, rulesVersion],
+    () => tutorialSteps(difficulty, rulesVersion, specialties),
+    [difficulty, rulesVersion, specialties],
   );
   const total = steps.length;
   const s = steps[step];
@@ -631,6 +678,7 @@ export function PlayerDetailModal({
   legacy,
   difficulty,
   rulesVersion,
+  specialties,
   colorFor,
 }: {
   open: boolean;
@@ -644,6 +692,7 @@ export function PlayerDetailModal({
   // describes any captain in the harbor without adding it to the payload.
   difficulty: Difficulty;
   rulesVersion?: number;
+  specialties?: Specialty[];
   // Optional, falls back to the
   // plain COLORS lookup when a caller hasn't wired useColorPreference in.
   colorFor?: (item: string) => string | undefined;
@@ -776,6 +825,7 @@ export function PlayerDetailModal({
                         difficulty,
                         detail.round,
                         rulesVersion,
+                        specialties,
                       ).map((r) => (
                         <div
                           key={r}
@@ -802,6 +852,7 @@ export function PlayerDetailModal({
                         difficulty,
                         detail.round,
                         rulesVersion,
+                        specialties,
                       ).map((r) => (
                         <div
                           key={r}
