@@ -113,7 +113,7 @@ Back up a persistent production database before changing the schema. Schema push
 
 New voyages use rules version 3. The host chooses shared specialties before launch. Fair Winds opens one specialty in round four. Open Waters adds a charter specialty in round five. Monsoon Season adds charter specialties in rounds seven and eleven. Starting Gold stays at 100, 100, and 90 respectively. Base maintenance is 15, 20, and 29 Gold per round.
 
-Choose Hemp, Silk, or Tea for the staple lot and its matching buyer. The Workshop Supplier quotes the missing inputs for one recipe each round before the final round. Artisan Management previews the next featured buyer and allows one personal workshop contract for the following round. The Clearance Buyer accepts up to two units of one finished good each round and pays Gold without awarding Reputation. Broker rumors retain a one to one link with their buyers.
+Choose Hemp, Silk, or Tea for the staple lot and its matching buyer. The Workshop Supplier quotes the missing inputs for one recipe each round before the final round. Artisan Management previews the next featured buyer and allows one personal workshop contract for the following round. The Clearance Buyer accepts up to two units of one finished good each round and pays Gold without awarding Reputation. The Shipyard reserves Income Tax before upgrades and applies module changes to the following round’s tax. Broker rumors retain a one to one link with their buyers.
 
 A voyage already underway finishes with its saved rules. Host selection, shared forecasts, workshop commitments, revealed buyer terms, and completed sales survive reconnects.
 

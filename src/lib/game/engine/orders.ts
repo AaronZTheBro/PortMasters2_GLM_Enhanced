@@ -322,7 +322,7 @@ export function completeOrder(
   const demandPort = whisperForOrder(state, order)?.port ?? order.demandPort;
   logs.push(`📦 Completed Order at ${demandPort}: ${txt}`);
   logs.push(
-    `   💰 Reward: ${reward} Gold · ⚓ Freight: ${transport} Gold = 📊 ${rebalanced(state) ? "Net Proceeds" : "Net Profit"}: ${netBeforeAudit - audit} Gold${audit > 0 ? ` after ${audit} Gold audit` : ""}`,
+    `   💰 Reward: ${reward} Gold · ⚓ Freight: ${transport} Gold = 📊 Net Proceeds: ${netBeforeAudit - audit} Gold${audit > 0 ? ` after ${audit} Gold audit` : ""}`,
   );
   logs.push(`📊 Completed ${state.orderCount} transactions`);
   // Signals the server when this captain first reaches the race threshold.
@@ -477,7 +477,7 @@ export function startPhase2(
   state.orderCount = 0;
   state.completedOrders = [];
   logs.push(
-    `\n🤝=== Round ${state.currentRound} · Phase 2: Trade Transaction ===`,
+    `\n🤝=== Round ${state.currentRound} · Phase 2: Trade Manifest ===`,
   );
   state.seatSeed ??= ctx.seedBase;
   const orderPools = poolsFor(state);

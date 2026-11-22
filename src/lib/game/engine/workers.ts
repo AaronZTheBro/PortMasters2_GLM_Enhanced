@@ -15,7 +15,7 @@ import {
   voyageRecipe,
 } from "../pools";
 import { hasModule, maintenanceSurcharge } from "./core";
-import { getHireCost, quoteWages, workerWagesFor } from "./pricing";
+import { getHireCost, quoteDues, quoteWages, workerWagesFor } from "./pricing";
 import {
   expanded,
   effectUses,
@@ -38,13 +38,7 @@ export function hireWorker(state: GameState, type: string, logs: string[]) {
     return;
   const list = state.workers[def.id];
   const wage = getHireCost(state, type);
-  if (
-    state.money <
-    wage +
-      (rebalanced(state)
-        ? quoteWages(state).due + state.fixedCost + maintenanceSurcharge(state)
-        : 0)
-  ) {
+  if (state.money < wage + (rebalanced(state) ? quoteDues(state).total : 0)) {
     logs.push("❌ Insufficient funds to hire workers!");
     return;
   }
@@ -216,7 +210,11 @@ export function payWages(
     return { count, plural: w.plural, due: workerWagesFor(state, w.id) };
   }).filter((b) => b.due > 0);
   const { due: total, discount } = quoteWages(state);
-  if (total === 0) return true;
+  if (total === 0) {
+    if (discount > 0)
+      logs.push(`Wage Ledger saved ${discount} Gold on payroll.`);
+    return true;
+  }
   if (state.money >= total) {
     state.money -= total;
     state.workerWages += total;
@@ -224,10 +222,14 @@ export function payWages(
     state.roundCosts += total;
     state.totalCosts += total;
     for (const b of bills) {
-      logs.push(`💰 Paid wages for ${b.count} ${b.plural}: ${b.due} Gold`);
+      logs.push(
+        `💰 ${discount > 0 ? "Wages before Wage Ledger" : "Paid wages"} for ${b.count} ${b.plural}: ${b.due} Gold`,
+      );
     }
-    if (discount > 0)
+    if (discount > 0) {
       logs.push(`Wage Ledger saved ${discount} Gold on payroll.`);
+      logs.push(`💰 Paid wages after Wage Ledger: ${total} Gold`);
+    }
     return true;
   }
   logs.push(

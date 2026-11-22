@@ -610,10 +610,10 @@ export function convergingBuyer(
   };
 }
 
-export const WORKSHOP_SUPPLY_ID = 100;
+const WORKSHOP_SUPPLY_ID = 100;
 export const STAPLE_CHOICES = ["Hemp", "Silk", "Tea"] as const;
 
-export function stapleReward(state: GameState, item: string) {
+function stapleReward(state: GameState, item: string) {
   const { quantity, premium } = STAPLE_TERMS[state.difficulty];
   return (COMMODITIES[item].basePrice[0] + 2) * quantity + premium + 9;
 }

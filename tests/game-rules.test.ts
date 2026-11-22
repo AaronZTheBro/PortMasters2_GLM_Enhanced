@@ -303,7 +303,7 @@ test("An audit spends available Gold and records the actual expense", (t) => {
   assert.equal(game.roundCosts, 20);
   assert.equal(game.totalCosts, 20);
   assert.equal(game.score, 0);
-  assert.ok(logs.some((line) => line.includes("Net Profit: 0 Gold")));
+  assert.ok(logs.some((line) => line.includes("Net Proceeds: 0 Gold")));
   game.money = -5;
   hireEscort(game, []);
   assert.equal(game.money, -5);

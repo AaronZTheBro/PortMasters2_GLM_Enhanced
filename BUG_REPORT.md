@@ -258,3 +258,15 @@ The repository verification passed lint, type checking, 21 game rules tests, the
 The audit passed 35 unit tests, the realtime integration test, lint, type checking, and a production build. The effect run covered 23 Boons, 23 modules, and 267,744 installation sequences. The balance run repeated 5,000 simulations per difficulty. The earlier SQLite fixture retained its room and both saves after applying the current schema.
 
 Chrome checks used nine viewport sizes. The production run checked the harbor and captain dialogs, guide, tutorial, old ledger entries, the Broker badge, and a live two captain round that awarded Word on the Docks and reloaded the winner without another credit. The deployment settings were read against the provider references. [Render Blueprint reference](https://render.com/docs/blueprint-spec) [Railway volume reference](https://docs.railway.com/volumes)
+
+## Core rules audit after the rebalance
+
+- Saved module cards used older descriptions after reload. Equipped modules, drafts, and pending swaps now use the saved voyage version. Market tooltips also use the versioned recipe.
+- Shipyard spending could leave a captain without funds for Income Tax. Version 3 now reserves the tax calculated on arrival at the Shipyard. An install or swap affects the following round. Collection is limited to available Gold.
+- Stacked discounts and Wage Ledger could misstate the amount paid. The ledger now records realized savings and charges.
+- Workshop forms now reopen with the booked quantity. The Strategy Advisor uses the actual bills and order quotes. Completed voyages display the correct round count.
+- Story entries keep their original round. Removed the unused Story amount fields and speculative round summaries, plus unused engine exports and duplicate glossary construction.
+- A pending Word on the Docks claim now retries until acknowledged while the captain remains connected.
+- The source graph found no unreachable application modules or empty source directories. The original Hemp, Silk, and Tea PNG assets have no runtime references after the SVG conversion. They remain in the repository as original artwork.
+
+Verification passed 46 unit tests, one multiplayer integration test, and the production build. The effect sweep covered all 23 Boons and 23 modules across 267,744 installation sequences. The 15,000 voyage simulation reproduced the prior solvency rates on all three difficulties. Chrome checked nine viewport sizes, restored module descriptions and workshop quantities, settled a live barter once, and recovered the booking after a server restart.

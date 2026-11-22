@@ -7,7 +7,7 @@ import {
   RESOURCES,
   WORD_ON_THE_DOCKS_REWARD,
 } from "../src/lib/game/constants";
-import { GLOSSARY } from "../src/lib/game/glossary";
+import { glossaryEntry } from "../src/lib/game/glossary";
 import { guideTabs, tutorialSteps } from "../src/lib/game/guide";
 import {
   EFFECT,
@@ -409,8 +409,11 @@ test("Help copy respects the voyage catalogue and expanded freight order", () =>
   assert.match(expanded, /Bamboo Mat/);
   assert.match(expanded, /Scented Candle/);
   assert.doesNotMatch(expanded, /Lapis Pendant/);
-  assert.match(GLOSSARY["Scented Candle"], /Sachet Maker.*1 Beeswax and 1 Tea/);
-  assert.match(GLOSSARY.Weaver, /Bamboo Mat.*Waxed Canvas/);
+  assert.match(
+    glossaryEntry("Scented Candle")!,
+    /Sachet Maker.*1 Beeswax and 1 Tea/,
+  );
+  assert.match(glossaryEntry("Weaver")!, /Bamboo Mat.*Waxed Canvas/);
   const guide = JSON.stringify(guideTabs("monsoon", EXPANDED_RULES));
   assert.match(guide, /Fleet of Treasures, then Cargo Net and Convoy Pennant/);
 });
@@ -780,4 +783,152 @@ test("Rebalanced production reports one bonus artisan even as assignments are cl
   assignTask(state, "weaver", "Linen Clothes", []);
   assert.equal(state.workers.weaver.length, 2);
   assert.ok(state.workers.weaver.every(({ task }) => !task));
+});
+
+test("Shipyard reserves Income Tax and a module swap applies to the following round", async () => {
+  const { buildVoyageRules } = await import("../src/lib/game/forecast");
+  const { finishSettlement, endRound } =
+    await import("../src/lib/game/engine/lifecycle");
+  const { upgradeShip, handleModuleSelect, finalizeModuleSwap } =
+    await import("../src/lib/game/engine/boons");
+  const { incomeTaxDue, quoteShipUpgrade } =
+    await import("../src/lib/game/engine/pricing");
+  const game = createInitialGameState(
+    0,
+    1,
+    1,
+    "fair_winds",
+    buildVoyageRules("tax", 1, "fair_winds"),
+  );
+  game.phase = 3;
+  game.money = 35;
+  game.roundRevenue = 100;
+  game.roundCosts = 5;
+  game.equippedModules = [catalogModule("smugglers_hold")];
+  game.shipLevel = 1;
+  const logs: string[] = [];
+  finishSettlement(game, logs);
+  assert.equal(game.money, 20);
+  assert.equal(incomeTaxDue(game), 9);
+
+  game.shipUpgradeCost[1] = 15;
+  assert.equal(quoteShipUpgrade(game).available, 11);
+  upgradeShip(game, logs);
+  assert.equal(game.shipLevel, 1);
+  assert.equal(game.money, 20);
+
+  game.phase = "module_draft";
+  game._draftChoices = [catalogModule("tax_evasion")];
+  handleModuleSelect(game, 0, logs);
+  finalizeModuleSwap(game, 0, logs);
+  const saved = JSON.parse(JSON.stringify(game)) as GameState;
+  assert.equal(incomeTaxDue(saved), 9);
+  endRound(saved, logs);
+  assert.equal(saved.money, 11);
+  assert.equal(saved.incomeTaxPaid, 9);
+  saved.roundRevenue = 100;
+  assert.equal(incomeTaxDue(saved), 5);
+});
+
+test("Income Tax cannot leave a captain below zero Gold", async () => {
+  const { endRound } = await import("../src/lib/game/engine/lifecycle");
+  const game = expandedGame();
+  game.money = 3;
+  game.roundRevenue = 100;
+  game.roundCosts = 25;
+  const logs: string[] = [];
+  endRound(game, logs);
+  assert.equal(game.money, 0);
+  assert.equal(game.incomeTaxPaid, 3);
+  assert.ok(
+    logs.some((line) => line.includes("Assessed 7 Gold and collected 3 Gold")),
+  );
+});
+
+test("Stacked discounts stop at zero and log only realized savings", () => {
+  const game = expandedGame();
+  game.phase = 1;
+  game.modifierFlags = { purchase_discount: 0.15, hemp_price_reduction: 2 };
+  game.equippedModules = [
+    catalogModule("smugglers_hold"),
+    catalogModule("kiln_cellar"),
+  ];
+  const card: ResourceCard = {
+    id: 1,
+    port: "Quanzhou Port",
+    totalCost: 7,
+    resources: [
+      { type: "Hemp", quantity: 3 },
+      { type: "Copper Ore", quantity: 1 },
+    ],
+    isProductCard: false,
+  };
+  game.resourceCards = [card];
+  const quote = explainCardPrice(game, card);
+  assert.equal(quote.final, 0);
+  assert.equal(
+    quote.steps.reduce((total, step) => total - step.delta, 0),
+    7,
+  );
+  const logs: string[] = [];
+  purchaseCard(game, card.id, logs);
+  const savings = logs.flatMap((line) =>
+    Array.from(line.matchAll(/saved (\d+) Gold/g), (match) => Number(match[1])),
+  );
+  assert.equal(
+    savings.reduce((sum, amount) => sum + amount, 0),
+    7,
+  );
+});
+
+test("Wage Ledger records the savings when a bill falls to zero", async () => {
+  const { buildVoyageRules } = await import("../src/lib/game/forecast");
+  const game = createInitialGameState(
+    0,
+    1,
+    1,
+    "fair_winds",
+    buildVoyageRules("wage ledger", 1, "fair_winds"),
+  );
+  game.phase = "worker_mgmt";
+  applyBoon(game, catalogBoon("master_apprentice"), []);
+  game.equippedModules = [catalogModule("wage_ledger")];
+  hireWorker(game, "weaver", []);
+  assignTask(game, "weaver", "Linen Clothes", []);
+  processProduction(game, []);
+  const opening = game.money;
+  const logs: string[] = [];
+  payWages(game, logs);
+  assert.equal(game.money, opening);
+  assert.ok(logs.includes("Wage Ledger saved 4 Gold on payroll."));
+});
+
+test("The chronicle keeps prior events in their original round and ignores future round references", async () => {
+  const { deriveChronicleEvents } =
+    await import("../src/components/portmasters/game/GameStatusPanel");
+  const events = deriveChronicleEvents(
+    [
+      "🛒 Bought Hemp, Total 10 Gold",
+      "⚓=== Round 2 · Phase 1: Port Merchant Exchange ===",
+      "Workshop buyer booked for round 3. Deliver 2 Linen Clothes.",
+      "🤝 Traded 1 Hemp for 1 Silk",
+      "💥 Bankrupt: Defaulted on a Loan",
+      "🔄=== Preparing for Round 3 ===",
+      "🧭 Boon Locked In: Merchant's Charm",
+      "======",
+    ],
+    3,
+  );
+  assert.deepEqual(
+    events.map(({ round, type }) => [round, type]),
+    [
+      [2, "purchase"],
+      [2, "round_start"],
+      [2, "round_start"],
+      [2, "barter"],
+      [2, "bankruptcy"],
+      [3, "round_start"],
+      [3, "boon"],
+    ],
+  );
 });

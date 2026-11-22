@@ -27,6 +27,7 @@ import {
   WORD_ON_THE_DOCKS_REWARD,
   WORD_ON_THE_DOCKS_THRESHOLD,
 } from "@/lib/game/constants";
+import { REBALANCED_RULES } from "@/lib/game/expansion";
 import { meritById } from "@/lib/game/merits";
 import { useRealtime } from "@/lib/use-realtime";
 import type { GameState } from "@/lib/game/types";
@@ -539,19 +540,34 @@ export function GameRoom({
     if (!docksPending || !state.loaded || !socket || !connected || !authed)
       return;
     let active = true;
-    void (async () => {
-      await flush();
-      if (!active) return;
-      const accepted: boolean = await socket
-        .timeout(4000)
-        .emitWithAck("docks:claim", { roomId: room.id, voyageEpoch });
-      if (!active || !accepted || getGame().voyageEpoch !== voyageEpoch) return;
-      act((game) => {
-        game._pendingDocksClaim = undefined;
-      });
-    })().catch(() => {});
+    let busy = false;
+    const claim = async () => {
+      if (!active || busy || !socket.connected) return;
+      const game = getGame();
+      if (!game._pendingDocksClaim || game.voyageEpoch !== voyageEpoch) return;
+      busy = true;
+      try {
+        await flush();
+        if (!active || getGame().voyageEpoch !== voyageEpoch) return;
+        const accepted: boolean = await socket
+          .timeout(4000)
+          .emitWithAck("docks:claim", { roomId: room.id, voyageEpoch });
+        if (active && accepted)
+          act((latest) => {
+            if (latest.voyageEpoch === voyageEpoch)
+              latest._pendingDocksClaim = undefined;
+          });
+      } catch {
+        // The saved claim stays pending until the server acknowledges it.
+      } finally {
+        busy = false;
+      }
+    };
+    void claim();
+    const retry = setInterval(() => void claim(), 4000);
     return () => {
       active = false;
+      clearInterval(retry);
     };
   }, [
     act,
@@ -1428,6 +1444,13 @@ export function GameRoom({
     </Tabs>
   );
 
+  const helpRules =
+    state.game.phase === 0 ? REBALANCED_RULES : state.game.rulesVersion;
+  const helpSpecialties =
+    state.game.phase === 0 && isHost
+      ? phaseSync.specialties
+      : state.game.specialties;
+
   const view = (
     <div className="pm-canvas flex h-dvh min-h-0 w-full flex-col overflow-hidden">
       <header className="z-30 shrink-0 px-2 py-2 sm:px-4 sm:py-3">
@@ -1728,15 +1751,15 @@ export function GameRoom({
         open={guideOpen}
         onOpenChange={setGuideOpen}
         difficulty={state.game.difficulty}
-        rulesVersion={state.game.rulesVersion}
-        specialties={state.game.specialties}
+        rulesVersion={helpRules}
+        specialties={helpSpecialties}
       />
       <TipsModal
         open={tipsOpen}
         onOpenChange={setTipsOpen}
         difficulty={state.game.difficulty}
-        rulesVersion={state.game.rulesVersion}
-        specialties={state.game.specialties}
+        rulesVersion={helpRules}
+        specialties={helpSpecialties}
       />
       <RumorBoardModal
         open={rumorOpen}
@@ -1748,8 +1771,8 @@ export function GameRoom({
         open={tutOpen}
         onOpenChange={handleTutorialOpenChange}
         difficulty={state.game.difficulty}
-        rulesVersion={state.game.rulesVersion}
-        specialties={state.game.specialties}
+        rulesVersion={helpRules}
+        specialties={helpSpecialties}
       />
       <RestartConfirmModal
         open={restartConfirmOpen}

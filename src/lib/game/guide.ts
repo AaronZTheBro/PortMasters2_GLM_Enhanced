@@ -142,7 +142,9 @@ export function guideTabs(
           "Artisan Management: hire workers and assign production",
           "Phase 2: complete trade orders",
           "Phase 3: finish production, resolve pirates, then pay wages and maintenance",
-          "Phase 4 opens the Shipyard. Income Tax is assessed when you end the round.",
+          updated
+            ? "Phase 4 opens the Shipyard and sets aside Income Tax before upgrades. The tax is collected when you end the round."
+            : "Phase 4 opens the Shipyard. Income Tax is assessed when you end the round.",
         ],
       },
     ],
@@ -180,7 +182,7 @@ export function guideTabs(
       },
       {
         icon: "👥",
-        title: "Worker System",
+        title: "Artisans",
         intro:
           "Artisans turn raw materials into valuable finished goods. Each one charges a wage every round, even when idle.",
         bullets: workerCopy,
@@ -194,7 +196,7 @@ export function guideTabs(
         title: "Tax System",
         bullets: [
           "VAT is 5% of the positive margin per finished good sold, rounded down. The margin uses average recipe material prices and the recipe's base wage. Raw goods and Imperial Mandates are exempt.",
-          "Base Income Tax is 10% of positive round trading profit, rounded down, after deducting market purchases, freight, audits, wages, and maintenance. It is collected after the Shipyard.",
+          "Base Income Tax is 10% of positive round trading profit, rounded down. Trading costs include purchases, freight, audits, wages, and maintenance. Collection after the Shipyard is limited to available Gold.",
         ],
       },
       {
@@ -205,6 +207,11 @@ export function guideTabs(
             ? "Start at 2 Gold per cargo unit. Ship level discounts leave a minimum of 5 Gold. Favorable Tides then reduces ordinary freight by up to 4 Gold."
             : "Start at 2 Gold per cargo unit. Subtract the ship level and Favorable Tides reductions, keeping a base minimum of 5 Gold.",
           `Then apply Bulk Hauler Rigging and Overdrive Engine. Split the remaining freight by unit count for Silk Winds and Silk Road Monopoly, rounding down. Apply Fleet of Treasures${newRules ? ", then Cargo Net and Convoy Pennant when eligible" : " last"}. Freight cannot fall below zero.`,
+          ...(updated
+            ? [
+                "Income Tax uses the modules equipped before the Shipyard. Installs and swaps change the following round's tax. Broker fees count as trading costs.",
+              ]
+            : []),
           "Salvage Crane can refund the quoted freight. Tax Evasion Ledger can charge an audit after an order. The order card shows those chances when they apply.",
           updated
             ? "Percentage bonuses use the eligible share of the original reward after VAT. They add together without compounding. The buyer card shows each bonus. Mandate rewards are fixed."

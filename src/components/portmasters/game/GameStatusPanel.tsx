@@ -44,32 +44,49 @@ import {
   ScrollText,
 } from "lucide-react";
 
-/** Derive chronicle events from the game log strings. */
-function deriveChronicleEvents(
+const roundHeader = /=== (Preparing for )?Round (\d+)(?: ·| Settlement| ===)/i;
+
+export function deriveChronicleEvents(
   logs: string[],
   currentRound: number,
 ): ChronicleEvent[] {
-  return logs.map((entry) => {
-    const roundMatch = entry.match(/Round\s+(\d+)/i);
-    const round = roundMatch ? parseInt(roundMatch[1], 10) : currentRound;
-    let type: ChronicleEvent["type"] = "round_start";
-    let description = entry;
-    if (/purchas|bought|bought/i.test(entry)) type = "purchase";
-    else if (/order|complet|fulfill|trad/i.test(entry)) type = "order";
-    else if (/wage|salary/i.test(entry)) type = "wages";
-    else if (/maint|upkeep/i.test(entry)) type = "maintenance";
-    else if (/pirat|raid|escort/i.test(entry)) type = "pirate";
-    else if (/upgrade|ship.*level|improv/i.test(entry)) type = "upgrade";
-    else if (/module|equip|draft/i.test(entry)) type = "module";
-    else if (/boon|bless/i.test(entry)) type = "boon";
-    else if (/loan|borrow|lend|aid|grant/i.test(entry)) type = "loan";
-    else if (/barter|swap|trade.*offer/i.test(entry)) type = "barter";
-    else if (/bankrupt|default/i.test(entry)) type = "bankruptcy";
-    else if (/round/i.test(entry)) type = "round_start";
-    // Truncate very long entries for the compact view
-    if (description.length > 80) description = description.slice(0, 77) + "…";
-    return { round, phase: "", type, description };
-  });
+  const first = logs.map((entry) => entry.match(roundHeader)).find(Boolean);
+  let round = first
+    ? Math.max(1, Number(first[2]) - Number(Boolean(first[1])))
+    : currentRound;
+  return logs
+    .filter((entry) => entry.trim() && !/^=+$/.test(entry.trim()))
+    .map((description) => {
+      const header = description.match(roundHeader);
+      if (header) round = Number(header[2]);
+      let type: ChronicleEvent["type"] = "round_start";
+      if (header) return { round, type, description };
+      if (/bankrupt|defaulted|cannot cover/i.test(description))
+        type = "bankruptcy";
+      else if (/barter|🤝 (?:Traded|Offered)/i.test(description))
+        type = "barter";
+      else if (/loan|borrow|lend|repaid|debt|bequest/i.test(description))
+        type = "loan";
+      else if (/pirate|raid|escort|clear seas/i.test(description))
+        type = "pirate";
+      else if (
+        /^\s*(?:👥|💰)?\s*(?:wages|paid wages|paying worker wages)|payroll/i.test(
+          description,
+        )
+      )
+        type = "wages";
+      else if (/maintenance|upkeep/i.test(description)) type = "maintenance";
+      else if (/upgraded|upgrade the ship/i.test(description)) type = "upgrade";
+      else if (/installed |swapped |module draft/i.test(description))
+        type = "module";
+      else if (/boon|navigator's compass/i.test(description)) type = "boon";
+      else if (/purchase|bought/i.test(description)) type = "purchase";
+      else if (
+        /order|trad(?:e|ing)|net (?:profit|proceeds)|freight/i.test(description)
+      )
+        type = "order";
+      return { round, type, description };
+    });
 }
 
 /**
@@ -130,6 +147,7 @@ export function GameStatusPanel({
   const safe = game.money >= pendTotal;
   const nW = roster.reduce((sum, r) => sum + r.list.length, 0);
   const cfg = difficultyConfig(game.difficulty);
+  const shownRound = Math.min(game.currentRound, game.maxRounds);
   const hasLoans = game.debts.length > 0 || game.loansGiven.length > 0;
   const duesAlert = (showObligations && !safe) || game.debts.length > 0;
 
@@ -143,7 +161,7 @@ export function GameStatusPanel({
             <Anchor className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
             Voyage{" "}
             <b className="text-foreground">
-              {game.currentRound}/{game.maxRounds}
+              {shownRound}/{game.maxRounds}
             </b>
           </span>
           {/* Round progress bar */}
@@ -151,7 +169,7 @@ export function GameStatusPanel({
             <div
               className="h-full rounded-full bg-teal-500/70 transition-all duration-500"
               style={{
-                width: `${Math.max(2, (game.currentRound / game.maxRounds) * 100)}%`,
+                width: `${Math.max(2, (shownRound / game.maxRounds) * 100)}%`,
               }}
             />
           </div>
@@ -502,9 +520,8 @@ export function GameStatusPanel({
           className="pm-scroll lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
         >
           <VoyageChronicle
-            events={deriveChronicleEvents(logs, game.currentRound)}
-            currentRound={game.currentRound}
-            gameState={game}
+            events={deriveChronicleEvents(logs, shownRound)}
+            currentRound={shownRound}
           />
         </TabsContent>
       </Tabs>

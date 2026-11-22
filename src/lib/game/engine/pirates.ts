@@ -19,7 +19,7 @@ import { quoteDues } from "./pricing";
 
 // Rolls personal raid risk before settlement costs are charged.
 export function quotePirateWaters(state: GameState) {
-  // Difficulty controls the raid chance while severity remains total loss.
+  // The saved voyage rules set raid severity and the reserve for bills.
   const base = pirateChanceFor(
     state.difficulty,
     state.currentRound,

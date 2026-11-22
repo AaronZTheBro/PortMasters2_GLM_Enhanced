@@ -12,7 +12,6 @@ export {
 // Pricing, taxes, and wages.
 export {
   brokersFavorCommission,
-  calcIncomeTax,
   explainCardPrice,
   explainExpectedPrice,
   explainTransportCost,
@@ -109,5 +108,4 @@ export {
   skipUpgrade,
   snapToCheckpoint,
   startPhase3,
-  startPhase4,
 } from "./engine/lifecycle";

@@ -9,7 +9,7 @@ import {
 } from "../expansion";
 import { describeForecast } from "../forecast";
 import { voyageRandom } from "../voyage-rng";
-import { quoteDues } from "./pricing";
+import { incomeTaxDue, quoteDues, quoteShipUpgrade } from "./pricing";
 import {
   canProduce,
   isOceanCargo,
@@ -20,7 +20,7 @@ import {
 } from "../pools";
 import { weightedPick } from "../rng";
 import type { GameContext, GameState } from "../types";
-import { hasModule, shipUpgradeSurcharge } from "./core";
+import { hasModule } from "./core";
 import { quoteRecipe } from "./workers";
 import { startPhase1 } from "./market";
 
@@ -208,10 +208,13 @@ export function upgradeShip(state: GameState, logs: string[]) {
     (rebalanced(state) && state.currentRound >= state.maxRounds)
   )
     return;
-  const cost =
-    state.shipUpgradeCost[state.shipLevel] + shipUpgradeSurcharge(state);
-  if (state.money < cost) {
-    logs.push(`❌ Need ${cost} Gold to upgrade the ship`);
+  const { cost, available, taxReserved } = quoteShipUpgrade(state);
+  if (available < cost) {
+    logs.push(
+      taxReserved
+        ? `❌ Need ${cost} Gold to upgrade after reserving ${taxReserved} Gold for Income Tax`
+        : `❌ Need ${cost} Gold to upgrade the ship`,
+    );
     return;
   }
   state.money -= cost;
@@ -354,6 +357,7 @@ export function handleModuleSelect(
   const mod = choices[idx];
   if (!mod || hasModule(state, mod.id)) return;
   if (state.equippedModules.length < state.shipLevel) {
+    if (rebalanced(state)) state.roundIncomeTaxDue ??= incomeTaxDue(state);
     state.equippedModules.push(mod);
     logs.push(`✅ Installed ${mod.name}!`);
     state._draftChoices = choices.filter((m) => m.id !== mod.id);
@@ -373,6 +377,7 @@ export function finalizeModuleSwap(
   const mod = state._newModule;
   const previous = state.equippedModules[slotIdx];
   if (!mod || !previous || hasModule(state, mod.id)) return;
+  if (rebalanced(state)) state.roundIncomeTaxDue ??= incomeTaxDue(state);
   state.equippedModules[slotIdx] = mod;
   logs.push(`🔄 Swapped ${previous.name} for ${mod.name}!`);
   state._draftChoices = (state._draftChoices ?? []).filter(

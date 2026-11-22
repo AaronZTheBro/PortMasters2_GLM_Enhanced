@@ -1,7 +1,7 @@
 // Orchestrates voyage phases, checkpoints, settlement, and restarts.
 import { APP_NAME, MERCHANT_RATINGS, type MerchantRating } from "../constants";
 import { DEFAULT_DIFFICULTY, type Difficulty } from "../difficulty";
-import type { VoyageRules } from "../expansion";
+import { rebalanced, type VoyageRules } from "../expansion";
 import {
   createInitialGameState,
   type GameContext,
@@ -12,7 +12,7 @@ import { completeBarterPhase } from "./barter";
 import { selectBoon, startBoonDrafting } from "./boons";
 import { completePhase1, startPhase1 } from "./market";
 import { startPhase2 } from "./orders";
-import { calcIncomeTax } from "./pricing";
+import { incomeTaxDue } from "./pricing";
 import { payMaintenance, payWages, processProduction } from "./workers";
 
 export function endRound(state: GameState, logs: string[]) {
@@ -25,12 +25,18 @@ export function endRound(state: GameState, logs: string[]) {
   logs.push(`   👥 Wages: ${state.workerWages} Gold`);
   const preTax = state.roundRevenue - totalCost;
   logs.push(`📈 Profit before tax: ${preTax} Gold`);
-  const tax = calcIncomeTax(state, preTax);
+  const due = incomeTaxDue(state);
+  const tax = Math.min(due, Math.max(0, state.money));
   if (tax > 0) {
     state.money -= tax;
     state.incomeTaxPaid += tax;
-    logs.push(`🏛️ Income tax paid after modifiers: ${tax} Gold`);
-  } else logs.push("🏛️ No income tax due");
+    logs.push(`🏛️ Income Tax paid after modifiers: ${tax} Gold`);
+  } else if (due === 0) logs.push("🏛️ No Income Tax due");
+  if (tax < due)
+    logs.push(
+      `🏛️ Income Tax was limited by available Gold. Assessed ${due} Gold and collected ${tax} Gold.`,
+    );
+  state.roundIncomeTaxDue = undefined;
   if (state.roundVatPaid)
     logs.push(`🧾 VAT paid this round: ${state.roundVatPaid} Gold`);
   state.roundVatPaid = 0;
@@ -99,6 +105,7 @@ export function finishSettlement(state: GameState, logs: string[]) {
 
 export function startPhase4(state: GameState, logs: string[]) {
   state.phase = 4;
+  if (rebalanced(state)) state.roundIncomeTaxDue = incomeTaxDue(state);
   logs.push(
     `\n🚢=== Round ${state.currentRound} · Phase 4: Shipyard & Modules ===`,
   );

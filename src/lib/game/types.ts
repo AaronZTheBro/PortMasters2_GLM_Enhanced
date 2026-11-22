@@ -148,6 +148,7 @@ export type GameState = {
   roundVatPaid?: number;
   processedLoanSettlements?: string[];
   incomeTaxPaid: number;
+  roundIncomeTaxDue?: number;
   roundRevenue: number;
   roundCosts: number;
   // Every artisan the captain employs, keyed by type (see WORKER_TYPES in
@@ -372,6 +373,7 @@ export function createInitialGameState(
     vatPaid: 0,
     roundVatPaid: 0,
     incomeTaxPaid: 0,
+    roundIncomeTaxDue: undefined,
     roundRevenue: 0,
     roundCosts: 0,
     workers: emptyWorkerRoster(),

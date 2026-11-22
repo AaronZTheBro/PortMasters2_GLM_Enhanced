@@ -336,11 +336,18 @@ export function WorkerMgmt({
   const finalRound = updated && game.currentRound >= game.maxRounds;
   const workshops = updated && !finalRound ? workshopOptions(game) : [];
   const [workshopItem, setWorkshopItem] = useState("");
-  const [workshopQuantity, setWorkshopQuantity] = useState(1);
+  const [quantityChoice, setWorkshopQuantity] = useState<number>();
   const existing = workshopBuyer(game, game.currentRound + 1);
-  const selected = workshops.includes(workshopItem)
-    ? workshopItem
-    : (existing?.resources[0]?.type ?? workshops[0]);
+  const bookedItem = existing?.resources[0]?.type;
+  const bookedQuantity = existing?.resources[0]?.required;
+  const selected =
+    [workshopItem, bookedItem].find(
+      (item) => item && workshops.includes(item),
+    ) ?? workshops[0];
+  const workshopQuantity =
+    quantityChoice ??
+    (selected === bookedItem ? bookedQuantity : undefined) ??
+    1;
   const projectedContract = selected
     ? workshopBuyer(
         {
@@ -564,6 +571,9 @@ export function WorkerMgmt({
               <Button
                 size="sm"
                 className="justify-self-start"
+                disabled={
+                  selected === bookedItem && workshopQuantity === bookedQuantity
+                }
                 onClick={() =>
                   act((g, logs) =>
                     chooseWorkshopContract(g, selected, workshopQuantity, logs),
@@ -865,7 +875,7 @@ export function WorkerMgmt({
         <div className="rounded-xl border border-teal-500/15 bg-teal-500/[0.03] p-4 mb-4">
           <h3 className="text-center font-semibold mb-2 flex items-center justify-center gap-1.5">
             <Hammer className="h-4 w-4 text-teal-600 dark:text-teal-400" />
-            Worker Status &amp; Tasks
+            Artisan Tasks
           </h3>
           {roster.map((r) => (
             <WorkerList

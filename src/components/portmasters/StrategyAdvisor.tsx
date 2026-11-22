@@ -19,11 +19,9 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { GameState } from "@/lib/game/types";
-import {
-  maintenanceSurcharge,
-  shipUpgradeSurcharge,
-  quoteWages,
-} from "@/lib/game/engine";
+import { quoteDues, quoteShipUpgrade } from "@/lib/game/engine/pricing";
+import { quoteOrder } from "@/lib/game/engine/orders";
+import { rebalanced } from "@/lib/game/expansion";
 import { pirateChanceFor } from "@/lib/game/difficulty";
 import { quotePirateWaters } from "@/lib/game/engine/pirates";
 import { WORKER_TYPES } from "@/lib/game/constants";
@@ -138,7 +136,11 @@ function completableOrders(game: GameState) {
         break;
       }
     }
-    if (can) out.push({ id: order.id, reward: order.reward });
+    if (can) {
+      const { reward, freight } = quoteOrder(game, order);
+      const net = reward - freight.final;
+      if (game.money + net >= 0) out.push({ id: order.id, reward: net });
+    }
   }
   return out;
 }
@@ -163,33 +165,30 @@ function findExcessGoods(game: GameState, threshold = 10) {
 function computeAdvice(game: GameState): Advice[] {
   const advice: Advice[] = [];
 
-  // Financial health
-  const maintenanceDue = game.fixedCost + maintenanceSurcharge(game);
-  if (game.money < maintenanceDue) {
+  const beforeBills = [5, 1, "barter", "worker_mgmt", 2, 3].includes(
+    game.phase,
+  );
+  const due = quoteDues(game);
+  if (beforeBills && game.money < due.total) {
     advice.push({
       id: "bankruptcy",
       priority: "critical",
-      title: "Bankruptcy risk!",
-      description: `You need ${maintenanceDue} Gold for maintenance, but only have ${game.money} Gold on hand. Without more funds, the next settlement ends the voyage.`,
+      title: "Settlement funds are short",
+      description: `Wages and maintenance require ${due.total} Gold. You have ${game.money} Gold.`,
       action:
-        "Sell goods, fulfill orders, request aid, or post a barter offer.",
-    });
-  }
-
-  const wagesDue = quoteWages(game).due;
-  if (wagesDue > 0 && game.money < wagesDue) {
-    advice.push({
-      id: "wages",
-      priority: "critical",
-      title: "Can't afford wages!",
-      description: `Next settlement charges ${wagesDue} Gold in wages, but you have ${game.money} Gold. Defaulting on payroll ends the voyage.`,
-      action: "Consider firing unnecessary workers or requesting aid.",
+        game.phase === 3
+          ? "Request Financial Aid if you need help covering the bills."
+          : "Reserve Gold and look for a trade you can complete this round.",
     });
   }
 
   // Worker efficiency
   const idle = countIdleWorkers(game);
-  if (idle > 0) {
+  if (
+    idle > 0 &&
+    game.phase === "worker_mgmt" &&
+    (!rebalanced(game) || game.currentRound < game.maxRounds)
+  ) {
     advice.push({
       id: "idle_workers",
       priority: "warning",
@@ -202,7 +201,12 @@ function computeAdvice(game: GameState): Advice[] {
 
   const firstRoundRisk = pirateChanceFor(game.difficulty, 1, game.maxRounds);
   const { chance, raidLoss } = quotePirateWaters(game);
-  if (chance > firstRoundRisk && !game.pirateAttackResolved && !game.gameOver) {
+  if (
+    beforeBills &&
+    chance > firstRoundRisk &&
+    !game.pirateAttackResolved &&
+    !game.gameOver
+  ) {
     advice.push({
       id: "pirate_risk",
       priority: "warning",
@@ -215,14 +219,18 @@ function computeAdvice(game: GameState): Advice[] {
 
   // Ship upgrade readiness
   const nextLevel = game.shipLevel;
-  const baseCost = game.shipUpgradeCost[nextLevel];
-  const upgradeCost = baseCost + shipUpgradeSurcharge(game);
-  if (baseCost !== undefined && game.money >= upgradeCost && !game.gameOver) {
+  const { cost: upgradeCost, available } = quoteShipUpgrade(game);
+  if (
+    game.phase === 4 &&
+    nextLevel < 3 &&
+    (!rebalanced(game) || game.currentRound < game.maxRounds) &&
+    available >= upgradeCost
+  ) {
     advice.push({
       id: "ship_upgrade",
       priority: "tip",
       title: "Ship upgrade ready",
-      description: `You can afford the ${upgradeCost} Gold upgrade to ship level ${nextLevel + 1}. An upgrade adds one module slot and cuts base freight by 5 Gold.`,
+      description: `You can afford the ${upgradeCost} Gold upgrade to ship level ${nextLevel + 1}. An upgrade adds one module slot and can reduce freight by up to 5 Gold.`,
       action: "Visit the Shipyard during Phase 4 to upgrade.",
     });
   }
@@ -245,20 +253,24 @@ function computeAdvice(game: GameState): Advice[] {
   }
 
   // Order fulfillment
-  const completable = completableOrders(game);
+  const completable = game.phase === 2 ? completableOrders(game) : [];
   if (completable.length > 0) {
-    const total = completable.reduce((s, o) => s + o.reward, 0);
+    const best = Math.max(...completable.map(({ reward }) => reward));
     advice.push({
       id: "orders_ready",
       priority: "tip",
       title: `${completable.length} order${completable.length === 1 ? "" : "s"} ready to fulfill`,
-      description: `You already hold everything needed to settle ${completable.length === 1 ? "one open order" : `${completable.length} open orders`}, worth ~${total} Gold in rewards.`,
+      description: `You already hold everything needed to settle ${completable.length === 1 ? "one open order" : `${completable.length} open orders`}, with a best quoted payout of ${best} Gold after freight and VAT. Orders may need the same cargo.`,
       action: "Prioritize the best reward first during Phase 2.",
     });
   }
 
   // No orders completed yet
-  if (game.completedOrders.length === 0 && game.currentRound > 2) {
+  if (
+    game.phase === 2 &&
+    game.totalOrdersCompleted === 0 &&
+    game.currentRound > 2
+  ) {
     advice.push({
       id: "no_orders",
       priority: "warning",

@@ -215,8 +215,8 @@ export function Orders({
             salvageChance,
             auditChance,
           } = quoteOrder(game, o);
-          const netProfit = reward - freight.final;
-          const canComplete = hasCargo && game.money + netProfit >= 0;
+          const netProceeds = reward - freight.final;
+          const canComplete = hasCargo && game.money + netProceeds >= 0;
           const brokerCommissionPct =
             commissionBase > 0
               ? Math.round((commission / commissionBase) * 100)
@@ -245,7 +245,7 @@ export function Orders({
                   📍 {intel?.port ?? o.demandPort}{" "}
                   <span className="text-muted-foreground">
                     {o.isMandate
-                      ? "· Imperial Commission"
+                      ? "· Imperial Mandate"
                       : o.workshop
                         ? "· Workshop contract"
                         : o.clearance
@@ -306,13 +306,13 @@ export function Orders({
                 <div
                   className={cn(
                     "text-[13px] font-semibold mt-0.5",
-                    netProfit >= 0
+                    netProceeds >= 0
                       ? "text-emerald-600 dark:text-emerald-400"
                       : "text-rose-600 dark:text-rose-400",
                   )}
                 >
-                  Gross {o.reward} Gold · Payout {reward} Gold · Net {netProfit}{" "}
-                  Gold
+                  Gross {o.reward} Gold · Payout {reward} Gold · Net{" "}
+                  {netProceeds} Gold
                 </div>
                 {(salvageChance > 0 || auditChance > 0) && (
                   <p className="text-[11px] text-muted-foreground">
@@ -355,7 +355,9 @@ export function Orders({
                   disabled={!canComplete || completed}
                   onClick={() => act((g, l) => completeOrder(g, o.id, l))}
                 >
-                  {completed ? "✅ Completed" : `🤝 Trade (Net ${netProfit}💰)`}
+                  {completed
+                    ? "✅ Completed"
+                    : `🤝 Trade (Net ${netProceeds}💰)`}
                 </Button>
               </div>
             </div>

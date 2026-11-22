@@ -14,7 +14,7 @@ import {
   productPriceRange,
 } from "../pools";
 import type { GameState, OrderCard, ResourceCard, Worker } from "../types";
-import { hasModule, maintenanceSurcharge } from "./core";
+import { hasModule, maintenanceSurcharge, shipUpgradeSurcharge } from "./core";
 import {
   EFFECT,
   REBALANCE,
@@ -234,7 +234,7 @@ export function explainVAT(
   };
 }
 
-export function calcIncomeTax(state: GameState, preTax: number): number {
+function calcIncomeTax(state: GameState, preTax: number): number {
   if (preTax <= 0) return 0;
   const rate = state.modifierFlags.income_tax_override || 0.1;
   let tax = Math.floor(preTax * rate);
@@ -243,15 +243,39 @@ export function calcIncomeTax(state: GameState, preTax: number): number {
   return tax;
 }
 
+export function incomeTaxDue(state: GameState) {
+  return (
+    state.roundIncomeTaxDue ??
+    calcIncomeTax(state, state.roundRevenue - state.roundCosts)
+  );
+}
+
+export function quoteShipUpgrade(state: GameState) {
+  const base = state.shipUpgradeCost[state.shipLevel] ?? 0;
+  const surcharge = shipUpgradeSurcharge(state);
+  const cost = base + surcharge;
+  const taxReserved = rebalanced(state)
+    ? Math.min(Math.max(0, state.money), incomeTaxDue(state))
+    : 0;
+  return {
+    base,
+    surcharge,
+    cost,
+    taxReserved,
+    available: state.money - taxReserved,
+  };
+}
+
 function applyDiscount(
   steps: PriceStep[],
   cost: number,
   label: string,
   amount: number,
-  effect: string,
+  effect?: string,
 ) {
   const savings = Math.min(cost, amount);
-  steps.push({ label, delta: -savings, effect });
+  if (savings > 0 || effect)
+    steps.push({ label, delta: -savings, ...(effect ? { effect } : {}) });
   return cost - savings;
 }
 
@@ -280,47 +304,44 @@ export function explainCardPrice(
           : sum,
       0,
     );
-    if (reduction > 0) {
-      steps.push({
-        label: `${boonNameForModifierKey("hemp_price_reduction")} (${state.modifierFlags.hemp_price_reduction} Gold less per Hemp)`,
-        delta: -reduction,
-      });
-      cost -= reduction;
-    }
+    cost = applyDiscount(
+      steps,
+      cost,
+      `${boonNameForModifierKey("hemp_price_reduction")} (${state.modifierFlags.hemp_price_reduction} Gold less per Hemp)`,
+      reduction,
+    );
   }
   if (hasModule(state, "kiln_cellar")) {
     const reduction = card.resources.reduce(
-      (sum, r) =>
-        r.type === "Porcelain Clay" || r.type === "Copper Ore"
-          ? sum + (r.quantity ?? 0) * 2
-          : sum,
+      (sum, { type, quantity }) =>
+        sum +
+        (type === "Porcelain Clay" || type === "Copper Ore"
+          ? (quantity ?? 0) * 2
+          : 0),
       0,
     );
-    if (reduction > 0) {
-      steps.push({
-        label: "Kiln Cellar module, 2 Gold less per unit",
-        delta: -reduction,
-      });
-      cost -= reduction;
-    }
+    cost = applyDiscount(
+      steps,
+      cost,
+      "Kiln Cellar module, 2 Gold less per unit",
+      reduction,
+    );
   }
   if (hasModule(state, "foreign_quarter_pass")) {
     const reduction = card.resources.reduce(
-      (sum, r) =>
-        r.type === "Spices" || r.type === "Pearls"
-          ? sum + (r.quantity ?? 0) * 3
-          : sum,
+      (sum, { type, quantity }) =>
+        sum +
+        (type === "Spices" || type === "Pearls" ? (quantity ?? 0) * 3 : 0),
       0,
     );
-    if (reduction > 0) {
-      steps.push({
-        label: "Foreign Quarter Pass module, 3 Gold less per unit",
-        delta: -reduction,
-      });
-      cost -= reduction;
-    }
+    cost = applyDiscount(
+      steps,
+      cost,
+      "Foreign Quarter Pass module, 3 Gold less per unit",
+      reduction,
+    );
   }
-  if (hasModule(state, "smugglers_hold")) {
+  if (hasModule(state, "smugglers_hold") && cost > 0) {
     const next = Math.floor(cost * 0.85);
     steps.push({
       label: "Smuggler's Hold module, 15% reduction",
@@ -329,10 +350,6 @@ export function explainCardPrice(
     cost = next;
   }
 
-  if (cost < 0) {
-    steps.push({ label: "Floor at 0 Gold", delta: -cost });
-    cost = 0;
-  }
   if (rebalanced(state)) {
     const units = (matches: (item: string) => boolean) =>
       card.resources.reduce(

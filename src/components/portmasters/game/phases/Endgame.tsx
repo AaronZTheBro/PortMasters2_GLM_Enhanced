@@ -825,7 +825,7 @@ export function Endgame({
             <div className="flex items-center gap-1.5">
               <ShipIcon className="h-3.5 w-3.5 text-teal-500" />
               <span className="font-semibold text-foreground">
-                {game.currentRound}
+                {roundsSailed}
               </span>{" "}
               Rounds
             </div>

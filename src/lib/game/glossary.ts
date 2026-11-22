@@ -7,9 +7,10 @@ import {
   WORKER_TYPES,
   workerType,
 } from "./constants";
+import { rebalanced } from "./expansion";
 import { canProduce, voyageBoon, voyageModule, voyageRecipe } from "./pools";
 
-export const GLOSSARY: Record<string, string> = {
+const GLOSSARY: Record<string, string> = {
   // Core stats
   Reputation:
     "Your score for the voyage, earned mainly from profitable trade orders. The eligible solvent captain with the highest final Reputation is crowned Sea Master.",
@@ -18,7 +19,7 @@ export const GLOSSARY: Record<string, string> = {
   "Income Tax":
     "A base tax of 10% on positive round trading profit. It is charged when the round ends after the Shipyard.",
   Freight:
-    "The shipping fee for completing a trade order, based on how many items you're moving. Reduced by your ship level and certain boons or modules.",
+    "The shipping fee for completing a trade order, based on how many items you're moving. Reduced by your ship level and certain Boons or modules.",
   Maintenance:
     "A fixed upkeep fee for your ship each round, due at Phase 3 regardless of how the round went.",
   "Ship Level":
@@ -41,30 +42,19 @@ export const GLOSSARY: Record<string, string> = {
   Debt: "Gold owed after taking Financial Aid. Repay it before the final round ends; any remaining amount is taken from available funds, and an uncovered shortfall marks the voyage bankrupt.",
 };
 
-for (const b of BOONS) GLOSSARY[b.name] = b.desc;
-for (const m of MODULES) GLOSSARY[m.name] = m.desc;
-
-for (const [item, material] of Object.entries(COMMODITIES)) {
-  GLOSSARY[item] =
-    `A raw material with specialty prices at ${material.ports.join(" and ")}. Its availability depends on your voyage's charter.`;
-}
-for (const [item, recipe] of Object.entries(RECIPES)) {
-  const inputs = Object.entries(recipe.materials)
-    .map(([name, qty]) => `${qty} ${name}`)
-    .join(" and ");
-  GLOSSARY[item] =
-    `A finished good made by a ${workerType(recipe.worker_type)!.label}. The base recipe uses ${inputs} and completes at settlement.`;
-}
-
-for (const worker of WORKER_TYPES) {
-  const recipes = Object.keys(RECIPES)
-    .filter((product) => canProduce(worker.id, product))
-    .join(", ");
-  GLOSSARY[worker.label] =
-    `Can make ${recipes} when the recipes are available. The base wage is ${worker.wage} Gold per round, including idle rounds.`;
-}
-
 export function glossaryEntry(term: string, rulesVersion?: number) {
+  if (term === "Income Tax" && rebalanced({ rulesVersion }))
+    return "A base tax of 10% on positive round trading profit. The Shipyard sets aside the amount due before upgrades. Module changes apply to the next round. Only available Gold can be collected.";
+  const material = COMMODITIES[term];
+  if (material)
+    return `A raw material with specialty prices at ${material.ports.join(" and ")}. Its availability depends on this voyage's charter and selected specialties.`;
+  const artisan = WORKER_TYPES.find(({ label }) => label === term);
+  if (artisan) {
+    const products = Object.keys(RECIPES).filter((product) =>
+      canProduce(artisan.id, product),
+    );
+    return `Can make ${products.join(", ")} when those recipes are available. The base wage is ${artisan.wage} Gold per round, including idle rounds.`;
+  }
   if (RECIPES[term]) {
     const recipe = voyageRecipe(term, rulesVersion);
     const inputs = Object.entries(recipe.materials)

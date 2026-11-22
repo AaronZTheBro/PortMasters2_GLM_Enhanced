@@ -1,5 +1,6 @@
 "use client";
 
+import { incomeTaxDue, quoteShipUpgrade } from "@/lib/game/engine/pricing";
 import { rebalanced } from "@/lib/game/expansion";
 import { voyageBoon } from "@/lib/game/pools";
 import { motion } from "framer-motion";
@@ -33,7 +34,6 @@ import {
   explainTransportCost,
   finalizeModuleSwap,
   handleModuleSelect,
-  shipUpgradeSurcharge,
   startModuleDrafting,
   swapModuleChoices,
   upgradeShip,
@@ -356,7 +356,7 @@ function CostBreakdown({
           ) : (
             <TrendingDown className="h-3 w-3" />
           )}
-          Your balance
+          Gold available for upgrade
         </span>
         <span className="font-mono">{balance}💰</span>
       </div>
@@ -381,11 +381,15 @@ export function Shipyard({
 }) {
   const finalRound = rebalanced(game) && game.currentRound >= game.maxRounds;
   const canUpgrade = game.shipLevel < 3 && !finalRound;
-  const surcharge = shipUpgradeSurcharge(game);
-  const upgCost = canUpgrade
-    ? game.shipUpgradeCost[game.shipLevel] + surcharge
-    : 0;
-  const affordable = game.money >= upgCost;
+  const {
+    base,
+    surcharge,
+    cost: upgCost,
+    available,
+    taxReserved,
+  } = quoteShipUpgrade(game);
+  const incomeTax = incomeTaxDue(game);
+  const affordable = available >= upgCost;
   const canDraft = game.shipLevel > 0 && !finalRound;
   const baseFreight = {
     ...game,
@@ -539,14 +543,21 @@ export function Shipyard({
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-xs">
                   <CostBreakdown
-                    base={game.shipUpgradeCost[game.shipLevel]}
+                    base={base}
                     penalty={surcharge}
                     total={upgCost}
                     affordable={affordable}
-                    balance={game.money}
+                    balance={available}
                   />
                 </TooltipContent>
               </Tooltip>
+            )}
+            {incomeTax > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Income Tax due at round end is {incomeTax} Gold.
+                {taxReserved > 0 &&
+                  ` ${taxReserved} Gold is set aside for that bill.`}
+              </p>
             )}
             {rebalanced(game) && canUpgrade && (
               <p className="text-sm text-muted-foreground">

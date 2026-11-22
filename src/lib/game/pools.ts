@@ -222,17 +222,21 @@ const BOON_REVISIONS: Record<string, string> = {
   false_colors: "Cancel Broker leak risk and halve your escort fee this round.",
   merchants_converge:
     "Reveal one additional buyer before shopping this round. The buyer requests one finished good.",
+  merchant_charm:
+    "Reduces cargo lot prices by 15% this round, including Workshop Supplier lots. Module discounts apply later.",
+  hemp_monopoly:
+    "Reduces cargo lot prices by up to 2 Gold per Hemp unit, including Workshop Supplier lots.",
   favorable_tides:
     "Save up to 4 Gold on ordinary freight after the ship level discount this round.",
   artisan_inspiration:
-    "One assigned artisan finishes an extra item this round.",
+    "The first assigned artisan in roster order finishes one extra item this round.",
 };
 
 const MODULE_REVISIONS: Record<string, string> = {
   cargo_net: `Save up to ${REBALANCE.cargoNet} Gold in freight on every ordinary order.`,
   wage_ledger: `Save up to ${REBALANCE.wageLedger} Gold in wages in any round when an artisan finishes a task.`,
   signal_lantern:
-    "See an additional buyer's exact next round terms during Artisan Management.",
+    "See an additional buyer's exact next round terms during buying and Artisan Management.",
   merchant_scales: `Save ${REBALANCE.scalesUnit} Gold per port specialty unit in its own port, up to ${REBALANCE.scalesCap} Gold each round.`,
   bonded_warehouse: `Shelter ${REBALANCE.warehouse} more Gold from direct raids.`,
   convoy_pennant: `Save up to ${REBALANCE.convoyFreight} Gold in freight on the first ordinary order each round. During a forecast event, that order also pays ${REBALANCE.convoyReward} additional Gold.`,

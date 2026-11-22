@@ -7,7 +7,7 @@ import {
 } from "@/lib/game/engine";
 import type { explainVAT } from "@/lib/game/engine/pricing";
 import type { GameState } from "@/lib/game/types";
-import { GLOSSARY } from "@/lib/game/glossary";
+import { glossaryEntry } from "@/lib/game/glossary";
 import { unlockedProducts, unlockedResources } from "@/lib/game/pools";
 
 /**
@@ -123,7 +123,7 @@ export function priceAwareTermContent(game: GameState, itemType: string) {
   );
   if (!openResources.includes(itemType) && !openProducts.includes(itemType))
     return undefined;
-  const description = GLOSSARY[itemType];
+  const description = glossaryEntry(itemType, game.rulesVersion);
   const price = explainExpectedPrice(game, itemType);
   return (
     <div className="space-y-1.5">
