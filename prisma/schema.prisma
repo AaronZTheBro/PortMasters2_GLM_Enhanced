@@ -1,0 +1,363 @@
+// =====================================================================
+// PortMasters 2: Lords of the Silk Road (Online Edition)
+// Prisma schema covering accounts, sessions, rooms, membership, per
+// player game state, and chat (room wide and one to one messages).
+// =====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  // A custom, explicit output location instead of node_modules/@prisma/client,
+  // so the import path is stable regardless of where this gets imported from.
+  output   = "../generated/prisma"
+  // Prisma 7's default engine type for this generator is "client": no Rust
+  // query engine binary at all, just the JS client talking through a driver
+  // adapter (see src/lib/db.ts). binaryTargets doesn't apply to that engine
+  // type, so it's intentionally not set here.
+}
+
+// SQLite: a single embedded file, no separate database server to run.
+// Prisma 7 no longer allows a datasource url here; the CLI database push
+// and studio commands read DATABASE_URL from prisma.config.ts at the repo
+// root instead, and the app itself connects through the driver adapter
+// in src/lib/db.ts. Both ultimately point at the same DATABASE_URL value,
+// which (per prisma.config.ts) resolves to prisma/dev.db locally. For
+// production, point it at an absolute path on a persistent volume. See
+// .env.example for the local default.
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  displayName  String
+  avatarHue    Int      @default(180)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions     Session[]
+  memberships  RoomMember[]
+  ownedRooms   Room[]         @relation("RoomHost")
+  gameStates   GameState[]
+  sentMessages Message[]      @relation("MessageSender")
+  recvMessages Message[]      @relation("MessageRecipient")
+  legacy       CaptainLegacy?
+  merits       CaptainMerit[]
+  activities   Activity[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Room {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  hostId    String
+  isPublic  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  // The room's shared checkpoint: the round and phase every captain is
+  // synchronized to. currentPhase stores the Phase union (see
+  // src/lib/game/types.ts) as a string, e.g. "0", "5", "worker_mgmt".
+  // Advanced by the readiness protocol in src/server/realtime.ts once
+  // every current room member (minus anyone bankrupt or at the endgame
+  // screen) has signaled ready, so it survives a server restart instead
+  // of living only in memory.
+  currentRound Int    @default(1)
+  currentPhase String @default("0")
+  phaseReleased Boolean @default(false)
+  phasePulse String @default("{}")
+  barterLedger String @default("{}")
+
+  // Incremented whenever the host restarts the voyage. This becomes part of
+  // each captain's deterministic seed so a restart overwrites the room with a
+  // new voyage (fresh market, orders, and Broker intel for everyone),
+  // while a reload during the voyage still reproduces the current one.
+  voyageEpoch Int @default(0)
+
+  // Flips to true the moment the host starts the voyage (see the
+  // "room:start" handler in src/server/realtime.ts). A room sits open in
+  // phase 0 with no minimum headcount before that, so anyone can join;
+  // once a voyage is under way the room is locked, and the join routes
+  // (src/app/api/rooms/[id]/join, src/app/api/rooms/join) refuse anyone
+  // who isn't already a member.
+  started Boolean @default(false)
+
+  // The difficulty tier the host chose for this harbor (see
+  // src/lib/game/difficulty.ts). One tier for the whole room: every captain
+  // folds it into their own game state so they all resolve the same voyage
+  // length, market breadth, and raid odds. Defaults to the entry tier so every
+  // existing room keeps the current single mode with no change.
+  difficulty String @default("fair_winds")
+
+  host           User            @relation("RoomHost", fields: [hostId], references: [id], onDelete: Cascade)
+  members        RoomMember[]
+  messages       Message[]
+  gameStates     GameState[]
+  convoyVentures ConvoyVenture[]
+  loans          Loan[]
+  activities     Activity[]
+
+  @@index([hostId])
+}
+
+model RoomMember {
+  id       String   @id @default(cuid())
+  userId   String
+  roomId   String
+  joinedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roomId])
+  @@index([roomId])
+}
+
+model GameState {
+  id        String   @id @default(cuid())
+  userId    String
+  roomId    String
+  data      String // JSON blob of the full game state for one player
+  revision  Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  // Which band the worst finding on any
+  // save for this voyage reached, "suspect" or "impossible" (see
+  // IntegritySeverity in src/lib/game/integrity.ts), or null when nothing has
+  // ever tripped. The save itself is always written either way; this only
+  // records what was claimed.
+  //
+  // Its own column rather than something parsed back out of the note below,
+  // because the voyage conclusion acts on it: only "impossible" costs a
+  // captain their Renown, and deciding that by string matching on a human
+  // readable note is the kind of thing that breaks the day someone rewords it.
+  //
+  // Never cleared automatically, since the point is that this account claimed
+  // it at least once, and a captain who forged a save early and normalised
+  // before the end is exactly who this is remembering.
+  integritySeverity String?
+  integrityNote     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roomId])
+  @@index([userId])
+  @@index([roomId])
+}
+
+// A captain's progression across every voyage they've ever sailed, in
+// any room. Everything else in this schema is scoped to one room (or
+// one player within one room); this table is deliberately the one
+// exception, keyed only on userId. The voyage conclusion check in
+// src/server/realtime.ts is where Renown, crowns, and
+// consecutiveSolventVoyages get written; the Daily Check In request writes
+// its two columns instead.
+// See src/lib/game/legacy.ts for the level curve, titles, and the
+// starting Gold bonus this unlocks.
+model CaptainLegacy {
+  id               String @id @default(cuid())
+  userId           String @unique
+  renownLevel      Int    @default(1)
+  renownXP         Int    @default(0)
+  voyagesCompleted Int    @default(0)
+  // Times a captain has ended a voyage with the highest Reputation among
+  // everyone who reached the endgame screen (not bankrupt) in that room.
+  seaMasterCrowns  Int    @default(0)
+  bestScore        Int    @default(0)
+
+  // Voyages completed back to back without going bankrupt, reset to 0 the
+  // moment one ends in bankruptcy. Powers the "iron_hull" merit (see
+  // src/lib/game/merits.ts); nothing else reads it.
+  consecutiveSolventVoyages Int @default(0)
+
+  // Sea Master crowns and best score broken down by difficulty tier, as a JSON
+  // map of { [difficulty]: { crowns, bestScore } } (see src/lib/game/legacy.ts).
+  // The seaMasterCrowns and bestScore columns above stay as the combined
+  // totals; this only adds the tier split, so a Monsoon crown can be shown
+  // as the rarer thing it is and a future leaderboard can be segmented by tier.
+  // A JSON column rather than fixed columns per tier keeps it open ended: a
+  // fourth tier would not require dedicated columns.
+  statsByDifficulty String @default("{}")
+
+  // Daily Check In (see src/lib/game/checkin.ts). checkInCount is how many
+  // days of the current seven day cycle have been claimed (0..6, wrapping to 0
+  // the moment Day 7 is claimed); lastCheckInDate is the UTC date key for
+  // the most recent claim, which enforces one claim per day. Kept on
+  // this account table since check in, like Renown, spans every room.
+  checkInCount    Int     @default(0)
+  lastCheckInDate String?
+
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// One row per merit a captain has ever earned (see src/lib/game/merits.ts
+// for the catalog and the rules). Account wide like CaptainLegacy, and
+// written from the same voyage conclusion check, but kept as its own
+// table rather than more CaptainLegacy columns since the merit list is
+// open ended: a plain "one row per earned badge" model needs no schema
+// change to grow, where a fixed column per merit would.
+model CaptainMerit {
+  id       String   @id @default(cuid())
+  userId   String
+  meritId  String
+  earnedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, meritId])
+  @@index([userId])
+}
+
+// A pooled, multi captain investment: too
+// large for any single captain's Gold to fund alone, open to contributions
+// from anyone in the room until a deadline round, split by contribution if
+// it fills, a partial refund to every contributor if it doesn't. Unlike the
+// barter and aid boards (in memory only in src/server/realtime.ts, gone the
+// moment the phase they belong to ends), a venture can sit open across many
+// rounds, so it gets a real table rather than ephemeral server state, the
+// same reasoning GameState itself is persisted rather than kept in memory.
+// Scoped to a voyage (roomId + voyageEpoch), not just a room, so a restart's
+// fresh voyageEpoch (see Room.voyageEpoch) can never resolve against a
+// venture from a voyage that no longer exists.
+model ConvoyVenture {
+  id               String @id @default(cuid())
+  roomId           String
+  voyageEpoch      Int
+  posterId         String
+  posterName       String
+  targetGold       Int
+  deadlineRound    Int
+  // Multiplies targetGold for the reward split among contributors if the
+  // venture fills; see CONVOY_VENTURE_PAYOUT_MULTIPLIER in
+  // src/lib/game/constants.ts for the current value and reasoning.
+  payoutMultiplier Float  @default(1.5)
+
+  // JSON map of { [userId]: { name: string, amount: number } }, the pooled
+  // contributions so far. A JSON column rather than a second table: every
+  // read and write here touches the whole map at once (recompute the total,
+  // split a payout, refund everyone), never a single contributor's row in
+  // isolation, so there is no normalization benefit a join table would add,
+  // and this stays the one new table this feature needs.
+  contributions String @default("{}")
+
+  // "open" while still collecting, "filled" once it reached targetGold and
+  // paid out, "failed" once its deadline round passed short of target and
+  // partial refunds went out. Terminal once "filled" or "failed"; nothing
+  // ever moves a venture back to "open".
+  status     String    @default("open")
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, voyageEpoch])
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  roomId      String?
+  senderId    String
+  recipientId String?
+  content     String
+  createdAt   DateTime @default(now())
+
+  room      Room? @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender    User  @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User? @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+  @@index([senderId, recipientId, createdAt])
+}
+
+// An aid loan still outstanding, with whatever Backing
+// pledge and Bequest Routing redirect has been attached to it.
+//
+// This lived in a plain process memory Map until now, the same shape every other
+// voyage scoped structure in src/server/realtime.ts uses. That was fine for a
+// mute list or a price tally, which cost nothing to lose. A loan is not that:
+// a backer's pledge leaves their purse the instant it is accepted, so a
+// restart in the middle of a voyage destroyed Gold a captain had genuinely
+// paid, with no record it ever existed. Convoy Ventures got a table for
+// exactly this reason and this is the same argument.
+//
+// Scoped by voyageEpoch alongside roomId, the way ConvoyVenture is, so a
+// restart's loans can never resurrect into the voyage that follows them.
+model Loan {
+  id           String @id
+  roomId       String
+  voyageEpoch  Int
+  borrowerId   String
+  borrowerName String
+  lenderId     String
+  lenderName   String
+  amount       Int
+  round        Int
+  repaidAmount Int?
+
+  // Set once a third captain pledges against this
+  // loan. Only one backer is ever allowed, which is why these sit on the
+  // loan itself rather than in a table of their own.
+  backerId     String?
+  backerName   String?
+  backedAmount Int?
+
+  // Set only by the lender, and only ever
+  // changes who receives the repayment, never who was owed the debt.
+  redirectToUserId String?
+  redirectToName   String?
+
+  createdAt DateTime @default(now())
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, voyageEpoch])
+}
+
+// Harborwide recent activity feed shown in the lobby. Each row is one
+// notable event (a captain registered, checked in, charted a harbor, set
+// sail, completed a voyage, earned a merit, won a Sea Master crown). Kept
+// as its own table rather than derived from existing rows at read time so
+// the feed can include transient events (check in, set sail) that have no
+// durable row of their own, and so it can be pruned to a fixed window
+// without touching the source tables.
+model Activity {
+  id        String   @id @default(cuid())
+  // The captain the event is about. Nullable so system events (no single
+  // captain) can still appear, though every event type so far has one.
+  userId    String?
+  // A short stable event type the client matches on for the icon and copy,
+  // e.g. "register", "check_in", "room_create", "voyage_start",
+  // "voyage_complete", "sea_master", "merit_earned".
+  type      String
+  // Human readable detail that varies per event, e.g. the room name for a
+  // room_create, the merit id for a merit_earned, the day number for a
+  // check_in. Rendered without transformation in the feed.
+  detail    String?
+  // Optional room reference, so a room_create or voyage_start can link back
+  // to the harbor it concerns. Nullable since check_in and register have no
+  // room.
+  roomId    String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  room Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+}

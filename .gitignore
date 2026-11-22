@@ -1,0 +1,65 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# Dependencies
+node_modules
+
+# Testing
+/coverage
+
+# Next.js
+/.next/
+/out/
+
+# Production
+/build
+
+# Miscellaneous
+.DS_Store
+*.pem
+
+# Debug logs
+npm-debug.log*
+*.log
+dev.log
+dev.out.log
+server.log
+
+# Local environment files
+.env*
+!.env.example
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Local scratch files
+local-*
+.claude
+.z-ai-config
+test
+prompt
+
+# Skills directory
+/skills/
+
+# Agent skill packs fetched from elsewhere, plus the lockfile that pins them.
+# Same reasoning as .claude above: personal tooling, not something a clone
+# needs to build or run the game.
+/.agents/
+skills-lock.json
+
+# Generated Prisma client (run `prisma generate` or `npm install`)
+/generated/
+
+# Local SQLite database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# AI build platform scratch artifacts
+/tool-results/
+/download/
