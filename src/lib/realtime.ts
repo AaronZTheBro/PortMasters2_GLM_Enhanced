@@ -65,8 +65,10 @@ export type VoyageStanding = {
 
 export type VoyageCompleteEvent = {
   roomId: string;
+  voyageEpoch: number;
   winnerId: string | null;
   standings: VoyageStanding[];
+  replayed?: boolean;
 };
 
 let socket: Socket | null = null;

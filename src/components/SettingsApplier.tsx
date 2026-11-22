@@ -17,7 +17,7 @@ export function SettingsApplier({ children }: { children: React.ReactNode }) {
   }, [settings.reduceMotion]);
 
   return (
-    <MotionConfig reducedMotion={settings.reduceMotion ? "always" : "never"}>
+    <MotionConfig reducedMotion={settings.reduceMotion ? "always" : "user"}>
       {children}
     </MotionConfig>
   );

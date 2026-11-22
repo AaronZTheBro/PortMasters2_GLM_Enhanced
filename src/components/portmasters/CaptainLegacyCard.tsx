@@ -1,12 +1,13 @@
 "use client";
 
+import { ShipIcon } from "./ShipVisualizer";
 import { Progress } from "@/components/ui/progress";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Crown, Trophy, Ship, Star } from "lucide-react";
+import { Crown, Trophy, Star } from "lucide-react";
 import {
   renownProgress,
   renownTitleForLevel,
@@ -132,7 +133,7 @@ export function CaptainLegacyCard({
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-lg bg-background/60 py-1.5">
               <div className="text-sm font-bold flex items-center justify-center gap-1">
-                <Ship className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />{" "}
+                <ShipIcon className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />{" "}
                 {legacy.voyagesCompleted}
               </div>
               <div className="text-[9px] text-muted-foreground">Voyages</div>

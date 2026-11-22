@@ -7,7 +7,8 @@ import { WORKER_TYPES } from "@/lib/game/constants";
 import { roundsFor } from "@/lib/game/difficulty";
 import { quotePirateWaters } from "@/lib/game/engine/pirates";
 import {
-  workerWagesFor,
+  maintenanceSurcharge,
+  quoteDues,
   hireEscort,
   resolvePirateAttack,
 } from "@/lib/game/engine";
@@ -29,7 +30,9 @@ function PirateAttack({
   game: GameState;
   act: (fn: (g: GameState, logs: string[]) => void) => void;
 }) {
-  const { chance, escortCost, leak } = quotePirateWaters(game);
+  const { chance, escortCost, leak, raidLoss, reserve, weather } =
+    quotePirateWaters(game);
+  const { total: bills } = quoteDues(game);
   const raidPct = Number((chance * 100).toFixed(2));
   return (
     <div className="max-w-xl mx-auto text-center py-4">
@@ -38,9 +41,9 @@ function PirateAttack({
       <div className="mb-5 space-y-2">
         <p className="text-sm text-muted-foreground">
           Before this round's bills come due, your ship has to clear open water.
-          There's a {raidPct}% chance pirates find you and take every coin in
-          your hold. Hire an escort to sail through safely, or risk it and save
-          the Gold.
+          Direct sailing has a {raidPct}% chance of losing {raidLoss} Gold.
+          {reserve > 0 &&
+            ` Your reserve protects ${reserve} Gold from the raid.`}
         </p>
         {leak > 0 && (
           <p className="text-sm text-amber-600 dark:text-amber-400">
@@ -48,8 +51,13 @@ function PirateAttack({
             above are already raised.
           </p>
         )}
+        {weather > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Heavy Seas is included in these odds.
+          </p>
+        )}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md mx-auto">
+      <div className="pm-decision-grid mx-auto max-w-lg">
         <Button
           size="lg"
           className="pm-grad-primary text-white rounded-xl h-14"
@@ -68,8 +76,8 @@ function PirateAttack({
         </Button>
       </div>
       <p className="text-[11px] text-muted-foreground mt-3">
-        Escort cost scales with your current Gold ({game.money}), so it's
-        cheapest exactly when you have the least to lose.
+        After bills, escort leaves {game.money - escortCost - bills} Gold. A
+        raid on the direct route leaves {game.money - raidLoss - bills} Gold.
       </p>
     </div>
   );
@@ -93,13 +101,10 @@ function SettlementBills({
   // Mirror payWages across every configured artisan so the preview and aid
   // gate use the exact amount that settlement charges.
   const roster = WORKER_TYPES.map((w) => (game.workers[w.id] ?? []).length);
-  const wagesDue = WORKER_TYPES.reduce(
-    (sum, w) => sum + workerWagesFor(game, w.id),
-    0,
-  );
+  const { wages, maintenance: maintCost, total: totalDue } = quoteDues(game);
+  const wagesDue = wages.due;
   const nWorkers = roster.reduce((sum, n) => sum + n, 0);
-  const maintCost = game.fixedCost + game.maintenancePenalty;
-  const totalDue = wagesDue + maintCost;
+  const surcharge = maintenanceSurcharge(game);
   const canAfford = game.money >= totalDue;
   const balanceAfter = game.money - totalDue;
 
@@ -146,14 +151,18 @@ function SettlementBills({
           </span>
           <span className="font-bold">{wagesDue} Gold</span>
         </div>
+        {wages.discount > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Wage Ledger saves {wages.discount} Gold.
+          </p>
+        )}
         <div className="flex justify-between text-sm py-0.5">
           <span>🔧 Ship Maintenance Fee</span>
           <span className="font-bold">{maintCost} Gold</span>
         </div>
-        {game.maintenancePenalty > 0 && (
+        {surcharge > 0 && (
           <div className="text-[11px] text-muted-foreground pl-2.5">
-            ↳ Base {game.fixedCost}g + Overdrive Engine penalty{" "}
-            {game.maintenancePenalty}g
+            ↳ Base {game.fixedCost}g + module upkeep {surcharge}g
           </div>
         )}
         <div className="flex justify-between text-sm py-0.5 border-t border-orange-500/20 pt-1.5 mt-1.5 font-bold">

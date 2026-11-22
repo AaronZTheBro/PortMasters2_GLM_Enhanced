@@ -1,5 +1,6 @@
 "use client";
 
+import { ShipIcon } from "./ShipVisualizer";
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -24,13 +25,11 @@ import {
   Crown,
   Gem,
   Medal,
-  Ship,
   Sparkles,
   Trophy,
   Users,
   Waves,
   RefreshCw,
-  Sailboat,
   Flag,
   Gift,
   UserPlus,
@@ -136,7 +135,11 @@ function formatDuration(startIso: string, endIso: string): string {
 // Labels omit the captain name because every row belongs to the viewer.
 const ACTIVITY_META: Record<
   string,
-  { icon: LucideIcon; tone: string; label: (d: string | null) => string }
+  {
+    icon: React.ComponentType<{ className?: string }>;
+    tone: string;
+    label: (d: string | null) => string;
+  }
 > = {
   register: {
     icon: UserPlus,
@@ -154,7 +157,7 @@ const ACTIVITY_META: Record<
     label: (d) => `Charted ${d ?? "a harbor"}`,
   },
   voyage_start: {
-    icon: Sailboat,
+    icon: ShipIcon,
     tone: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
     label: () => "Set sail on a voyage",
   },
@@ -552,7 +555,7 @@ function ProfileBody({
             value="logbook"
             className="h-auto min-w-0 justify-center gap-1.5 whitespace-normal px-2 py-1.5 text-xs"
           >
-            <Ship className="h-3.5 w-3.5" /> Logbook
+            <ShipIcon className="h-3.5 w-3.5" /> Logbook
           </TabsTrigger>
           <TabsTrigger
             value="voyages"
@@ -729,7 +732,7 @@ function ProfileBody({
                           </div>
                           {voyage.startedAt && (
                             <span className="text-[10px] text-muted-foreground tabular-nums flex items-center gap-1">
-                              <Sailboat className="h-3 w-3" />
+                              <ShipIcon className="h-3 w-3" />
                               {formatDuration(
                                 voyage.startedAt,
                                 voyage.completedAt,
@@ -952,7 +955,7 @@ function ProfileBody({
                     className="flex items-center gap-2.5 p-2.5 rounded-lg border border-black/5 dark:border-white/10 bg-background/60"
                   >
                     <div className="pm-grad-primary h-8 w-8 rounded-lg flex items-center justify-center shrink-0">
-                      <Ship className="h-4 w-4 text-white" />
+                      <ShipIcon className="h-4 w-4 text-white" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">

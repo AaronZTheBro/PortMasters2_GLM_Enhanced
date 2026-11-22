@@ -1,25 +1,29 @@
 // Public game engine exports.
 
 // addOwnedAmount remains internal to engine subsystems.
-export { getOwnedAmount, hasModule } from "./engine/core";
+export {
+  getOwnedAmount,
+  hasModule,
+  maintenanceSurcharge,
+  shipUpgradeSurcharge,
+  whisperCost,
+} from "./engine/core";
 
 // Pricing, taxes, and wages.
 export {
   brokersFavorCommission,
   calcIncomeTax,
-  calcTransportCost,
-  calcVAT,
   explainCardPrice,
   explainExpectedPrice,
   explainTransportCost,
-  explainVAT,
   getCardFinalCost,
   getHireCost,
   getWorkerWage,
   workerWagesFor,
+  quoteDues,
+  quoteWages,
   type ExpectedPrice,
   type PriceBreakdown,
-  type PriceStep,
 } from "./engine/pricing";
 
 // Port market.
@@ -59,7 +63,6 @@ export {
 export {
   applyBoon,
   draftBoons,
-  equipModule,
   finalizeModuleSwap,
   handleModuleSelect,
   selectBoon,

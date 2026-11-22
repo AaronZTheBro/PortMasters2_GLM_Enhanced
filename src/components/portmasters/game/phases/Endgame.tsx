@@ -1,5 +1,7 @@
 "use client";
 
+import { ShipMark, ShipIcon, TextWithShipIcons } from "../../ShipVisualizer";
+
 import { useMemo, useState } from "react";
 import { motion, type Variants } from "framer-motion";
 import {
@@ -9,7 +11,6 @@ import {
   Skull,
   Anchor,
   Compass,
-  Ship,
   CircleDollarSign,
   Star,
   Package,
@@ -144,7 +145,7 @@ function StatCard({
   tone = "default",
   index,
 }: {
-  icon: LucideIcon;
+  icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string | number;
   sub?: string;
@@ -230,6 +231,7 @@ function CostRow({
 
 export function Endgame({
   game,
+  logs = [],
   isHost,
   onRestart,
   voyageResult,
@@ -237,6 +239,7 @@ export function Endgame({
   myUserId,
 }: {
   game: GameState;
+  logs?: string[];
   isHost: boolean;
   onRestart: () => void;
   voyageResult: VoyageCompleteEvent | null;
@@ -277,6 +280,7 @@ export function Endgame({
 
   // === Voyage stats computations (display only; no game state mutation) ===
   const netProfit = game.totalRevenue - game.totalCosts;
+  const roundsSailed = Math.min(game.currentRound, game.maxRounds);
   const cargoCount = useMemo(
     () => Object.values(game.inventory).reduce((sum, n) => sum + (n || 0), 0),
     [game.inventory],
@@ -318,10 +322,10 @@ export function Endgame({
     lines.push(`Final Funds: ${game.money} Gold`);
     lines.push("");
     lines.push("=== Voyage Stats ===");
-    lines.push(`Rounds Sailed: ${game.currentRound} / ${game.maxRounds}`);
+    lines.push(`Rounds Sailed: ${roundsSailed} / ${game.maxRounds}`);
     lines.push(`Ship Level: ${game.shipLevel}`);
     lines.push(`Orders Completed: ${game.totalOrdersCompleted}`);
-    lines.push(`Net Profit: ${netProfit} Gold`);
+    lines.push(`Trading Profit Before Income Tax: ${netProfit} Gold`);
     lines.push(`Workers Employed: ${workerCount}`);
     lines.push(`Cargo Remaining: ${cargoCount}`);
     if (crowned) {
@@ -366,6 +370,15 @@ export function Endgame({
     }
   };
 
+  const decisions = [
+    logs.findLast((line) => /Completed Order at/.test(line)),
+    logs.findLast((line) =>
+      /Hired an escort|Clear seas|Pirates took|Pirates raided/.test(line),
+    ),
+    logs.findLast((line) =>
+      /Installed |Swapped .* for .*|Ship Upgraded/.test(line),
+    ),
+  ].filter((line): line is string => Boolean(line));
   return (
     <div className="max-w-5xl mx-auto py-4 px-2">
       {/* === Dramatic Game Over header with decorative wave divider === */}
@@ -375,10 +388,14 @@ export function Endgame({
         transition={{ duration: 0.6, ease: "easeOut" }}
         className="mb-3 text-center"
       >
+        <ShipMark
+          level={game.shipLevel}
+          className="mx-auto h-auto w-32 text-teal-700 dark:text-teal-300"
+        />
         <div className="flex items-center justify-center gap-3">
           <Anchor className="h-5 w-5 text-teal-500/60 rotate-[-20deg] pm-bob" />
           <h2 className="text-3xl font-extrabold pm-text-gradient-sea tracking-wide">
-            Game Over
+            Voyage complete
           </h2>
           <Compass className="h-5 w-5 text-teal-500/60 rotate-[20deg]" />
         </div>
@@ -391,6 +408,22 @@ export function Endgame({
           <Waves className="h-3 w-3" />
         </div>
       </motion.div>
+
+      {decisions.length > 0 && (
+        <section
+          aria-label="Voyage recap"
+          className="pm-brief mx-auto mb-4 max-w-xl rounded-xl border p-3 text-sm"
+        >
+          <h3 className="font-semibold">Voyage recap</h3>
+          <ul className="mt-1 space-y-1">
+            {decisions.map((line) => (
+              <li key={line}>
+                <TextWithShipIcons>{line}</TextWithShipIcons>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* === Rank Badge with animated rotating glow ring === */}
       <motion.div
@@ -642,15 +675,16 @@ export function Endgame({
             />
             <StatCard
               icon={Receipt}
-              label="Total Costs"
+              label="Trading Costs"
               value={`${game.totalCosts} G`}
               tone="rose"
               index={1}
             />
             <StatCard
               icon={netProfit >= 0 ? TrendingUp : TrendingDown}
-              label="Net Profit"
+              label="Trading Profit"
               value={`${netProfit >= 0 ? "+" : ""}${netProfit} G`}
+              sub="Before Income Tax"
               tone={netProfit >= 0 ? "emerald" : "rose"}
               index={2}
             />
@@ -662,9 +696,9 @@ export function Endgame({
               index={3}
             />
             <StatCard
-              icon={Ship}
+              icon={ShipIcon}
               label="Rounds Sailed"
-              value={game.currentRound}
+              value={roundsSailed}
               sub={`of ${game.maxRounds}`}
               tone="teal"
               index={4}
@@ -789,7 +823,7 @@ export function Endgame({
           {/* Compact voyage stats bar for a quick legacy summary */}
           <div className="flex items-center justify-center gap-4 flex-wrap text-xs text-muted-foreground pt-1">
             <div className="flex items-center gap-1.5">
-              <Ship className="h-3.5 w-3.5 text-teal-500" />
+              <ShipIcon className="h-3.5 w-3.5 text-teal-500" />
               <span className="font-semibold text-foreground">
                 {game.currentRound}
               </span>{" "}

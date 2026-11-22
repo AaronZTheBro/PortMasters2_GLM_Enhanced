@@ -1,5 +1,6 @@
 "use client";
 
+import { ShipIcon } from "./ShipVisualizer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -12,14 +13,19 @@ import {
   ChevronDown,
   ChevronRight,
   X,
-  Ship,
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { GameState } from "@/lib/game/types";
-import { workerWagesFor } from "@/lib/game/engine";
+import {
+  maintenanceSurcharge,
+  shipUpgradeSurcharge,
+  quoteWages,
+} from "@/lib/game/engine";
+import { pirateChanceFor } from "@/lib/game/difficulty";
+import { quotePirateWaters } from "@/lib/game/engine/pirates";
 import { WORKER_TYPES } from "@/lib/game/constants";
 
 // Props
@@ -102,13 +108,6 @@ const PRIORITY_META: Record<
 
 // Analysis engine (pure functions)
 
-function computeWagesDue(game: GameState): number {
-  return WORKER_TYPES.reduce(
-    (total, { id }) => total + workerWagesFor(game, id),
-    0,
-  );
-}
-
 /** Number of workers with no task assigned, across the whole roster. */
 function countIdleWorkers(game: GameState): number {
   let idle = 0;
@@ -165,7 +164,7 @@ function computeAdvice(game: GameState): Advice[] {
   const advice: Advice[] = [];
 
   // Financial health
-  const maintenanceDue = game.fixedCost + game.maintenancePenalty;
+  const maintenanceDue = game.fixedCost + maintenanceSurcharge(game);
   if (game.money < maintenanceDue) {
     advice.push({
       id: "bankruptcy",
@@ -177,7 +176,7 @@ function computeAdvice(game: GameState): Advice[] {
     });
   }
 
-  const wagesDue = computeWagesDue(game);
+  const wagesDue = quoteWages(game).due;
   if (wagesDue > 0 && game.money < wagesDue) {
     advice.push({
       id: "wages",
@@ -201,22 +200,14 @@ function computeAdvice(game: GameState): Advice[] {
     });
   }
 
-  // Pirate risk
-  // The last two rounds ramp raid odds on every tier. Only nudge if this
-  // round's waters haven't been resolved yet (escort hired or roll done).
-  const lateGame = game.currentRound >= game.maxRounds - 1;
-  const endgame = game.currentRound >= game.maxRounds - 2;
-  if (
-    (lateGame || endgame) &&
-    !game.escortHired &&
-    !game.pirateAttackResolved &&
-    !game.gameOver
-  ) {
+  const firstRoundRisk = pirateChanceFor(game.difficulty, 1, game.maxRounds);
+  const { chance, raidLoss } = quotePirateWaters(game);
+  if (chance > firstRoundRisk && !game.pirateAttackResolved && !game.gameOver) {
     advice.push({
       id: "pirate_risk",
       priority: "warning",
       title: "Pirate risk increasing",
-      description: `You're on round ${game.currentRound} of ${game.maxRounds}. Raid odds step up near the end of the voyage, and a single attack takes your entire treasury.`,
+      description: `You face a ${Number((chance * 100).toFixed(1))}% chance of losing ${raidLoss} Gold this round.`,
       action:
         "Consider hiring an escort, or keep your treasury small before settlement.",
     });
@@ -224,8 +215,9 @@ function computeAdvice(game: GameState): Advice[] {
 
   // Ship upgrade readiness
   const nextLevel = game.shipLevel;
-  const upgradeCost = game.shipUpgradeCost[nextLevel] + game.shipUpgradePenalty;
-  if (typeof upgradeCost === "number" && game.money >= upgradeCost) {
+  const baseCost = game.shipUpgradeCost[nextLevel];
+  const upgradeCost = baseCost + shipUpgradeSurcharge(game);
+  if (baseCost !== undefined && game.money >= upgradeCost && !game.gameOver) {
     advice.push({
       id: "ship_upgrade",
       priority: "tip",
@@ -721,7 +713,7 @@ export function StrategyAdvisor({ game, className }: Props) {
       )}
       {collapsed && visibleAdvice.length === 0 && (
         <div className="relative z-10 flex items-center gap-1.5 px-3.5 pb-2.5 text-[10px] text-amber-700/70 dark:text-amber-200/55">
-          <Ship className="h-3 w-3" aria-hidden />
+          <ShipIcon className="h-3 w-3" aria-hidden />
           <span>Smooth sailing</span>
         </div>
       )}

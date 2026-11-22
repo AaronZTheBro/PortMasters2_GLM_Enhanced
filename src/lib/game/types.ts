@@ -15,6 +15,12 @@ import {
   type Difficulty,
 } from "./difficulty";
 
+import {
+  CLASSIC_RULES,
+  type HarborForecast,
+  type VoyageRules,
+} from "./expansion";
+
 export type Phase =
   | 0 // welcome
   | 1 // port purchase
@@ -44,6 +50,8 @@ export type ResourceCard = {
   resources: ResourceRef[];
   totalCost: number;
   isProductCard: boolean;
+  featured?: boolean;
+  staple?: boolean;
 };
 
 export type OrderCard = {
@@ -53,6 +61,8 @@ export type OrderCard = {
   reward: number;
   totalItems: number;
   isProductOrder: boolean;
+  staple?: boolean;
+  whisperIndex?: number;
   // Set only on the extra order a captain conjures with Broker's Favor (see
   // callBrokersFavor in engine.ts). completeOrder reads it to take the
   // Broker's commission off this order's reward; every other order leaves it
@@ -65,11 +75,10 @@ export type OrderCard = {
   isMandate?: boolean;
 };
 
-export type IntelItem = { item: string; port: string };
+export type IntelItem = { item: string; port: string; orderId?: number };
 
 export type Worker = {
   task: string | null;
-  progress: number;
   producedCount: number;
   isSkilled: boolean;
   hiredRound?: number;
@@ -98,6 +107,13 @@ export type GameState = {
   // from one source shared by the room. Every captain in a room carries their
   // own copy of the same room value, which keeps their conclusion aligned.
   difficulty: Difficulty;
+  rulesVersion?: number;
+  seatSeed?: string;
+  forecasts?: HarborForecast[];
+  effectUses?: Record<string, number>;
+  emergencyLoanUsed?: boolean;
+  producedRecipes?: string[];
+  scoutedOrder?: OrderCard;
   // The room's voyage epoch (see Room.voyageEpoch in prisma/schema.prisma),
   // stamped onto this state when the voyage is created and folded into the
   // deterministic seed so a restart (which bumps the epoch) rerolls every
@@ -127,8 +143,6 @@ export type GameState = {
   fixedCost: number;
   shipLevel: number;
   shipUpgradeCost: number[];
-  shipUpgradePenalty: number;
-  maintenancePenalty: number;
   phase: Phase;
   resourceCards: ResourceCard[];
   customerCards: OrderCard[];
@@ -151,11 +165,12 @@ export type GameState = {
   // _pendingDebtSettlements/_draftChoices/_newModule already use for an
   // engine function that needs the React layer to act on its behalf.
   _pendingDocksClaim?: { total: number };
+  docksRewardClaimed?: boolean;
   gameOver: boolean;
   modifierFlags: Record<string, number>;
+  lastBoonId: string | null;
   phase2DemandTags: string[];
   revealedIntel: IntelItem[];
-  intelCost: number;
   // A price nudge for each resource in this
   // round's Phase 1, keyed by resource name (Hemp, Silk, Tea), derived room
   // wide from what the whole harbor bought last round (see
@@ -200,10 +215,7 @@ export type GameState = {
   _draftChoices?: Module[];
   moduleSwapUsed: boolean;
   _newModule?: Module;
-  // Reset every round in startBoonDrafting, same as boonSwapUsed/
-  // moduleSwapUsed above. Resolved once per round, in Phase 3, before the
-  // wage and maintenance settlement: either a 20% chance of losing every
-  // Gold on hand, or a guaranteed safe escort for 10% of it.
+  // Reset for each round and resolved before wages and maintenance.
   pirateAttackResolved: boolean;
   escortHired: boolean;
   // Set when a corrupt broker leaked this captain's position (Monsoon only,
@@ -220,6 +232,7 @@ export type GameState = {
   // cannot fully cover what was owed. Drives the
   // endgame screen's outcome instead of the normal merchant rank.
   defaultedDebt: boolean;
+  insolvency?: "wages" | "maintenance" | "debt";
   // Transient: a signal for the React layer to relay over the aid:repay
   // socket event and then clear, since the pure engine functions that
   // populate it (settleOutstandingDebts) have no way to call socket.emit
@@ -292,6 +305,7 @@ export function normalizeWorkerRoster(
 }
 
 export type GameContext = {
+  roomSeed?: string;
   // Deterministic seed identity combines the room and user ids.
   // The game session hook uses this identity. Combined with the voyage epoch on
   // GameState, this gives every captain their own market, orders, and Broker
@@ -310,12 +324,20 @@ export function createInitialGameState(
   renownLevel: number = 1,
   voyageEpoch: number = 0,
   difficulty: Difficulty = DEFAULT_DIFFICULTY,
+  rules: VoyageRules = { version: CLASSIC_RULES, forecasts: [] },
 ): GameState {
   const cfg = difficultyConfig(difficulty);
   return {
     inventory: initialInventory(),
     money: cfg.startingGold + startingGoldBonus,
     difficulty,
+    rulesVersion: rules.version,
+    seatSeed: undefined,
+    forecasts: rules.forecasts,
+    effectUses: {},
+    emergencyLoanUsed: false,
+    producedRecipes: [],
+    scoutedOrder: undefined,
     renownLevel,
     brokersFavorUsed: false,
     voyageEpoch,
@@ -339,8 +361,6 @@ export function createInitialGameState(
     fixedCost: cfg.maintenance,
     shipLevel: 0,
     shipUpgradeCost: [15, 25, 40],
-    shipUpgradePenalty: 0,
-    maintenancePenalty: 0,
     phase: 0,
     resourceCards: [],
     customerCards: [],
@@ -352,9 +372,9 @@ export function createInitialGameState(
     totalOrdersCompleted: 0,
     gameOver: false,
     modifierFlags: {},
+    lastBoonId: null,
     phase2DemandTags: [],
     revealedIntel: [],
-    intelCost: 5,
     harborPulse: {},
     tidewatchSurge: false,
     equippedModules: [],
@@ -367,6 +387,7 @@ export function createInitialGameState(
     debts: [],
     loansGiven: [],
     defaultedDebt: false,
+    insolvency: undefined,
     // Explicitly undefined, not simply omitted: restartGame resets a voyage
     // via Object.assign(state, fresh), which only overwrites keys fresh
     // actually has. An omitted key isn't one of those, so a transient
@@ -375,6 +396,7 @@ export function createInitialGameState(
     // the new voyage (startModuleDrafting treats a defined
     // _draftChoices as "already rolled" and skips rolling a fresh pool).
     _pendingDocksClaim: undefined,
+    docksRewardClaimed: false,
     _draftChoices: undefined,
     _newModule: undefined,
     _pendingDebtSettlements: undefined,

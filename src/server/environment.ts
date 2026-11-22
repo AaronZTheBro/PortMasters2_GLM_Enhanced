@@ -3,7 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 
 export const DEFAULT_APPLICATION_PORT = 2154;
 
-const BUILD_LIFECYCLE_EVENTS = new Set(["build", "postinstall"]);
+const BUILD_LIFECYCLE_EVENTS = new Set(["build", "postinstall", "db:generate"]);
 const RAILWAY_RUNTIME_VARIABLES = [
   "RAILWAY_PROJECT_ID",
   "RAILWAY_ENVIRONMENT_ID",
@@ -70,7 +70,7 @@ export function getDatabaseUrl(projectRoot: string) {
     getRailwayDatabaseUrl();
   if (!value) {
     throw new Error(
-      "DATABASE_URL is required. Copy .env.example to .env.local or attach a Railway volume.",
+      "DATABASE_URL is required. For local development, copy .env.example to .env.local.",
     );
   }
   return resolveDatabaseUrl(value, projectRoot);
@@ -83,9 +83,6 @@ export function getApplicationPort() {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error("PORT must be a valid TCP port.");
-  }
-  if (!isRailwayRuntime() && port !== DEFAULT_APPLICATION_PORT) {
-    throw new Error(`PORT must be ${DEFAULT_APPLICATION_PORT}.`);
   }
   return port;
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { Crown, Ship, Trophy, Star } from "lucide-react";
+import { ShipIcon } from "./ShipVisualizer";
+import { Crown, Trophy, Star } from "lucide-react";
 import {
   DIFFICULTIES,
   DIFFICULTY_ORDER,
@@ -40,13 +41,13 @@ export function VoyageSummaryCard({ legacy, className }: Props) {
         {/* Header row */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <Ship className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+            <ShipIcon className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
             <span className="text-[11px] font-semibold tracking-wide text-amber-700 dark:text-amber-300">
               Voyage Record
             </span>
           </div>
           <Pill tone="amber" className="!text-[9px]">
-            <Ship className="h-2.5 w-2.5" /> {legacy.voyagesCompleted}
+            <ShipIcon className="h-2.5 w-2.5" /> {legacy.voyagesCompleted}
           </Pill>
         </div>
 

@@ -537,46 +537,15 @@ export function QuickActions({ open, onClose, actions, onSound }: Props) {
   );
 }
 
-// Global keyboard hook
-
-/** Call this hook at the game room level to bind Ctrl+K / Cmd+K to open the
- *  quick action palette.
- *
- *  Supports two calling conventions for backwards compatibility:
- *  Calling `useQuickActionTrigger()` returns the open state and setter for
- *  parents that want the hook to own the open state.
- *  Calling `useQuickActionTrigger(onOpen)` invokes `onOpen` every time Ctrl+K
- *  is pressed. This supports parents that manage their own state and only need
- *  the keybinding. The returned setters remain functional, but the parent
- *  typically ignores them in this mode. */
-export function useQuickActionTrigger(onOpen?: () => void): {
-  quickActionsOpen: boolean;
-  setQuickActionsOpen: (v: boolean) => void;
-} {
-  const [open, setOpen] = useState(false);
-  // Keep the callback in a ref so the keydown listener stays bound.
-  const onOpenRef = useRef(onOpen);
-  useEffect(() => {
-    onOpenRef.current = onOpen;
-  }, [onOpen]);
-
+export function useQuickActionTrigger(onOpen: () => void) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        // If a parent passed an onOpen callback, fire it (the parent manages
-        // its own open state in that mode). Otherwise toggle our internal
-        // state so the argument free calling convention keeps working.
-        if (onOpenRef.current) {
-          onOpenRef.current();
-        } else {
-          setOpen((prev) => !prev);
-        }
+        onOpen();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  return { quickActionsOpen: open, setQuickActionsOpen: setOpen };
+  }, [onOpen]);
 }

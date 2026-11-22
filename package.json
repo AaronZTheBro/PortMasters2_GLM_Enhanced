@@ -13,8 +13,9 @@
     "build": "cross-env NODE_ENV=production prisma generate && cross-env NODE_ENV=production next build --webpack",
     "start": "npm run db:push && cross-env NODE_ENV=production node --import tsx server.ts",
     "lint": "eslint .",
-    "test:unit": "node --import tsx --test tests/game-rules.test.ts",
+    "test:unit": "node --import tsx --test tests/game-rules.test.ts tests/expansion.test.ts",
     "test:integration": "node --import tsx --test tests/server.integration.test.ts",
+    "test:balance": "node --import tsx tests/voyage-balance.ts",
     "test": "npm run test:unit && npm run test:integration",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm test && npm run typecheck",
@@ -59,5 +60,10 @@
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5"
+  },
+  "overrides": {
+    "@prisma/config@7.10.1": {
+      "effect": "3.22.5"
+    }
   }
 }

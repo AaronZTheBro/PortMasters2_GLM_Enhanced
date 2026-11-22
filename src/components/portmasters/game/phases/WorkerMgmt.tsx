@@ -1,18 +1,21 @@
 "use client";
 
+import { ShipIcon } from "../../ShipVisualizer";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { RECIPES, WAGES } from "@/lib/game/constants";
+import { WAGES } from "@/lib/game/constants";
 import {
   assignTask,
   fireWorker,
   getHireCost,
   getWorkerWage,
   workerWagesFor,
+  quoteWages,
   hireWorker,
 } from "@/lib/game/engine";
-import { productionOutput } from "@/lib/game/engine/workers";
+import { productionOutput, quoteRecipe } from "@/lib/game/engine/workers";
 import {
+  canProduce,
   unlockedProducts,
   unlockedResources,
   unlockedWorkerTypes,
@@ -33,7 +36,6 @@ import {
   Hourglass,
   PackageCheck,
   PartyPopper,
-  Ship,
   Sparkles,
   Star,
   TrendingDown,
@@ -158,7 +160,6 @@ function WorkerList({
                     <span className="hidden sm:inline">{mood.label}</span>
                   </span>
                 </div>
-                {/* Task + decorative progress bar */}
                 {w.task ? (
                   <div className="mt-1 flex items-center gap-1.5">
                     <span
@@ -168,21 +169,8 @@ function WorkerList({
                       <ItemIcon item={w.task} className="h-3 w-3" />
                       {w.task}
                     </span>
-                    <div className="flex-1 h-1 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
-                      <motion.div
-                        className={cn("h-full rounded-full", "pm-artisan-chip")}
-                        initial={{ width: "10%" }}
-                        animate={{ width: "55%" }}
-                        transition={{
-                          duration: 2.2,
-                          repeat: Infinity,
-                          repeatType: "reverse",
-                          ease: "easeInOut",
-                        }}
-                      />
-                    </div>
-                    <span className="text-[9px] text-muted-foreground shrink-0">
-                      +{w.isSkilled ? 2 : 1} next phase
+                    <span className="text-[10px] text-muted-foreground">
+                      +{productionOutput(game, w).total} at settlement
                     </span>
                   </div>
                 ) : (
@@ -209,8 +197,8 @@ function WorkerList({
       {/* Task assignment buttons with material cost preview + shortage warnings */}
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {tasks.map((t) => {
-          const recipe = RECIPES[t];
-          const materials = Object.entries(recipe.materials);
+          const { inputs, saved } = quoteRecipe(game, t);
+          const materials = Object.entries(inputs);
           // Decorative shortage check: highlight the button red if the
           // player doesn't currently hold the materials for this task. The
           // engine will still refuse the assignment, this just previews it.
@@ -224,7 +212,7 @@ function WorkerList({
               variant="secondary"
               title={short ? "Not enough materials" : `Assign: produce ${t}`}
               className={cn(
-                "pm-artisan-chip h-7 px-2.5 text-[10px] rounded border gap-1",
+                "pm-artisan-chip min-h-11 flex-wrap px-2.5 text-xs rounded border gap-1",
                 short &&
                   "!bg-rose-500/10 !border-rose-500/40 !text-rose-600 dark:!text-rose-300",
               )}
@@ -250,6 +238,7 @@ function WorkerList({
                   );
                 })}
               </span>
+              {saved && <span className="text-xs">Saves 1 {saved}</span>}
               {short && <AlertTriangle className="h-2.5 w-2.5" />}
             </Button>
           );
@@ -271,7 +260,7 @@ const PHASE_STEPS = [
   {
     n: 2,
     label: "Phase 2",
-    icon: Ship,
+    icon: ShipIcon,
     desc: "Trade orders at port",
     grad: "pm-grad-primary",
   },
@@ -313,7 +302,11 @@ export function WorkerMgmt({
   // assignable the moment they unlock, with no further edits here. Each
   // type's craftable goods are derived from the recipes that name it, which
   // is also what keeps the Master's inherited weaver goods correct.
-  const openProducts = unlockedProducts(game.difficulty, game.currentRound);
+  const openProducts = unlockedProducts(
+    game.difficulty,
+    game.currentRound,
+    game.rulesVersion,
+  );
   const roster = unlockedWorkerTypes(game.difficulty, game.currentRound).map(
     (w) => {
       const list = game.workers[w.id] ?? [];
@@ -323,14 +316,11 @@ export function WorkerMgmt({
         list,
         cost,
         due: workerWagesFor(game, w.id),
-        tasks: openProducts.filter((p) => {
-          const owner = RECIPES[p]?.worker_type;
-          return owner === w.id || (w.id === "master" && owner === "weaver");
-        }),
+        tasks: openProducts.filter((product) => canProduce(w.id, product)),
       };
     },
   );
-  const totalWages = roster.reduce((sum, r) => sum + r.due, 0);
+  const totalWages = quoteWages(game).due;
   const nW = roster.reduce((sum, r) => sum + r.list.length, 0);
 
   // Projected balance & bankruptcy warning
@@ -356,7 +346,11 @@ export function WorkerMgmt({
   })();
 
   // Resources & finished goods (used in inventory grid)
-  const resources = unlockedResources(game.difficulty, game.currentRound);
+  const resources = unlockedResources(
+    game.difficulty,
+    game.currentRound,
+    game.rulesVersion,
+  );
 
   const [showPreview, setShowPreview] = useState(true);
 
@@ -698,7 +692,7 @@ export function WorkerMgmt({
               :{" "}
               {r.tasks
                 .map((t) => {
-                  const mats = Object.entries(RECIPES[t]?.materials ?? {})
+                  const mats = Object.entries(quoteRecipe(game, t).inputs)
                     .map(([m, a]) => `${a} ${m}`)
                     .join("+");
                   return `${t}(${mats})`;
@@ -772,7 +766,7 @@ export function WorkerMgmt({
           >
             <span className="text-xs font-semibold flex items-center gap-1.5">
               <PartyPopper className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-              Production Preview · next round
+              Production preview for this round's settlement
             </span>
             <span className="text-[10px] text-muted-foreground">
               {showPreview ? "hide" : "show"}

@@ -1,6 +1,6 @@
 # PortMasters 2 defect report
 
-November 21, 2026. Reviewed commit `553ce1a` with the existing local changes applied. This report supersedes the earlier static draft. The findings apply to the reviewed working tree unless a historical result is explicitly identified.
+November 21, 2026. Reviewed commit `553ce1a` with the existing local changes applied. The triage and reproduction notes describe that snapshot. Later fixes and audits are recorded below.
 
 ## Triage summary
 
@@ -231,4 +231,30 @@ Additional verification still matters for Safari and Firefox, browser chrome and
 2. PM28 through PM30. Price details opened by touch and exposed a keyboard round selector. Freight details opened by keyboard focus and touch. Dark tutorial headings and body text used readable colors on their respective surfaces.
 3. PM31 through PM36. Landscape sign in fit within the 375 pixel viewport. Dialogs kept side gutters, and the production Directory scrolled by touch to the lower rows with Close still reachable. Barter tint values parsed as CSS colors. Monsoon Welcome showed 16 rounds. The narrow lobby Harbor button had an accessible name. The logbook account switch check preserved the original author’s entry.
 
+## Follow up audit
+
+1. Market draws reused the probabilities of removed goods. Later draws now use the weights of the remaining goods. Item previews use the same finished good price calculation as generated cargo lots. The market reference shows unlocked goods and the Prices view remains the source for recorded trends.
+2. Boon History read modifiers that had already expired. The selected Boon ID now persists separately, and saved draft cards refresh their descriptions from the catalogue. Only offered Boons can be selected.
+3. Three module effects depended on redundant values in the save. Upgrade surcharges, maintenance surcharges, and paid rumor prices now derive from equipped modules. Drafts exclude already equipped modules. Paid rumor bundles and the free Farsight rumor use the same finite pool.
+4. A worker card showed base output while the production preview included Boon and module bonuses. Both now use the shared production calculation. The guide also lists the recipes a Master Weaver inherits from a Weaver. The unused worker progress field, recipe values, pricing wrappers, and decorative price charts were removed.
+5. The VAT breakdown treated the sale price as the base and displayed a tax amount as the result. The breakdown now shows the taxable margin, base VAT, adjustments, and amount charged. Welcome and the guides show the current difficulty, round sequence, and costs.
+6. Shared standings could crown a captain who defaulted on a loan. Bankruptcy now reaches the standings, and SQLite records the result together with Renown and merits. Reconnecting restores the standings. Older voyages can recover already awarded progress from retained activity records.
+7. The Render Blueprint provides one web service with persistent SQLite storage. The custom server accepts Render's assigned port, and the README records the deployment steps. A clean install with the refreshed dependency lock reported no advisories.
+
+The effect checks covered 7,050 Boon and module combinations and 35,715 installation orders. The full verification suite covered 24 unit tests, the realtime integration test, lint, type checking, and the production build. Chromium checks covered nine viewport sizes and verified the difficulty copy, saved Boon descriptions, production bonuses, and paid rumor bundles.
+
+A local production restart on the Render port restored the standings without paying Renown twice. The same check excluded a captain who defaulted on a loan despite having the highest Reputation. A fixture with the older result format recovered its standings using retained activity without issuing another award.
+
 The repository verification passed lint, type checking, 21 game rules tests, the server integration test, and the production build. The effect fixture covered 7,050 boon and loadout combinations and 35,715 installation sequences. The schema update preserved the seeded save in a database using the earlier schema. Browser checks used Chromium viewport and touch emulation.
+
+## Artwork and rules audit
+
+1. Ship graphics were still supplied by several generic icons and by text stored in saves. The shared SVG now supplies full ship art and compact icons. The module lists, guide, tutorial, notifications, and ledger render old ship characters through that same SVG. Captain messages retain their original text.
+2. The guide described Fleet of Treasures as the final freight modifier even when Cargo Net or Convoy Pennant applied. The guide now distinguishes the two voyage rule versions. The tutorial and glossary reuse the live catalogue, including the charter schedule, recipes, and artisan assignments.
+3. Completed voyages displayed the next round counter as rounds sailed. The dashboard and copied summary now show the actual number of rounds and identify trading profit before Income Tax.
+4. Tidewatch and the order race relied on memory and a live socket. The room now records both outcomes for the current voyage. Rejoining restores the Tidewatch bonus and the race honors the same winner. A replay credits the race reward once.
+5. Quick Actions had a second state path with no callers. The keyboard shortcut now opens the same dialog as the room menu. The source import graph reached every source module, and the public icons are used by the goods views. The source and public trees contained no empty directories.
+
+The audit passed 35 unit tests, the realtime integration test, lint, type checking, and a production build. The effect run covered 23 Boons, 23 modules, and 267,744 installation sequences. The balance run repeated 5,000 simulations per difficulty. The earlier SQLite fixture retained its room and both saves after applying the current schema.
+
+Chrome checks used nine viewport sizes. The production run checked the harbor and captain dialogs, guide, tutorial, old ledger entries, the Broker badge, and a live two captain round that awarded Word on the Docks and reloaded the winner without another credit. The deployment settings were read against the provider references. [Render Blueprint reference](https://render.com/docs/blueprint-spec) [Railway volume reference](https://docs.railway.com/volumes)

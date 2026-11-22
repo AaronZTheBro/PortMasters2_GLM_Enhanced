@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: portmasters2
+    runtime: node
+    plan: starter
+    numInstances: 1
+    buildCommand: npx --yes npm@11.17.0 ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api
+    envVars:
+      - key: DATABASE_URL
+        value: file:/var/data/portmasters.db
+    disk:
+      name: sqlite
+      mountPath: /var/data
+      sizeGB: 1

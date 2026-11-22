@@ -1,8 +1,26 @@
 // Shared ownership primitives used across engine subsystems.
+import { EFFECT, expanded } from "../expansion";
 import type { GameState } from "../types";
 
 export function hasModule(state: GameState, id: string): boolean {
   return state.equippedModules.some((m) => m.id === id);
+}
+
+export function shipUpgradeSurcharge(state: GameState): number {
+  return hasModule(state, "bulk_hauler") ? 15 : 0;
+}
+
+export function maintenanceSurcharge(state: GameState): number {
+  const overdrive = hasModule(state, "overdrive_engine") ? 10 : 0;
+  const expandedUpkeep = expanded(state)
+    ? Number(hasModule(state, "convoy_pennant")) +
+      Number(hasModule(state, "storm_shrouds"))
+    : 0;
+  return overdrive + expandedUpkeep * EFFECT.extraUpkeep;
+}
+
+export function whisperCost(state: GameState): number {
+  return hasModule(state, "brokers_network") ? 2 : 5;
 }
 
 // Treats Gold and cargo through one ownership interface.

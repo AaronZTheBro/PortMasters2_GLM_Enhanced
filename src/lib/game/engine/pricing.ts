@@ -7,13 +7,20 @@ import {
   RECIPES,
   RESOURCES,
   WAGES,
-  workerType,
+  WORKER_TYPES,
 } from "../constants";
 import { isSilkProduct, unlockedPorts } from "../pools";
 import type { GameState, OrderCard, ResourceCard, Worker } from "../types";
-import { hasModule } from "./core";
+import { hasModule, maintenanceSurcharge } from "./core";
+import {
+  EFFECT,
+  expanded,
+  effectUses,
+  forecastFor,
+  isOceanMaterial,
+} from "../expansion";
 
-export type PriceStep = { label: string; delta: number };
+type PriceStep = { label: string; delta: number; effect?: string };
 export type PriceBreakdown = {
   base: number;
   steps: PriceStep[];
@@ -33,22 +40,14 @@ function boonNameForModifierKey(key: string): string {
 }
 
 // Transport.
-type FreightCargo = number | Pick<OrderCard, "totalItems" | "resources">;
-
-export function calcTransportCost(
-  state: GameState,
-  cargo: FreightCargo,
-  hasSilk = false,
-): number {
-  return explainTransportCost(state, cargo, hasSilk).final;
-}
-
 export function explainTransportCost(
   state: GameState,
-  cargo: FreightCargo,
-  hasSilk = false,
+  cargo: Pick<
+    OrderCard,
+    "totalItems" | "resources" | "isMandate" | "isBrokerFavor"
+  >,
 ): PriceBreakdown {
-  const totalItems = typeof cargo === "number" ? cargo : cargo.totalItems;
+  const { totalItems } = cargo;
   const base = totalItems * 2;
   const steps: PriceStep[] = [];
   let cost = base;
@@ -80,17 +79,11 @@ export function explainTransportCost(
   }
 
   const count = (predicate: (item: string) => boolean) =>
-    typeof cargo === "number"
-      ? 0
-      : cargo.resources.reduce(
-          (sum, item) =>
-            sum + (predicate(item.type) ? (item.required ?? 0) : 0),
-          0,
-        );
-  const rawSilk =
-    hasSilk && typeof cargo === "number"
-      ? totalItems
-      : count((item) => item === "Silk");
+    cargo.resources.reduce(
+      (sum, item) => sum + (predicate(item.type) ? (item.required ?? 0) : 0),
+      0,
+    );
+  const rawSilk = count((item) => item === "Silk");
   const silkProducts = count(isSilkProduct);
   const freeSilk = hasModule(state, "silk_monopoly") ? rawSilk : 0;
   const windSilk = rawSilk - freeSilk + silkProducts;
@@ -108,7 +101,7 @@ export function explainTransportCost(
   if (windSilk > 0 && windFactor) {
     setCost(
       boonNameForModifierKey("transport_silk_discount"),
-      withSilkDiscount(freeSilk + windSilk * (1 - windFactor)),
+      withSilkDiscount(freeSilk + windSilk * windFactor),
     );
   }
   if (hasModule(state, "fleet_of_treasures")) {
@@ -119,42 +112,75 @@ export function explainTransportCost(
       setCost("Fleet of Treasures module", Math.max(0, cost - eligible * 3));
     }
   }
+  if (expanded(state) && !cargo.isMandate && !cargo.isBrokerFavor) {
+    const rawCount = new Set(
+      cargo.resources
+        .filter(({ type }) => type in COMMODITIES)
+        .map(({ type }) => type),
+    ).size;
+    if (
+      hasModule(state, "cargo_net") &&
+      rawCount >= 2 &&
+      !effectUses(state, "cargo_net")
+    ) {
+      cost = applyDiscount(
+        steps,
+        cost,
+        "Cargo Net",
+        EFFECT.cargoNet,
+        "cargo_net",
+      );
+    }
+    if (
+      hasModule(state, "convoy_pennant") &&
+      forecastFor(state) &&
+      !effectUses(state, "convoy_pennant")
+    ) {
+      cost = applyDiscount(
+        steps,
+        cost,
+        "Convoy Pennant",
+        EFFECT.convoyPennant,
+        "convoy_pennant",
+      );
+    }
+  }
   return { base, steps, final: cost };
 }
 
-// Taxes.
-export function calcVAT(
-  state: GameState,
+export function recipeMaterialCost(product: string): number {
+  return Object.entries(RECIPES[product].materials).reduce(
+    (total, [item, amount]) => {
+      const [min, max] = COMMODITIES[item].basePrice;
+      return total + ((min + max) / 2) * amount;
+    },
+    0,
+  );
+}
+
+export function productPurchasePrice(
   product: string,
-  sellingPrice: number,
-): number {
-  return explainVAT(state, product, sellingPrice).final;
+  materialCost: number,
+  roll: number,
+) {
+  const [min, max] = PRODUCT_PRICES[product];
+  const price = Math.floor(materialCost * (1.4 + roll * 0.4));
+  return Math.max(min, Math.min(price, max));
 }
 
 export function explainVAT(
   state: GameState,
   product: string,
   sellingPrice: number,
-): PriceBreakdown {
+) {
   const recipe = RECIPES[product];
-  let matCost = 0;
-  for (const [m, a] of Object.entries(recipe.materials)) {
-    matCost +=
-      ((COMMODITIES[m].basePrice[0] + COMMODITIES[m].basePrice[1]) / 2) * a;
-  }
+  const matCost = recipeMaterialCost(product);
   const workerCost = WAGES[recipe.worker_type];
-  const taxable = sellingPrice - matCost - workerCost;
-  const steps: PriceStep[] = [
-    { label: "Average material cost", delta: -matCost },
-    {
-      label: `${workerType(recipe.worker_type)?.label ?? recipe.worker_type} wage`,
-      delta: -workerCost,
-    },
-  ];
-  if (taxable <= 0) return { base: sellingPrice, steps, final: 0 };
-  let vat = Math.floor(taxable * 0.05);
-  steps.push({ label: "5% VAT on the margin", delta: -vat });
-  if (state.modifierFlags.vat_discount) {
+  const margin = sellingPrice - matCost - workerCost;
+  const base = Math.floor(Math.max(0, margin) * 0.05);
+  let vat = base;
+  const steps: PriceStep[] = [];
+  if (vat > 0 && state.modifierFlags.vat_discount) {
     const next = Math.floor(vat * (1 - state.modifierFlags.vat_discount));
     steps.push({
       label: `${boonNameForModifierKey("vat_discount")} (${Math.round(state.modifierFlags.vat_discount * 100)}% reduction)`,
@@ -162,7 +188,7 @@ export function explainVAT(
     });
     vat = next;
   }
-  if (hasModule(state, "tax_evasion")) {
+  if (vat > 0 && hasModule(state, "tax_evasion")) {
     const next = Math.floor(vat * 0.5);
     steps.push({
       label: "Tax Evasion Ledger module, 50% tax reduction",
@@ -170,7 +196,15 @@ export function explainVAT(
     });
     vat = next;
   }
-  return { base: sellingPrice, steps, final: vat };
+  return {
+    base,
+    steps,
+    final: vat,
+    sellingPrice,
+    matCost,
+    workerCost,
+    margin,
+  };
 }
 
 export function calcIncomeTax(state: GameState, preTax: number): number {
@@ -182,10 +216,23 @@ export function calcIncomeTax(state: GameState, preTax: number): number {
   return tax;
 }
 
+function applyDiscount(
+  steps: PriceStep[],
+  cost: number,
+  label: string,
+  amount: number,
+  effect: string,
+) {
+  const savings = Math.min(cost, amount);
+  steps.push({ label, delta: -savings, effect });
+  return cost - savings;
+}
+
 // Market card pricing and its interface breakdown.
 export function explainCardPrice(
   state: GameState,
-  card: Pick<ResourceCard, "totalCost" | "resources">,
+  card: Pick<ResourceCard, "totalCost" | "resources"> &
+    Partial<Pick<ResourceCard, "port">>,
 ): PriceBreakdown {
   const steps: PriceStep[] = [];
   let cost = card.totalCost;
@@ -255,10 +302,55 @@ export function explainCardPrice(
     cost = next;
   }
 
-  const final = Math.max(0, cost);
-  if (final !== cost)
-    steps.push({ label: "Floor at 0 Gold", delta: final - cost });
-  return { base: card.totalCost, steps, final };
+  if (cost < 0) {
+    steps.push({ label: "Floor at 0 Gold", delta: -cost });
+    cost = 0;
+  }
+  if (expanded(state)) {
+    if (
+      state.modifierFlags.bamboo_fair &&
+      !effectUses(state, "bamboo_fair") &&
+      card.resources.some(({ type }) => type === "Bamboo")
+    ) {
+      cost = applyDiscount(
+        steps,
+        cost,
+        "Bamboo Fair",
+        EFFECT.bambooFair,
+        "bamboo_fair",
+      );
+    }
+    if (
+      state.modifierFlags.deep_market &&
+      effectUses(state, "deep_market") < 2 &&
+      card.resources.some(({ type }) => isOceanMaterial(type))
+    ) {
+      cost = applyDiscount(
+        steps,
+        cost,
+        "Deep Market",
+        EFFECT.deepMarket,
+        "deep_market",
+      );
+    }
+    if (
+      card.port &&
+      hasModule(state, "merchant_scales") &&
+      !effectUses(state, "merchant_scales") &&
+      card.resources.some(({ type }) =>
+        COMMODITIES[type]?.ports.includes(card.port!),
+      )
+    ) {
+      cost = applyDiscount(
+        steps,
+        cost,
+        "Merchant Scales",
+        EFFECT.merchantScales,
+        "merchant_scales",
+      );
+    }
+  }
+  return { base: card.totalCost, steps, final: cost };
 }
 
 export function getCardFinalCost(state: GameState, card: ResourceCard): number {
@@ -275,34 +367,70 @@ export function portResourcePrice(
   return pulse ? Math.max(1, Math.round(listed * (1 + pulse))) : listed;
 }
 
+export function marketResourceAdjustment(state: GameState, item: string) {
+  const pulse = state.harborPulse?.[item] ?? 0;
+  if (!expanded(state)) return pulse;
+  const forecast = forecastFor(state);
+  const change =
+    forecast?.kind === "market" && forecast.item === item
+      ? -EFFECT.marketDay
+      : 0;
+  return Math.max(-0.15, Math.min(0.15, pulse + change));
+}
+
 // Estimates a typical price range independently of a specific market card.
 export function explainExpectedPrice(
   state: GameState,
   itemType: string,
 ): ExpectedPrice {
   const isResource = (RESOURCES as readonly string[]).includes(itemType);
-  let [min, max] = isResource
-    ? COMMODITIES[itemType].basePrice
-    : PRODUCT_PRICES[itemType];
-  if (isResource) {
-    const ports = unlockedPorts(state.difficulty, state.currentRound);
-    const pulse = state.harborPulse?.[itemType] ?? 0;
-    min = Math.min(
-      ...ports.map((port) => portResourcePrice(itemType, min, port, pulse)),
-    );
-    max = Math.max(
-      ...ports.map((port) => portResourcePrice(itemType, max, port, pulse)),
-    );
-  }
   const resources = [{ type: itemType, quantity: 1 }];
-  const low = explainCardPrice(state, { totalCost: min, resources });
-  const high = explainCardPrice(state, { totalCost: max, resources });
-
+  let lows: PriceBreakdown[];
+  let highs: PriceBreakdown[];
+  if (isResource) {
+    const [min, max] = COMMODITIES[itemType].basePrice;
+    const pulse = marketResourceAdjustment(state, itemType);
+    const ports = unlockedPorts(state.difficulty, state.currentRound);
+    lows = ports.map((port) =>
+      explainCardPrice(state, {
+        totalCost: portResourcePrice(itemType, min, port, pulse),
+        resources,
+        port,
+      }),
+    );
+    highs = ports.map((port) =>
+      explainCardPrice(state, {
+        totalCost: portResourcePrice(itemType, max, port, pulse),
+        resources,
+        port,
+      }),
+    );
+  } else {
+    const materialCost = recipeMaterialCost(itemType);
+    lows = [
+      explainCardPrice(state, {
+        totalCost: productPurchasePrice(itemType, materialCost, 0),
+        resources,
+      }),
+    ];
+    highs = [
+      explainCardPrice(state, {
+        totalCost: productPurchasePrice(
+          itemType,
+          materialCost,
+          1 - Number.EPSILON,
+        ),
+        resources,
+      }),
+    ];
+  }
   return {
-    min: low.final,
-    max: high.final,
+    min: Math.min(...lows.map((quote) => quote.final)),
+    max: Math.max(...highs.map((quote) => quote.final)),
     isProduct: !isResource,
-    modifiers: low.steps.map((step) => step.label),
+    modifiers: Array.from(
+      new Set(lows.flatMap(({ steps }) => steps.map(({ label }) => label))),
+    ),
   };
 }
 
@@ -334,6 +462,28 @@ export function workerWagesFor(
     (total, worker) => total + getWorkerWage(state, type, worker),
     0,
   );
+}
+
+export function quoteWages(state: GameState) {
+  const base = WORKER_TYPES.reduce(
+    (total, worker) => total + workerWagesFor(state, worker.id),
+    0,
+  );
+  const recipes = new Set(state.producedRecipes ?? []);
+  for (const crew of Object.values(state.workers)) {
+    for (const worker of crew) if (worker.task) recipes.add(worker.task);
+  }
+  const discount =
+    expanded(state) && hasModule(state, "wage_ledger") && recipes.size >= 2
+      ? Math.min(base, EFFECT.wageLedger)
+      : 0;
+  return { base, discount, due: base - discount };
+}
+
+export function quoteDues(state: GameState) {
+  const wages = quoteWages(state);
+  const maintenance = state.fixedCost + maintenanceSurcharge(state);
+  return { wages, maintenance, total: wages.due + maintenance };
 }
 
 // A saturating commission keeps Broker favor payouts below the configured cap.

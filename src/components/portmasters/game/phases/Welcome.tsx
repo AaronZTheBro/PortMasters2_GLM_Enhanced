@@ -1,10 +1,9 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { APP_NAME } from "@/lib/game/constants";
+import { APP_NAME, STARTING_STOCK } from "@/lib/game/constants";
 import { cn } from "@/lib/utils";
 import {
-  Ship,
   BookOpen,
   Rocket,
   Clock,
@@ -22,63 +21,14 @@ import {
 import type { PublicUser } from "@/lib/api";
 import { Avatar } from "../../shared";
 import type { PhaseSync } from "./PhaseShared";
-import { roundsFor, type Difficulty } from "@/lib/game/difficulty";
-import { DIFFICULTIES } from "@/lib/game/difficulty";
+import {
+  DIFFICULTIES,
+  difficultyConfig,
+  type Difficulty,
+} from "@/lib/game/difficulty";
 import { motion } from "framer-motion";
-
-// === Animated Ship SVG Decoration ========================================
-// A square rigged ship silhouette that gently bobs with a subtle teal
-// glow, replacing the plain emoji anchors in the title.
-function AnimatedShip() {
-  return (
-    <div className="pm-bob inline-block relative">
-      {/* Glow halo */}
-      <div
-        className="absolute inset-0 blur-md opacity-40"
-        style={{
-          background:
-            "radial-gradient(circle, oklch(0.7 0.14 195 / 0.6), transparent 70%)",
-        }}
-        aria-hidden
-      />
-      <svg
-        width="72"
-        height="52"
-        viewBox="0 0 72 52"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        className="relative text-teal-600 dark:text-teal-400"
-      >
-        {/* Hull */}
-        <path
-          d="M6 32 L66 32 L62 44 Q36 48 10 44 Z"
-          fill="currentColor"
-          opacity="0.85"
-        />
-        {/* Keel line */}
-        <path
-          d="M18 44 Q36 48 54 44"
-          stroke="currentColor"
-          strokeWidth="1"
-          fill="none"
-          opacity="0.5"
-        />
-        {/* Mast */}
-        <rect x="35" y="6" width="2" height="26" fill="currentColor" />
-        {/* Main sail */}
-        <path
-          d="M37 8 L56 14 L54 30 L37 30 Z"
-          fill="currentColor"
-          opacity="0.7"
-        />
-        {/* Jib sail */}
-        <path d="M37 10 L22 18 L37 24 Z" fill="currentColor" opacity="0.55" />
-        {/* Flag */}
-        <path d="M36 6 L42 4 L36 2" fill="currentColor" opacity="0.6" />
-      </svg>
-    </div>
-  );
-}
+import { expanded, RAID_TERMS } from "@/lib/game/expansion";
+import { ShipMark, ShipIcon } from "../../ShipVisualizer";
 
 // === Wave Divider ========================================================
 // A subtle animated sine wave SVG that scrolls horizontally between the
@@ -347,28 +297,36 @@ export function Welcome({
   isHost,
   onShowTutorial,
   difficulty,
+  rulesVersion,
 }: {
   phaseSync: PhaseSync;
   members: PublicUser[];
   isHost: boolean;
   onShowTutorial: () => void;
   difficulty?: Difficulty;
+  rulesVersion?: number;
 }) {
   const harborIds = phaseSync.ready?.requiredUserIds ?? [];
   const canStart = harborIds.length >= 2;
+  const cfg = difficultyConfig(difficulty);
+  const [earlyRaid, lateRaid = earlyRaid] = cfg.pirateChance;
+  const raidCopy =
+    lateRaid === earlyRaid
+      ? `${Math.round(earlyRaid * 100)}% raid chance each round`
+      : `${Math.round(earlyRaid * 100)}% raid chance, rising to ${Math.round(lateRaid * 100)}% after round ${Math.floor(cfg.rounds / 2)}`;
   return (
     <div className="max-w-3xl mx-auto text-center py-4">
       {/* == Animated ship + title == */}
       <div className="flex justify-center mb-1">
-        <AnimatedShip />
+        <ShipMark className="h-auto w-28 text-teal-700 dark:text-teal-300" />
       </div>
       <div className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-1">
         <span className="pm-text-sea">{APP_NAME}</span>
         <DifficultyBadge difficulty={difficulty} />
       </div>
       <p className="text-sm text-muted-foreground mb-2">
-        Sail {roundsFor(difficulty)} rounds with your crew and compete to become
-        Sea Master.
+        Sail {cfg.rounds} rounds with your crew and compete to become Sea
+        Master.
       </p>
 
       {/* == Wave divider == */}
@@ -389,7 +347,7 @@ export function Welcome({
               disabled={!canStart}
               onClick={() => phaseSync.startGame()}
             >
-              <Ship className="h-5 w-5 mr-2" />
+              <ShipIcon className="h-5 w-5 mr-2" />
               {canStart
                 ? "Start the Voyage"
                 : `Need at least 2 captains (${harborIds.length}/2)`}
@@ -439,12 +397,14 @@ export function Welcome({
           title="Starting Resources"
           rows={[
             {
-              text: "Hemp x 8, Silk x 5, Tea x 3",
+              text: Object.entries(STARTING_STOCK)
+                .map(([item, amount]) => `${item} × ${amount}`)
+                .join(", "),
               icon: Package,
               iconClassName: "text-teal-700 dark:text-teal-300",
             },
             {
-              text: "100 Gold starting funds",
+              text: `${cfg.startingGold} Gold before the Renown bonus`,
               icon: Coins,
               iconClassName: "text-amber-700 dark:text-amber-300",
             },
@@ -464,7 +424,7 @@ export function Welcome({
           tone="sea"
           title="Round end costs"
           rows={[
-            "Maintenance: 15 Gold every round",
+            `Base maintenance is ${cfg.maintenance} Gold every round`,
             "Wages settle at Phase 3, not on hire",
           ]}
           icon={Coins}
@@ -473,8 +433,8 @@ export function Welcome({
           tone="rose"
           title="Taxes Explained"
           rows={[
-            "Value tax: 5 percent of finished good margin",
-            "Income tax: 10 percent of round net profit",
+            "Base VAT is 5% of finished good margin",
+            "Base Income Tax is 10% of round net profit after the Shipyard",
           ]}
           icon={Receipt}
         />
@@ -482,8 +442,11 @@ export function Welcome({
           tone="amber"
           title="Pirates & Borrowing"
           rows={[
-            "20% chance of losing all Gold each round",
-            "Hire an escort, or ask the harbor for a loan",
+            raidCopy,
+            expanded({ rulesVersion })
+              ? `A raid can take ${Math.round(RAID_TERMS[cfg.key].lossRate * 100)}% of exposed Gold`
+              : "A raid takes all Gold on hand",
+            "Hire an escort for safe passage. Request Financial Aid if bills are due.",
           ]}
           icon={Skull}
         />

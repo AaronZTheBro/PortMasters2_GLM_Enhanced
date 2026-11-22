@@ -3,12 +3,9 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { QuantityInput } from "@/components/ui/quantity-input";
-import {
-  BROKERS_FAVOR_UNLOCK_LEVEL,
-  PRODUCTS,
-  RESOURCES,
-} from "@/lib/game/constants";
+import { BROKERS_FAVOR_UNLOCK_LEVEL } from "@/lib/game/constants";
 import { callBrokersFavor, completeOrder } from "@/lib/game/engine";
+import { poolsFor } from "@/lib/game/engine/market";
 import { quoteOrder, whisperForOrder } from "@/lib/game/engine/orders";
 import type { GameState } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
@@ -17,7 +14,7 @@ import { Coins } from "lucide-react";
 import type { PublicUser } from "@/lib/api";
 import { Term } from "../../Term";
 import { ItemIcon } from "../../shared";
-import { PriceBreakdownTooltip } from "../PriceTooltips";
+import { PriceBreakdownTooltip, VatBreakdownTooltip } from "../PriceTooltips";
 import { ReadyFooter, type PhaseSync } from "./PhaseShared";
 
 export function Orders({
@@ -40,7 +37,8 @@ export function Orders({
   const [favorItem, setFavorItem] = useState<string | null>(null);
   const [favorQty, setFavorQty] = useState(1);
   const favorUnlocked = game.renownLevel >= BROKERS_FAVOR_UNLOCK_LEVEL;
-  const sellableGoods = [...RESOURCES, ...PRODUCTS].filter(
+  const pool = poolsFor(game);
+  const sellableGoods = [...pool.resources, ...pool.products].filter(
     (it) => (game.inventory[it] || 0) > 0,
   );
   const favorHeld = favorItem ? game.inventory[favorItem] || 0 : 0;
@@ -179,7 +177,7 @@ export function Orders({
           )}
         </div>
       )}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] gap-3">
+      <div className="pm-decision-grid">
         {game.customerCards.map((o) => {
           const hasCargo = o.resources.every(
             (r) => (game.inventory[r.type] || 0) >= r.required!,
@@ -193,6 +191,8 @@ export function Orders({
             commissionBase,
             bonuses,
             reward,
+            salvageChance,
+            auditChance,
           } = quoteOrder(game, o);
           const netProfit = reward - freight.final;
           const canComplete = hasCargo && game.money + netProfit >= 0;
@@ -205,8 +205,8 @@ export function Orders({
             <div
               key={o.id}
               className={cn(
-                "rounded-xl border overflow-hidden flex flex-col",
-                // Harbour gold, filled rather than outlined. The intel
+                "pm-decision-card rounded-xl border flex flex-col",
+                // Harbor gold, filled rather than outlined. The intel
                 // "Guaranteed" highlight already owns amber as a thin outline,
                 // so filled versus outlined keeps the two distinguishable
                 // without relying on hue alone.
@@ -227,7 +227,9 @@ export function Orders({
                       ? "· Imperial Commission"
                       : o.isProductOrder
                         ? "· Finished Product Demand"
-                        : "· Raw Material Demand"}
+                        : o.staple
+                          ? "· Staple contract"
+                          : "· Raw Material Demand"}
                   </span>
                 </span>
                 {o.isMandate ? (
@@ -284,8 +286,17 @@ export function Orders({
                       : "text-rose-600 dark:text-rose-400",
                   )}
                 >
-                  💰 Payout: {reward} Gold 📊 Est. net: {netProfit} Gold
+                  Gross {o.reward} Gold · Payout {reward} Gold · Net {netProfit}{" "}
+                  Gold
                 </div>
+                {(salvageChance > 0 || auditChance > 0) && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {salvageChance > 0 &&
+                      `${salvageChance * 100}% chance to recover freight. `}
+                    {auditChance > 0 &&
+                      `${auditChance * 100}% chance of an audit.`}
+                  </p>
+                )}
                 {bonuses.map(({ name, gold }) => (
                   <div
                     key={name}
@@ -301,8 +312,8 @@ export function Orders({
                 )}
                 {vat && (
                   <div className="text-[10px] text-muted-foreground">
-                    <Term content={<PriceBreakdownTooltip breakdown={vat} />}>
-                      🧾 Est. VAT: {totalVat} Gold (select for unit details)
+                    <Term content={<VatBreakdownTooltip vat={vat} />}>
+                      🧾 VAT: {totalVat} Gold (select for unit details)
                     </Term>
                   </div>
                 )}

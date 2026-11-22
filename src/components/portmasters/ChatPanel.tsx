@@ -21,6 +21,8 @@ export function ChatPanel({
   initialMessages,
   className,
   disabled,
+  draft,
+  onDraftChange,
 }: {
   socket: Socket | null;
   me: PublicUser;
@@ -31,11 +33,15 @@ export function ChatPanel({
   className?: string;
   // Room mute state controls local input. The server enforces the restriction.
   disabled?: boolean;
+  draft?: string;
+  onDraftChange?: (value: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(
     initialMessages ?? [],
   );
-  const [input, setInput] = useState("");
+  const [localInput, setLocalInput] = useState("");
+  const input = draft ?? localInput;
+  const setInput = onDraftChange ?? setLocalInput;
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 

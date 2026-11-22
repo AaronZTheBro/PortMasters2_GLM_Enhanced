@@ -25,13 +25,27 @@ Open [http://localhost:2154](http://localhost:2154).
 
 Register a captain, create or join a harbor, and start when two captains are present. Use separate browser profiles when testing two local accounts because tabs on one origin share a session cookie.
 
+## Voyage rules
+
+New voyages use the expanded cargo, recipe, Boon, and ship module catalogues. Fair Winds runs for eight rounds and introduces staple contracts and forecasts. Open Waters runs for twelve rounds and opens the wider charters in rounds four and eight. Monsoon Season runs for sixteen rounds, opens its charters in rounds six and eleven, and adds Broker leaks and heavier raid pressure.
+
+The harbor shares one forecast schedule. Each captain has a personal market and order board. Every Broker's Whisper creates one guaranteed buyer at the named port. Free and paid rumors share the available slots, while staple contracts and forecast buyers keep their places. The harbor also keeps its Tidewatch bonus and order race winner across reconnects.
+
+Voyages already underway keep their saved rules and boards. Starting a fresh voyage uses the expanded rules.
+
 ## Runtime
 
-Port 2154 is fixed for the web application and Socket.IO. The server rejects any other `PORT` value so local work, tests, and deployments use one predictable endpoint. Do not run `next dev` or `next start` directly. They omit the realtime layer required for rooms, presence, chat, and synchronized phases.
+The server defaults to port 2154. Set `PORT` in your shell or in `.env.local` to choose any available TCP port from 1 to 65535. Railway and Render supply their own `PORT` value. The web app, API, and Socket.IO share the selected port.
+
+```bash
+PORT=3000 npm run dev
+```
+
+With this setting, open [http://localhost:3000](http://localhost:3000).
 
 The local SQLite file is `prisma/dev.db`. Its location is resolved from the repository root for both Prisma and the application, so there is no machine specific home directory in the runtime setup.
 
-The only local environment value required is:
+Set the local database location in `.env.local`.
 
 ```ini
 DATABASE_URL=file:./prisma/dev.db
@@ -69,11 +83,11 @@ Back up a persistent production database before changing the schema. Schema push
 
 ## Commands
 
-`npm run dev` starts the custom development server on port 2154.
+`npm run dev` starts the custom development server on the configured port.
 
 `npm run build` generates Prisma and builds the production application.
 
-`npm run start` applies the current Prisma schema and starts the production server on port 2154.
+`npm run start` applies the current Prisma schema and starts the production server on the configured port.
 
 `npm run lint` runs static checks.
 
@@ -81,7 +95,9 @@ Back up a persistent production database before changing the schema. Schema push
 
 `npm run test:unit` runs the game rule tests only.
 
-`npm run test:integration` runs the isolated full stack integration test. Stop any development server first because the test verifies the fixed port.
+`npm run test:integration` runs the isolated full stack integration test on port 2154. Stop the development server in this checkout first.
+
+`npm run test:balance` simulates 5,000 voyages per difficulty using four captain strategies and verifies the affordability and profit of every opening staple trade. Pass a different seed count after `--` for a shorter or longer run.
 
 `npm run typecheck` checks TypeScript without output files.
 
@@ -89,25 +105,25 @@ Back up a persistent production database before changing the schema. Schema push
 
 `npm run verify` runs every check and a production build.
 
-`npm run db:push` applies the Prisma schema to the local SQLite database.
+`npm run db:push` applies the Prisma schema to the configured SQLite database.
 
 `npm run db:generate` regenerates the Prisma client.
 
 ## Verification
 
-Run this before handoff:
+Run the full verification suite with the command below.
 
 ```bash
 npm run verify
 ```
 
-The automated integration test creates two temporary captains, joins them to one harbor, verifies the live roster and chat, reloads persisted room data through the API, then removes its temporary database.
+The integration test creates two temporary captains in one harbor. It verifies the live roster, chat, shared forecast and rules, checkpoint recovery after reconnecting, phase readiness, persisted room data, and standings replay without a second award. It removes its temporary database after the run.
 
 For a final visual check, register two captains in isolated browser profiles, create a public harbor, join it with the second captain, and advance both through a phase. Confirm the responsive workspace, dialogs, chat, one shared transaction, and a reload all preserve room state.
 
 ## Production
 
-Install dependencies and build the custom server. Before starting it, set `DATABASE_URL` to an absolute file URL on persistent storage:
+Set `DATABASE_URL` to an absolute file URL on persistent storage before starting the server. Install dependencies, build, and start with the commands below.
 
 ```bash
 npm ci
@@ -126,3 +142,9 @@ Create a Railway service from this repository and deploy it without adding start
 The service can boot without a volume by using temporary Railway storage. Attach one volume at `/data` before relying on saved accounts or rooms. When the volume is present, the application stores `portmasters.db` there automatically through `RAILWAY_VOLUME_MOUNT_PATH`. Do not configure a predeploy schema command because Railway predeploy containers cannot access volumes. Keep one replica because SQLite and realtime room coordination require one running instance.
 
 Deploy the service, then generate a Railway domain from Public Networking. HTTP, API, and Socket.IO traffic share the port Railway assigns inside the service.
+
+## Render
+
+In the Render dashboard, choose **New** then **Blueprint** and connect this repository. Render reads `render.yaml` from the repository root. The Blueprint creates one paid Starter web service and a 1 GB disk mounted at `/var/data`. [Render Blueprints](https://render.com/docs/infrastructure-as-code)
+
+Render uses Node.js 22 from `.nvmrc` and assigns the service port. The start command applies the Prisma schema to `/var/data/portmasters.db`. When `/api` reports healthy, open the service URL and sign in. HTTP and Socket.IO use the same URL. SQLite data persists across service restarts and deployments. [Render persistent disks](https://render.com/docs/disks)

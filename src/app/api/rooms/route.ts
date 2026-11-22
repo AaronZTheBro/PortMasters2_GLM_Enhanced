@@ -7,6 +7,7 @@ import { getCurrentUser, generateRoomCode, publicUser } from "@/lib/api-auth";
 import { normalizeRoomName } from "@/lib/utils";
 import { normalizeDifficulty } from "@/lib/game/difficulty";
 import { recordActivity } from "@/lib/activity";
+import { EXPANDED_RULES } from "@/lib/game/expansion";
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
       hostId: user.id,
       isPublic,
       difficulty,
+      rulesVersion: EXPANDED_RULES,
       members: { create: [{ userId: user.id }] },
     },
     include: {

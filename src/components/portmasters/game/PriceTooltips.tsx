@@ -5,6 +5,7 @@ import {
   type ExpectedPrice,
   type PriceBreakdown,
 } from "@/lib/game/engine";
+import type { explainVAT } from "@/lib/game/engine/pricing";
 import type { GameState } from "@/lib/game/types";
 import { GLOSSARY } from "@/lib/game/glossary";
 import { unlockedProducts, unlockedResources } from "@/lib/game/pools";
@@ -19,13 +20,17 @@ import { unlockedProducts, unlockedResources } from "@/lib/game/pools";
  */
 export function PriceBreakdownTooltip({
   breakdown,
+  baseLabel = "Base",
+  finalLabel = "Final",
 }: {
   breakdown: PriceBreakdown;
+  baseLabel?: string;
+  finalLabel?: string;
 }) {
   return (
     <div className="space-y-0.5 min-w-[160px]">
       <div className="flex justify-between gap-3">
-        <span>Base</span>
+        <span>{baseLabel}</span>
         <span>{breakdown.base}g</span>
       </div>
       {breakdown.steps.map((s, i) => (
@@ -38,9 +43,30 @@ export function PriceBreakdownTooltip({
         </div>
       ))}
       <div className="flex justify-between gap-3 font-semibold border-t border-current/15 pt-0.5 mt-0.5">
-        <span>Final</span>
+        <span>{finalLabel}</span>
         <span>{breakdown.final}g</span>
       </div>
+    </div>
+  );
+}
+
+export function VatBreakdownTooltip({
+  vat,
+}: {
+  vat: ReturnType<typeof explainVAT>;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="font-semibold">VAT per finished good</div>
+      <div>Unit sale price {vat.sellingPrice} Gold</div>
+      <div>Average materials {vat.matCost} Gold</div>
+      <div>Base artisan wage {vat.workerCost} Gold</div>
+      <div>Taxable margin {Math.max(0, vat.margin)} Gold</div>
+      <PriceBreakdownTooltip
+        breakdown={vat}
+        baseLabel="Base VAT at 5%"
+        finalLabel="Final VAT"
+      />
     </div>
   );
 }
@@ -83,8 +109,16 @@ export function priceAwareTermContent(game: GameState, itemType: string) {
   // Quoting a market price for a good no charter has opened advertises
   // something the captain cannot buy, and the figure would be meaningless
   // anyway since a locked good never appears on a market card.
-  const openResources = unlockedResources(game.difficulty, game.currentRound);
-  const openProducts = unlockedProducts(game.difficulty, game.currentRound);
+  const openResources = unlockedResources(
+    game.difficulty,
+    game.currentRound,
+    game.rulesVersion,
+  );
+  const openProducts = unlockedProducts(
+    game.difficulty,
+    game.currentRound,
+    game.rulesVersion,
+  );
   if (!openResources.includes(itemType) && !openProducts.includes(itemType))
     return undefined;
   const description = GLOSSARY[itemType];

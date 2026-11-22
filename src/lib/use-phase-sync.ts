@@ -12,11 +12,14 @@ import { canAdvancePhase, nextPhase } from "@/lib/game/engine/lifecycle";
 import { renownStartingGoldBonus } from "@/lib/game/legacy";
 import { normalizeDifficulty } from "@/lib/game/difficulty";
 import { api } from "@/lib/api";
+import type { VoyageRules } from "@/lib/game/expansion";
 
 export type ReadyState = {
   round: number;
   phase: string;
   advancing: boolean;
+  voyageEpoch?: number;
+  rules?: VoyageRules;
   harborPulse?: Record<string, number>;
   readyUserIds: string[];
   requiredUserIds: string[];
@@ -41,11 +44,13 @@ export function usePhaseSync(
   authed: boolean,
   myUserId: string,
   startingGoldBonus: number,
+  reloadGame: () => void,
 ) {
   const [ready, setReady] = useState<ReadyState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const voteInFlight = useRef(false);
+  const requestedEpoch = useRef<number | undefined>(undefined);
 
   const advance = useCallback(
     (
@@ -53,10 +58,25 @@ export function usePhaseSync(
         round: number;
         phase: string;
         harborPulse?: Record<string, number>;
+        voyageEpoch?: number;
+        rules?: VoyageRules;
       },
       released: boolean,
     ) => {
       const current = getGame();
+      if (
+        data.voyageEpoch !== undefined &&
+        data.voyageEpoch !== current.voyageEpoch
+      ) {
+        if (
+          data.voyageEpoch > current.voyageEpoch &&
+          data.voyageEpoch !== requestedEpoch.current
+        ) {
+          requestedEpoch.current = data.voyageEpoch;
+          reloadGame();
+        }
+        return;
+      }
       const target = rank(data.round, data.phase) + Number(released);
       const currentRank = rank(current.currentRound, String(current.phase));
       if (currentRank >= target) return;
@@ -72,6 +92,11 @@ export function usePhaseSync(
       act((state, logs) => {
         while (rank(state.currentRound, String(state.phase)) < target) {
           if (state.phase === 0) {
+            if (data.rules) {
+              state.rulesVersion = data.rules.version;
+              state.forecasts = data.rules.forecasts;
+            }
+            state.seatSeed = ctx.seedBase;
             startBoonDrafting(state, logs);
             continue;
           }
@@ -83,7 +108,7 @@ export function usePhaseSync(
       });
       void flush().catch(() => {});
     },
-    [act, ctx, flush, getGame, roomId, socket],
+    [act, ctx, flush, getGame, reloadGame, roomId, socket],
   );
 
   useEffect(() => {
@@ -102,14 +127,23 @@ export function usePhaseSync(
         socket.connected &&
         !voteInFlight.current
       ) {
-        socket.emit("phase:ready", { roomId, ...vote });
+        socket.emit("phase:ready", {
+          roomId,
+          voyageEpoch: current.voyageEpoch,
+          ...vote,
+        });
       }
     };
     const onAdvance = (data: ReadyState & { roomId: string }) => {
       if (data.roomId === roomId) advance(data, true);
     };
-    const onStarted = ({ roomId: startedRoom }: { roomId: string }) => {
-      if (startedRoom === roomId) advance({ round: 1, phase: "5" }, false);
+    const onStarted = (data: {
+      roomId: string;
+      voyageEpoch?: number;
+      rules?: VoyageRules;
+    }) => {
+      if (data.roomId === roomId)
+        advance({ ...data, round: 1, phase: "5" }, false);
     };
     const onError = (data: { roomId: string; error: string }) => {
       if (data.roomId === roomId) setStartError(data.error);
@@ -118,6 +152,7 @@ export function usePhaseSync(
       roomId: string;
       voyageEpoch?: number;
       difficulty?: string;
+      rules?: VoyageRules;
     }) => {
       if (data.roomId !== roomId) return;
       setStartError(null);
@@ -136,6 +171,7 @@ export function usePhaseSync(
           level ?? state.renownLevel,
           data.voyageEpoch ?? state.voyageEpoch + 1,
           normalizeDifficulty(data.difficulty ?? state.difficulty),
+          data.rules,
         );
       });
     };
@@ -185,7 +221,12 @@ export function usePhaseSync(
       });
       try {
         await flush();
-        if (socket.connected) socket.emit("phase:ready", { roomId, ...vote });
+        if (socket.connected)
+          socket.emit("phase:ready", {
+            roomId,
+            voyageEpoch: current.voyageEpoch,
+            ...vote,
+          });
       } catch {
         act((state) => {
           state.readyVote = undefined;
@@ -201,14 +242,37 @@ export function usePhaseSync(
   );
 
   const cancelReady = useCallback(async () => {
-    if (!socket || voteInFlight.current) return;
-    const vote = getGame().readyVote;
-    act((state) => {
-      state.readyVote = undefined;
-      state.pendingBoonId = undefined;
-    });
-    socket.emit("phase:unready", { roomId, ...vote });
-    await flush().catch(() => {});
+    if (!socket?.connected || voteInFlight.current) return;
+    const current = getGame();
+    const vote = current.readyVote;
+    if (!vote) return;
+    voteInFlight.current = true;
+    try {
+      const accepted: boolean = await socket
+        .timeout(4000)
+        .emitWithAck("phase:unready", {
+          roomId,
+          voyageEpoch: current.voyageEpoch,
+          ...vote,
+        });
+      if (!accepted) return;
+      const latest = getGame();
+      if (
+        latest.voyageEpoch !== current.voyageEpoch ||
+        latest.readyVote?.round !== vote.round ||
+        latest.readyVote.phase !== vote.phase
+      )
+        return;
+      act((state) => {
+        state.readyVote = undefined;
+        state.pendingBoonId = undefined;
+      });
+      await flush();
+    } catch {
+      setStartError("Could not update your readiness. Try again.");
+    } finally {
+      voteInFlight.current = false;
+    }
   }, [act, flush, getGame, roomId, socket]);
 
   const startGame = useCallback(() => {

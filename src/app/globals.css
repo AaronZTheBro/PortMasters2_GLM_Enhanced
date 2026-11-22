@@ -879,3 +879,84 @@
     height: 2.5rem;
   }
 }
+
+@layer components {
+  .pm-auth-brand,
+  .pm-harbor-banner {
+    background:
+      repeating-radial-gradient(
+        ellipse at 84% 110%,
+        transparent 0 16px,
+        #a7dfce10 17px 18px,
+        transparent 19px 29px
+      ),
+      radial-gradient(ellipse at 70% 20%, #3e7063, transparent 65%),
+      linear-gradient(145deg, #0e2731, #204d49);
+    color: #fff3dd;
+    border-color: #25534e;
+  }
+
+  .pm-harbor-banner p {
+    color: #d0e4dd;
+  }
+
+  .pm-auth-layout {
+    border-color: var(--border);
+  }
+
+  .pm-brief {
+    color: var(--foreground);
+    background: color-mix(in oklch, var(--card) 91%, #438e78);
+    border-color: color-mix(in oklch, var(--border) 70%, #438e78);
+  }
+
+  .pm-room-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @media (min-width: 1024px) and (min-height: 600px) {
+    .pm-room-grid:has(> #roomWorkspace) {
+      grid-template-columns: minmax(0, 1fr) clamp(19rem, 29vw, 23rem);
+    }
+  }
+
+  .pm-decision-grid {
+    display: grid;
+    min-width: 0;
+    gap: 0.75rem;
+    grid-template-columns: repeat(
+      auto-fit,
+      minmax(min(100%, max(15rem, calc((100% - 1.5rem) / 3))), 1fr)
+    );
+  }
+
+  .pm-decision-card {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    box-shadow: 0 4px 16px #132b2810;
+  }
+
+  .pm-decision-card :where(button, [data-slot="tooltip-trigger"]),
+  .pm-dialog
+    :where([data-slot="dialog-title"], [data-slot="dialog-description"]) {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .pm-dialog > div {
+    scrollbar-gutter: stable;
+  }
+}
+
+@media (max-height: 36rem) and (orientation: landscape) {
+  .pm-auth-vessel {
+    max-width: 5rem;
+    margin-inline: 0;
+    margin-top: 0;
+  }
+  .pm-auth-brand {
+    gap: 0.5rem;
+  }
+}

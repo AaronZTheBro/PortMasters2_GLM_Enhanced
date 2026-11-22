@@ -1,14 +1,11 @@
 "use client";
 
+import { ShipIcon } from "../../ShipVisualizer";
+import { poolsFor } from "@/lib/game/engine/market";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { QuantityInput } from "@/components/ui/quantity-input";
-import {
-  BARTER_ITEMS,
-  COMMODITIES,
-  ICONS,
-  PRODUCT_PRICES,
-} from "@/lib/game/constants";
+import { COMMODITIES, ICONS, PRODUCT_PRICES } from "@/lib/game/constants";
 import { getOwnedAmount } from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
@@ -26,7 +23,6 @@ import {
   Lock,
   PackageOpen,
   Scale,
-  Ship,
   Sparkles,
   Star,
   Waves,
@@ -166,7 +162,8 @@ export function BarterPhase({
   colorFor?: (item: string) => string | undefined;
 }) {
   const resolveColor = itemColorResolver(colorFor);
-  const items = BARTER_ITEMS as readonly string[];
+  const pool = poolsFor(game);
+  const items = ["Gold", ...pool.resources, ...pool.products];
   const [offerItem, setOfferItem] = useState<string>("Hemp");
   const [offerAmount, setOfferAmount] = useState(1);
   const [requestItem, setRequestItem] = useState<string>("Gold");
@@ -377,7 +374,7 @@ export function BarterPhase({
       <div className="relative rounded-xl border border-teal-500/20 bg-teal-500/[0.03] p-4 mb-4 overflow-hidden">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold flex items-center gap-1.5">
-            <Ship className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+            <ShipIcon className="h-4 w-4 text-teal-600 dark:text-teal-400" />
             Post an Offer
           </h3>
           {fairnessHint && (
@@ -679,7 +676,7 @@ export function BarterPhase({
             <div className="relative mb-2">
               <div className="absolute inset-0 rounded-full bg-teal-500/10 blur-xl" />
               <div className="relative grid place-items-center h-14 w-14 rounded-full border border-dashed border-teal-500/40 text-teal-600 dark:text-teal-300">
-                <Ship className="h-6 w-6 pm-bob" />
+                <ShipIcon className="h-6 w-6 pm-bob" />
               </div>
               <Waves className="absolute -bottom-1 left-1/2 -translate-x-1/2 h-3 w-10 text-teal-500/40" />
             </div>
