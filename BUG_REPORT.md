@@ -1,6 +1,6 @@
 # PortMasters 2 defect report
 
-November 21, 2026. Reviewed commit `553ce1a` with the existing local changes applied. This report supersedes the earlier static draft. The findings apply to the reviewed working tree unless a historical result is explicitly identified.
+November 21, 2026. Reviewed commit `553ce1a` with the existing local changes applied. The triage and reproduction notes describe that snapshot. Later fixes and audits are recorded below.
 
 ## Triage summary
 
@@ -246,3 +246,15 @@ The effect checks covered 7,050 Boon and module combinations and 35,715 installa
 A local production restart on the Render port restored the standings without paying Renown twice. The same check excluded a captain who defaulted on a loan despite having the highest Reputation. A fixture with the older result format recovered its standings using retained activity without issuing another award.
 
 The repository verification passed lint, type checking, 21 game rules tests, the server integration test, and the production build. The effect fixture covered 7,050 boon and loadout combinations and 35,715 installation sequences. The schema update preserved the seeded save in a database using the earlier schema. Browser checks used Chromium viewport and touch emulation.
+
+## Artwork and rules audit
+
+1. Ship graphics were still supplied by several generic icons and by text stored in saves. The shared SVG now supplies full ship art and compact icons. The module lists, guide, tutorial, notifications, and ledger render old ship characters through that same SVG. Captain messages retain their original text.
+2. The guide described Fleet of Treasures as the final freight modifier even when Cargo Net or Convoy Pennant applied. The guide now distinguishes the two voyage rule versions. The tutorial and glossary reuse the live catalogue, including the charter schedule, recipes, and artisan assignments.
+3. Completed voyages displayed the next round counter as rounds sailed. The dashboard and copied summary now show the actual number of rounds and identify trading profit before Income Tax.
+4. Tidewatch and the order race relied on memory and a live socket. The room now records both outcomes for the current voyage. Rejoining restores the Tidewatch bonus and the race honors the same winner. A replay credits the race reward once.
+5. Quick Actions had a second state path with no callers. The keyboard shortcut now opens the same dialog as the room menu. The source import graph reached every source module, and the public icons are used by the goods views. The source and public trees contained no empty directories.
+
+The audit passed 35 unit tests, the realtime integration test, lint, type checking, and a production build. The effect run covered 23 Boons, 23 modules, and 267,744 installation sequences. The balance run repeated 5,000 simulations per difficulty. The earlier SQLite fixture retained its room and both saves after applying the current schema.
+
+Chrome checks used nine viewport sizes. The production run checked the harbor and captain dialogs, guide, tutorial, old ledger entries, the Broker badge, and a live two captain round that awarded Word on the Docks and reloaded the winner without another credit. The deployment settings were read against the provider references. [Render Blueprint reference](https://render.com/docs/blueprint-spec) [Railway volume reference](https://docs.railway.com/volumes)

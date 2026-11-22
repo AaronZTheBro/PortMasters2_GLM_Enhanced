@@ -11,6 +11,7 @@ import {
 import {
   getWorkerWage,
   maintenanceSurcharge,
+  quoteWages,
   workerWagesFor,
 } from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
@@ -31,10 +32,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ItemIcon } from "../shared";
-import { ShipVisualizer } from "../ShipVisualizer";
+import { ShipVisualizer, ShipIcon, TextWithShipIcons } from "../ShipVisualizer";
 import {
   Package,
-  Ship,
   Receipt,
   BookOpen,
   Coins,
@@ -118,7 +118,7 @@ export function GameStatusPanel({
       return { ...w, list, due: workerWagesFor(game, w.id) };
     },
   );
-  const pendWages = roster.reduce((sum, r) => sum + r.due, 0);
+  const { due: pendWages, discount: wageSavings } = quoteWages(game);
   const pendMaint = game.fixedCost + maintenanceSurcharge(game);
   const pendTotal = pendWages + pendMaint;
   const nextRoundDue =
@@ -190,7 +190,7 @@ export function GameStatusPanel({
             <Stat
               label="Ship"
               value={`Lv ${game.shipLevel}`}
-              icon={<Ship className="h-3.5 w-3.5" />}
+              icon={<ShipIcon className="h-3.5 w-3.5" />}
               className="text-teal-600 dark:text-teal-400"
             />
           )}
@@ -206,7 +206,7 @@ export function GameStatusPanel({
             <Package className="h-3 w-3" /> Hold
           </TabsTrigger>
           <TabsTrigger value="ship" className="min-h-9 gap-1 px-2 text-[11px]">
-            <Ship className="h-3 w-3" /> Ship
+            <ShipIcon className="h-3 w-3" /> Ship
           </TabsTrigger>
           <TabsTrigger value="dues" className="min-h-9 gap-1 px-2 text-[11px]">
             <Receipt className="h-3 w-3" /> Dues
@@ -238,7 +238,11 @@ export function GameStatusPanel({
             Raw Materials
             <span className="h-px flex-1 bg-black/10 dark:bg-white/10" />
           </div>
-          {unlockedResources(game.difficulty, game.currentRound).map((r) => (
+          {unlockedResources(
+            game.difficulty,
+            game.currentRound,
+            game.rulesVersion,
+          ).map((r) => (
             <InvItem
               key={r}
               icon={<ItemIcon item={r} className="h-3.5 w-3.5" />}
@@ -253,7 +257,11 @@ export function GameStatusPanel({
             Finished Goods
             <span className="h-px flex-1 bg-black/10 dark:bg-white/10" />
           </div>
-          {unlockedProducts(game.difficulty, game.currentRound).map((r) => (
+          {unlockedProducts(
+            game.difficulty,
+            game.currentRound,
+            game.rulesVersion,
+          ).map((r) => (
             <InvItem
               key={r}
               icon={<ItemIcon item={r} className="h-3.5 w-3.5" />}
@@ -300,10 +308,9 @@ export function GameStatusPanel({
               shipLevel={game.shipLevel}
               equippedModules={game.equippedModules}
               compact
-              cargoFill={Math.min(
-                1,
-                Object.values(game.inventory).reduce((sum, n) => sum + n, 0) /
-                  30,
+              cargoUnits={Object.values(game.inventory).reduce(
+                (sum, n) => sum + n,
+                0,
               )}
               crewCount={Object.values(game.workers).reduce(
                 (sum, arr) => sum + arr.length,
@@ -334,7 +341,9 @@ export function GameStatusPanel({
           ) : (
             game.equippedModules.map((m) => (
               <div key={m.id} className="py-0.5 text-[11px]">
-                <span className="mr-1">{m.icon}</span>
+                <span className="mr-1">
+                  <TextWithShipIcons>{m.icon}</TextWithShipIcons>
+                </span>
                 <span className="text-foreground/90">{m.name}</span>
                 <div className="pl-5 text-[10px] text-muted-foreground">
                   {m.desc}
@@ -361,6 +370,9 @@ export function GameStatusPanel({
                 }
               >
                 <b>{nW > 0 ? `${pendWages} Gold` : "…"}</b>
+                {wageSavings > 0 && (
+                  <span> · Wage Ledger saves {wageSavings} Gold</span>
+                )}
               </Row>
               {roster
                 .filter((r) => r.due > 0)

@@ -85,6 +85,10 @@ model Room {
   // new voyage (fresh market, orders, and Broker intel for everyone),
   // while a reload during the voyage still reproduces the current one.
   voyageEpoch Int @default(0)
+  rulesVersion Int @default(1)
+  forecastPlan String @default("[]")
+  tidewatchSurge Boolean @default(false)
+  docksWinnerId String?
   // Empty during a current voyage. Older saves lack the snapshot.
   voyageResult String?
 

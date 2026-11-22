@@ -1,5 +1,6 @@
 "use client";
 
+import { ShipIcon, TextWithShipIcons } from "../ShipVisualizer";
 import { useMemo, useState } from "react";
 import {
   Dialog,
@@ -11,9 +12,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { APP_NAME, tutorialSteps } from "@/lib/game/constants";
-import type { Difficulty } from "@/lib/game/difficulty";
-import { guideTabs, tipsGroups, type CalloutTone } from "@/lib/game/guide";
+import { APP_NAME } from "@/lib/game/constants";
+import { difficultyConfig, type Difficulty } from "@/lib/game/difficulty";
+import { expanded } from "@/lib/game/expansion";
+import {
+  guideTabs,
+  tipsGroups,
+  tutorialSteps,
+  type CalloutTone,
+} from "@/lib/game/guide";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   unlockedProducts,
@@ -38,7 +45,6 @@ import {
   ChevronRight,
   Coins,
   Trophy,
-  Ship,
   Loader2,
   Eye,
   RotateCcw,
@@ -84,7 +90,7 @@ function GuideSectionCard({
           className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-teal-500/10 text-base shrink-0"
           aria-hidden
         >
-          {section.icon}
+          <TextWithShipIcons>{section.icon}</TextWithShipIcons>
         </span>
         <h4 className="text-sm font-semibold leading-tight">{section.title}</h4>
       </header>
@@ -120,12 +126,17 @@ export function GuideModal({
   open,
   onOpenChange,
   difficulty,
+  rulesVersion,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   difficulty: Difficulty;
+  rulesVersion?: number;
 }) {
-  const tabs = useMemo(() => guideTabs(difficulty), [difficulty]);
+  const tabs = useMemo(
+    () => guideTabs(difficulty, rulesVersion),
+    [difficulty, rulesVersion],
+  );
   // Tabs needs a controlled value to survive difficulty changes. Rather
   // than resetting state in an effect (which triggers cascading renders
   // and trips the state update lint rule), we keep the user's
@@ -195,12 +206,17 @@ export function TipsModal({
   open,
   onOpenChange,
   difficulty,
+  rulesVersion,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   difficulty: Difficulty;
+  rulesVersion?: number;
 }) {
-  const groups = useMemo(() => tipsGroups(difficulty), [difficulty]);
+  const groups = useMemo(
+    () => tipsGroups(difficulty, rulesVersion),
+    [difficulty, rulesVersion],
+  );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
@@ -213,7 +229,7 @@ export function TipsModal({
             Review practical ways to avoid bankruptcy throughout the voyage.
           </DialogDescription>
         </DialogHeader>
-        <div className="max-h-[60vh] overflow-y-auto pm-scroll pr-1 -mr-1 space-y-2.5">
+        <div className="space-y-2.5">
           {groups.map((group, gi) => (
             <section
               key={gi}
@@ -323,7 +339,11 @@ export function NotificationHistoryModal({
                         key={i}
                         className="text-[12.5px] text-foreground/80 leading-snug break-words"
                       >
-                        {line}
+                        {n.fromLedger ? (
+                          <TextWithShipIcons>{line}</TextWithShipIcons>
+                        ) : (
+                          line
+                        )}
                       </div>
                     ))}
                   </div>
@@ -356,6 +376,8 @@ export function RumorBoardModal({
   const count = intelPurchaseCount(game);
   const cost = whisperCost(game);
   const canBuy = game.phase === 1 && count > 0 && game.money >= cost;
+  const broker = difficultyConfig(game.difficulty);
+  const leakProtected = expanded(game) && game.modifierFlags.false_colors;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -365,7 +387,8 @@ export function RumorBoardModal({
             Broker's Rumor Board
           </DialogTitle>
           <DialogDescription>
-            Reveal which goods specific ports will request in Phase 2.
+            Each rumor guarantees one buyer for the named good and port in Phase
+            2.
           </DialogDescription>
         </DialogHeader>
         <div className="flex justify-center my-2">
@@ -379,6 +402,15 @@ export function RumorBoardModal({
               : `Buy ${count} ${count === 1 ? "rumor" : "rumors"} for ${cost} Gold`}
           </Button>
         </div>
+        {game.phase === 1 && broker.brokerCorruption && (
+          <p className="text-center text-xs text-muted-foreground">
+            {leakProtected
+              ? "False Colors blocks the added raid risk this round."
+              : game.brokerTippedPirates
+                ? "A leak already raised raid risk this round."
+                : `Each paid bundle has a ${Math.round(broker.brokerCorruptionChance * 100)}% chance to raise raid risk by ${Math.round(broker.brokerCorruptionRisk * 100)} percentage points.`}
+          </p>
+        )}
         <div className="rounded-lg border border-teal-500/15 bg-teal-500/[0.04] p-3.5 min-h-[110px]">
           {game.revealedIntel.length ? (
             <>
@@ -387,7 +419,7 @@ export function RumorBoardModal({
               </div>
               {game.revealedIntel.map((i, idx) => (
                 <div key={idx} className="text-[13px] py-0.5">
-                  • 🗣️ '{i.port} wants {i.item}'
+                  <strong>Guaranteed</strong> · {i.port} wants {i.item}
                 </div>
               ))}
             </>
@@ -460,13 +492,18 @@ export function TutorialModal({
   open,
   onOpenChange,
   difficulty,
+  rulesVersion,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   difficulty: Difficulty;
+  rulesVersion?: number;
 }) {
   const [step, setStep] = useState(0);
-  const steps = useMemo(() => tutorialSteps(difficulty), [difficulty]);
+  const steps = useMemo(
+    () => tutorialSteps(difficulty, rulesVersion),
+    [difficulty, rulesVersion],
+  );
   const total = steps.length;
   const s = steps[step];
   const pct = Math.round(((step + 1) / total) * 100);
@@ -488,7 +525,7 @@ export function TutorialModal({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-base leading-tight pr-6">
-            {s.title}
+            <TextWithShipIcons>{s.title}</TextWithShipIcons>
           </DialogTitle>
           <DialogDescription className="sr-only">
             Tutorial step {step + 1} of {total}
@@ -518,7 +555,7 @@ export function TutorialModal({
               className="justify-self-end pm-grad-primary text-white"
               onClick={close}
             >
-              🚢 Set Sail!
+              <ShipIcon /> Set Sail!
             </Button>
           ) : (
             <Button
@@ -593,6 +630,7 @@ export function PlayerDetailModal({
   loading,
   legacy,
   difficulty,
+  rulesVersion,
   colorFor,
 }: {
   open: boolean;
@@ -605,6 +643,7 @@ export function PlayerDetailModal({
   // The viewer's own tier. Difficulty is room wide, so this correctly
   // describes any captain in the harbor without adding it to the payload.
   difficulty: Difficulty;
+  rulesVersion?: number;
   // Optional, falls back to the
   // plain COLORS lookup when a caller hasn't wired useColorPreference in.
   colorFor?: (item: string) => string | undefined;
@@ -705,7 +744,7 @@ export function PlayerDetailModal({
                 toneClassName="text-amber-600 dark:text-amber-400"
               />
               <ProfileStatTile
-                icon={<Ship className="h-3.5 w-3.5" />}
+                icon={<ShipIcon className="h-3.5 w-3.5" />}
                 value={detail.shipLevel}
                 label="Ship Level"
                 toneClassName="text-teal-600 dark:text-teal-400"
@@ -733,7 +772,11 @@ export function PlayerDetailModal({
                       <div className="text-[10px] font-medium text-muted-foreground mb-1">
                         Raw Materials
                       </div>
-                      {unlockedResources(difficulty, detail.round).map((r) => (
+                      {unlockedResources(
+                        difficulty,
+                        detail.round,
+                        rulesVersion,
+                      ).map((r) => (
                         <div
                           key={r}
                           className="flex items-center text-[12px] py-0.5"
@@ -755,7 +798,11 @@ export function PlayerDetailModal({
                       <div className="text-[10px] font-medium text-muted-foreground mb-1">
                         Finished Goods
                       </div>
-                      {unlockedProducts(difficulty, detail.round).map((r) => (
+                      {unlockedProducts(
+                        difficulty,
+                        detail.round,
+                        rulesVersion,
+                      ).map((r) => (
                         <div
                           key={r}
                           className="flex items-center text-[12px] py-0.5"
@@ -823,7 +870,8 @@ export function PlayerDetailModal({
                     <div className="space-y-1">
                       {detail.equippedModules.map((m) => (
                         <div key={m.id} className="text-[12px]">
-                          {m.icon} <strong>{m.name}</strong>: {m.desc}
+                          <TextWithShipIcons>{m.icon}</TextWithShipIcons>{" "}
+                          <strong>{m.name}</strong>: {m.desc}
                         </div>
                       ))}
                     </div>
@@ -846,7 +894,7 @@ export function PlayerDetailModal({
                             key={i}
                             className="whitespace-pre-wrap break-words"
                           >
-                            {l}
+                            <TextWithShipIcons>{l}</TextWithShipIcons>
                           </div>
                         ))}
                       </div>

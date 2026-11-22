@@ -109,8 +109,16 @@ export function priceAwareTermContent(game: GameState, itemType: string) {
   // Quoting a market price for a good no charter has opened advertises
   // something the captain cannot buy, and the figure would be meaningless
   // anyway since a locked good never appears on a market card.
-  const openResources = unlockedResources(game.difficulty, game.currentRound);
-  const openProducts = unlockedProducts(game.difficulty, game.currentRound);
+  const openResources = unlockedResources(
+    game.difficulty,
+    game.currentRound,
+    game.rulesVersion,
+  );
+  const openProducts = unlockedProducts(
+    game.difficulty,
+    game.currentRound,
+    game.rulesVersion,
+  );
   if (!openResources.includes(itemType) && !openProducts.includes(itemType))
     return undefined;
   const description = GLOSSARY[itemType];

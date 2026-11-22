@@ -2,11 +2,11 @@
 import {
   BROKERS_FAVOR_UNLOCK_LEVEL,
   ICONS,
-  PRODUCTS,
   PRODUCTS_TIER1,
   PRODUCTS_TIER2,
   RESOURCES,
   RESOURCES_TIER1,
+  WORD_ON_THE_DOCKS_LEDGER_ENTRY,
   WORD_ON_THE_DOCKS_REWARD,
   WORD_ON_THE_DOCKS_THRESHOLD,
 } from "../constants";
@@ -14,14 +14,28 @@ import {
   MANDATE_TEMPLATES,
   difficultyConfig,
   mandateIndexFor,
-  marketCountsFor,
 } from "../difficulty";
 import { isSilkProduct, unlockedPorts } from "../pools";
-import { createRng, type Rng } from "../rng";
+
+import {
+  EFFECT,
+  expanded,
+  effectUses,
+  isOceanMaterial,
+  spendEffect,
+} from "../expansion";
+import {
+  brokerWhisperCapacity,
+  revealBrokerWhisper,
+  whisperForOrder,
+} from "../broker-whispers";
+import { voyageRandom } from "../voyage-rng";
+
 import type { GameContext, GameState, OrderCard } from "../types";
 import { hasModule, whisperCost } from "./core";
 import {
   genMixedOrder,
+  ordinaryOrders,
   genProductOrder,
   genRawOrder,
   poolsFor,
@@ -32,16 +46,7 @@ import {
   explainVAT,
 } from "./pricing";
 
-export function whisperForOrder(state: GameState, order: OrderCard) {
-  // Guaranteed cards keep the original slot ID, including in saved boards.
-  if (order.isMandate || order.isBrokerFavor) return undefined;
-  const intel = state.revealedIntel[order.id];
-  return intel &&
-    order.resources.length === 1 &&
-    order.resources[0].type === intel.item
-    ? intel
-    : undefined;
-}
+export { whisperForOrder } from "../broker-whispers";
 
 export function quoteOrder(state: GameState, order: OrderCard) {
   const freight = explainTransportCost(state, order);
@@ -52,7 +57,7 @@ export function quoteOrder(state: GameState, order: OrderCard) {
     : null;
   const totalVat = product && vat ? vat.final * product.required! : 0;
   let reward = order.reward - totalVat;
-  const bonuses: { name: string; gold: number }[] = [];
+  const bonuses: { name: string; gold: number; effect?: string }[] = [];
 
   const applyBonus = (
     name: string,
@@ -92,11 +97,54 @@ export function quoteOrder(state: GameState, order: OrderCard) {
       PRODUCTS_TIER2.some((good) => good === item),
     );
   }
+  if (expanded(state) && !order.isMandate && !order.isBrokerFavor) {
+    const addFlat = (effect: string, name: string, gold: number) => {
+      if (effectUses(state, effect)) return;
+      bonuses.push({ effect, name, gold });
+      reward += gold;
+    };
+    if (state.modifierFlags.reliable_buyer && order.staple)
+      addFlat("reliable_buyer", "Reliable Buyer", EFFECT.reliableBuyer);
+    if (
+      state.modifierFlags.ceramic_commission &&
+      order.resources.some(
+        ({ type }) => type === "Celadon Ware" || type === "Lacquered Jar",
+      )
+    )
+      addFlat(
+        "ceramic_commission",
+        "Ceramic Commission",
+        EFFECT.ceramicCommission,
+      );
+    if (
+      state.modifierFlags.rare_cargo_charter &&
+      order.resources.some(
+        ({ type, required }) => isOceanMaterial(type) && (required ?? 0) >= 2,
+      )
+    )
+      addFlat(
+        "rare_cargo_charter",
+        "Rare Cargo Charter",
+        EFFECT.rareCargoCharter,
+      );
+    if (
+      hasModule(state, "ocean_exchange_ledger") &&
+      order.resources.some(({ type }) => isOceanMaterial(type))
+    )
+      addFlat(
+        "ocean_exchange_ledger",
+        "Ocean Exchange Ledger",
+        EFFECT.oceanExchangeLedger,
+      );
+  }
   const commissionBase = reward;
   const commission = order.isBrokerFavor
     ? brokersFavorCommission(commissionBase)
     : 0;
   reward -= commission;
+  const salvageChance =
+    hasModule(state, "salvage_crane") && freight.final > 0 ? 0.3 : 0;
+  const auditChance = hasModule(state, "tax_evasion") ? 0.15 : 0;
   return {
     freight,
     vat,
@@ -105,6 +153,8 @@ export function quoteOrder(state: GameState, order: OrderCard) {
     commissionBase,
     bonuses,
     reward,
+    salvageChance,
+    auditChance,
   };
 }
 
@@ -122,8 +172,16 @@ export function completeOrder(
       return;
     }
   }
-  const { freight, totalVat, commission, commissionBase, bonuses, reward } =
-    quoteOrder(state, order);
+  const {
+    freight,
+    totalVat,
+    commission,
+    commissionBase,
+    bonuses,
+    reward,
+    salvageChance,
+    auditChance,
+  } = quoteOrder(state, order);
   if (state.money + reward < freight.final) {
     logs.push("❌ This order would cost more Gold than you have.");
     return;
@@ -134,7 +192,8 @@ export function completeOrder(
     state.roundVatPaid = (state.roundVatPaid ?? 0) + totalVat;
     logs.push(`🧾 Product Sales VAT: ${totalVat} Gold`);
   }
-  for (const { name, gold } of bonuses) {
+  for (const { name, gold, effect } of bonuses) {
+    if (effect) spendEffect(state, effect);
     logs.push(`${name} added ${gold} Gold to the reward`);
   }
   const fleetDiscount = freight.steps.find(
@@ -145,18 +204,20 @@ export function completeOrder(
       `⛵ Fleet of Treasures: Saved ${-fleetDiscount.delta} Gold on freight`,
     );
   }
+  for (const { label, delta, effect } of freight.steps) {
+    if (!effect) continue;
+    spendEffect(state, effect);
+    if (delta < 0) logs.push(`${label} saved ${-delta} Gold on freight`);
+  }
+  const random = voyageRandom(state, `settleOrder:${order.id}`);
   let transport = freight.final;
-  if (
-    hasModule(state, "salvage_crane") &&
-    transport > 0 &&
-    Math.random() < 0.3
-  ) {
+  if (salvageChance && random() < salvageChance) {
     logs.push(`♻️ Salvage Crane: Refunded ${transport} Gold transport!`);
     transport = 0;
   }
   const netBeforeAudit = reward - transport;
   const audit =
-    hasModule(state, "tax_evasion") && Math.random() < 0.15
+    auditChance && random() < auditChance
       ? Math.min(20, Math.max(0, state.money + netBeforeAudit))
       : 0;
   if (audit > 0) logs.push(`🚨 Tax Evasion Ledger audit: Paid ${audit} Gold.`);
@@ -191,10 +252,10 @@ export function completeOrder(
 
 // Credits the captain confirmed by the server as the race winner.
 export function claimWordOnTheDocksReward(state: GameState, logs: string[]) {
+  if (state.docksRewardClaimed) return;
+  state.docksRewardClaimed = true;
   state.money += WORD_ON_THE_DOCKS_REWARD;
-  logs.push(
-    `📣 Word on the Docks: you were first to complete ${WORD_ON_THE_DOCKS_THRESHOLD} trade orders this voyage! +${WORD_ON_THE_DOCKS_REWARD} Gold`,
-  );
+  logs.push(WORD_ON_THE_DOCKS_LEDGER_ENTRY);
 }
 
 // Adds one personal order for held cargo after validating the Renown gate.
@@ -215,8 +276,9 @@ export function callBrokersFavor(
     logs.push("❌ You've already called in a Broker's Favor this voyage");
     return;
   }
-  const isRaw = (RESOURCES as readonly string[]).includes(item);
-  const isProduct = (PRODUCTS as readonly string[]).includes(item);
+  const pools = poolsFor(state);
+  const isRaw = pools.resources.includes(item);
+  const isProduct = pools.products.includes(item);
   if (!isRaw && !isProduct) {
     logs.push(`❌ The Broker can't find a buyer for ${item}`);
     return;
@@ -231,10 +293,10 @@ export function callBrokersFavor(
     logs.push(`❌ Choose between 1 and ${held} ${item} for the Broker to sell`);
     return;
   }
-  const localRng: Rng = Math.random;
+  const localRng = voyageRandom(state, "brokerFavor");
   const order = isRaw
-    ? genRawOrder(localRng, poolsFor(state), item, qty)
-    : genProductOrder(localRng, poolsFor(state), item, qty);
+    ? genRawOrder(localRng, pools, item, qty)
+    : genProductOrder(localRng, pools, item, qty);
   const nextId =
     state.customerCards.reduce((m, c) => Math.max(m, c.id), -1) + 1;
   state.customerCards.push({ id: nextId, ...order, isBrokerFavor: true });
@@ -250,12 +312,20 @@ export function callBrokersFavor(
 export function intelPurchaseCount(state: GameState): number {
   const base = hasModule(state, "brokers_network") ? 2 : 1;
   const extra = hasModule(state, "ocean_relay") ? 1 : 0;
-  return Math.min(base + extra, state.phase2DemandTags.length);
+  return Math.max(
+    0,
+    Math.min(
+      base + extra,
+      state.phase2DemandTags.length,
+      brokerWhisperCapacity(state) - state.revealedIntel.length,
+    ),
+  );
 }
 
 export function purchaseIntel(state: GameState, logs: string[]) {
   if (state.phase !== 1) return;
-  if (!state.phase2DemandTags.length) {
+  const count = intelPurchaseCount(state);
+  if (!count) {
     logs.push("🔮 The Broker has no more whispers...");
     return;
   }
@@ -265,18 +335,14 @@ export function purchaseIntel(state: GameState, logs: string[]) {
     return;
   }
   // Ocean Interpreter adds a rumor without increasing the fee.
-  const count = intelPurchaseCount(state);
   const openPorts = unlockedPorts(state.difficulty, state.currentRound);
   const cfg = difficultyConfig(state.difficulty);
+  const random = voyageRandom(state, `whisper:${state.revealedIntel.length}`);
   state.money -= cost;
   for (let i = 0; i < count; i++) {
-    const item =
-      state.phase2DemandTags[
-        Math.floor(Math.random() * state.phase2DemandTags.length)
-      ];
-    state.phase2DemandTags.splice(state.phase2DemandTags.indexOf(item), 1);
-    const port = openPorts[Math.floor(Math.random() * openPorts.length)];
-    state.revealedIntel.push({ item, port });
+    const tip = revealBrokerWhisper(state, random, openPorts);
+    if (!tip) break;
+    const { item, port } = tip;
     logs.push(
       `🗣️ Broker's Whisper: 'Word from ${port}: High demand for ${item}!'`,
     );
@@ -284,11 +350,13 @@ export function purchaseIntel(state: GameState, logs: string[]) {
   if (
     cfg.brokerCorruption &&
     !state.brokerTippedPirates &&
-    Math.random() < cfg.brokerCorruptionChance
+    random() < cfg.brokerCorruptionChance
   ) {
     state.brokerTippedPirates = true;
     logs.push(
-      `🕵️ A corrupt broker leaked your position. Base raid risk rises by ${Math.round(cfg.brokerCorruptionRisk * 100)} percentage points this round.`,
+      state.modifierFlags.false_colors
+        ? "False Colors masked the Broker leak. Raid risk stayed unchanged."
+        : `🕵️ A corrupt broker leaked your position. Base raid risk rises by ${Math.round(cfg.brokerCorruptionRisk * 100)} percentage points this round.`,
     );
   }
 }
@@ -304,20 +372,11 @@ export function startPhase2(
   logs.push(
     `\n🤝=== Round ${state.currentRound} · Phase 2: Trade Transaction ===`,
   );
-  // Builds a reproducible personal order board for this round.
-  const orderRng = createRng(
-    `${ctx.seedBase}:V${state.voyageEpoch}:R${state.currentRound}:orders`,
-  );
-  state.customerCards = [];
+  state.seatSeed ??= ctx.seedBase;
   const orderPools = poolsFor(state);
-  // Uses the same charter based widening as the port market.
-  const orderCount = marketCountsFor(
-    state.difficulty,
-    state.currentRound,
-  ).order;
-  for (let i = 0; i < orderCount; i++) {
-    state.customerCards.push({ id: i, ...genMixedOrder(orderRng, orderPools) });
-  }
+  const { cards, random: orderRng } = ordinaryOrders(state, ctx);
+  state.customerCards = cards;
+  const orderCount = cards.length;
   const extraOrders = state.modifierFlags.extra_order ?? 0;
   for (let i = 0; i < extraOrders; i++) {
     const nextId = orderCount + i;
@@ -330,16 +389,19 @@ export function startPhase2(
   // Applies Broker guarantees after the seeded draw.
   const guaranteedCount = Math.min(
     state.revealedIntel.length,
-    state.customerCards.length,
+    brokerWhisperCapacity(state),
   );
   for (let i = 0; i < guaranteedCount; i++) {
     const intel = state.revealedIntel[i];
-    const localRng = orderRng;
     const guaranteed = (RESOURCES as readonly string[]).includes(intel.item)
-      ? genRawOrder(localRng, orderPools, intel.item)
-      : genProductOrder(localRng, orderPools, intel.item);
-    state.customerCards[i] = {
-      id: state.customerCards[i].id,
+      ? genRawOrder(orderRng, orderPools, intel.item, undefined, intel.port)
+      : genProductOrder(orderRng, orderPools, intel.item);
+    const slot = i + Number(expanded(state));
+    const id = state.customerCards[slot].id;
+    intel.orderId = id;
+    state.customerCards[slot] = {
+      id,
+      whisperIndex: i,
       ...guaranteed,
       demandPort: intel.port,
     };

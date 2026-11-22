@@ -1,15 +1,26 @@
-// Canonical game content, balance values, and tutorial copy.
+// Canonical game content and balance values.
 
+import { difficultyConfig } from "./difficulty";
 import {
-  difficultyConfig,
-  type Difficulty,
-  type DifficultyConfig,
-} from "./difficulty";
+  NEW_BOONS,
+  NEW_MATERIALS,
+  NEW_MODULES,
+  NEW_PRODUCTS,
+} from "./expansion";
+
+const newGoods = { ...NEW_MATERIALS, ...NEW_PRODUCTS };
+const addedIcons = Object.fromEntries(
+  Object.entries(newGoods).map(([item, data]) => [item, data.icon]),
+);
+const addedColors = Object.fromEntries(
+  Object.entries(newGoods).map(([item, data]) => [item, data.color]),
+);
 
 // Shared display name for interface copy and metadata.
 export const APP_NAME = "PortMasters 2";
 
 export const ICONS: Record<string, string> = {
+  ...addedIcons,
   Gold: "💰",
   Hemp: "🧶",
   Silk: "👘",
@@ -29,6 +40,7 @@ export const ICONS: Record<string, string> = {
 };
 
 export const COLORS: Record<string, string> = {
+  ...addedColors,
   Gold: "#D4A017",
   Hemp: "#8B7355",
   Silk: "#DC143C",
@@ -49,6 +61,7 @@ export const COLORS: Record<string, string> = {
 
 // Alternative colors separate goods by hue, lightness, and saturation.
 export const COLORS_COLORBLIND_SAFE: Record<string, string> = {
+  ...addedColors,
   Gold: "#E8A33D",
   Hemp: "#A67C52",
   Silk: "#CC79A7",
@@ -75,6 +88,7 @@ export const RESOURCES = [
   ...RESOURCES_TIER0,
   ...RESOURCES_TIER1,
   ...RESOURCES_TIER2,
+  ...(Object.keys(NEW_MATERIALS) as Array<keyof typeof NEW_MATERIALS>),
 ] as const;
 
 export const PRODUCTS_TIER0 = [
@@ -89,6 +103,7 @@ export const PRODUCTS = [
   ...PRODUCTS_TIER0,
   ...PRODUCTS_TIER1,
   ...PRODUCTS_TIER2,
+  ...(Object.keys(NEW_PRODUCTS) as Array<keyof typeof NEW_PRODUCTS>),
 ] as const;
 // The cargo hold includes every catalogued good from voyage creation.
 export const ITEMS = [...RESOURCES, ...PRODUCTS] as const;
@@ -116,6 +131,12 @@ export const RECIPES: Record<
   string,
   { materials: Record<string, number>; worker_type: string }
 > = {
+  ...Object.fromEntries(
+    Object.entries(NEW_PRODUCTS).map(([name, recipe]) => [
+      name,
+      { materials: recipe.materials, worker_type: recipe.worker_type },
+    ]),
+  ),
   "Linen Clothes": { materials: { Hemp: 2 }, worker_type: "weaver" },
   "Cotton Clothes": {
     materials: { Hemp: 2, Silk: 1 },
@@ -148,6 +169,12 @@ export const COMMODITIES: Record<
   string,
   { ports: string[]; basePrice: [number, number] }
 > = {
+  ...Object.fromEntries(
+    Object.entries(NEW_MATERIALS).map(([name, good]) => [
+      name,
+      { ports: [...good.ports], basePrice: [...good.range] },
+    ]),
+  ),
   Hemp: { ports: ["Quanzhou Port", "Ningbo Port"], basePrice: [3, 6] },
   Silk: { ports: ["Hangzhou Port", "Yangzhou Port"], basePrice: [6, 10] },
   Tea: { ports: ["Guangzhou Port", "Quanzhou Port"], basePrice: [10, 14] },
@@ -167,6 +194,12 @@ export const COMMODITIES: Record<
 };
 
 export const PRODUCT_PRICES: Record<string, [number, number]> = {
+  ...Object.fromEntries(
+    Object.entries(NEW_PRODUCTS).map(([name, product]) => [
+      name,
+      [...product.price],
+    ]),
+  ),
   "Linen Clothes": [30, 42],
   "Cotton Clothes": [50, 65],
   Brocade: [70, 90],
@@ -179,6 +212,9 @@ export const PRODUCT_PRICES: Record<string, [number, number]> = {
 
 // The market normalizes these weights across currently unlocked resources.
 export const RESOURCE_WEIGHTS: Record<string, number> = {
+  ...Object.fromEntries(
+    Object.entries(NEW_MATERIALS).map(([name, good]) => [name, good.weight]),
+  ),
   Hemp: 40,
   Silk: 35,
   Tea: 25,
@@ -406,7 +442,12 @@ export const BOONS_TIER2: Boon[] = [
   },
 ];
 
-export const BOONS: Boon[] = [...BOONS_TIER0, ...BOONS_TIER1, ...BOONS_TIER2];
+export const BOONS: Boon[] = [
+  ...BOONS_TIER0,
+  ...BOONS_TIER1,
+  ...BOONS_TIER2,
+  ...NEW_BOONS,
+];
 
 export type Module = { id: string; name: string; icon: string; desc: string };
 
@@ -508,6 +549,7 @@ export const MODULES: Module[] = [
   ...MODULES_TIER0,
   ...MODULES_TIER1,
   ...MODULES_TIER2,
+  ...NEW_MODULES,
 ];
 
 // Ratings are ordered from highest threshold to the catch all floor.
@@ -527,6 +569,7 @@ export const BROKERS_FAVOR_PAYOUT_CAP = 200;
 // The first captain to reach this voyage total wins the room reward.
 export const WORD_ON_THE_DOCKS_THRESHOLD = 5;
 export const WORD_ON_THE_DOCKS_REWARD = 25;
+export const WORD_ON_THE_DOCKS_LEDGER_ENTRY = `📣 Word on the Docks: you were first to complete ${WORD_ON_THE_DOCKS_THRESHOLD} trade orders this voyage! +${WORD_ON_THE_DOCKS_REWARD} Gold`;
 
 // Combined room Reputation unlocks one extra market card for the voyage.
 export const TIDEWATCH_SURGE_THRESHOLD = 500;
@@ -545,166 +588,3 @@ export const CONVOY_VENTURE_MAX_CONTRIBUTOR_SHARE = 0.5;
 export const BACKING_REPUTATION_PER_GOLD = AID_REPUTATION_PER_GOLD / 2;
 
 // Tutorial values derive from the selected difficulty.
-function raidCopy(cfg: DifficultyConfig): string {
-  const pct = (n: number) => `${Math.round(n * 100)}%`;
-  const [first, second] = cfg.pirateChance;
-  return second === undefined || second === first
-    ? `a ${pct(first)} chance`
-    : `a ${pct(first)} chance that rises to ${pct(second)} past the midpoint`;
-}
-
-function escortPct(cfg: DifficultyConfig): string {
-  return `${Math.round(cfg.escortCostRate * 100)}%`;
-}
-
-function mandateRounds(cfg: DifficultyConfig): number[] {
-  return Object.keys(cfg.mandates)
-    .map(Number)
-    .sort((a, b) => a - b);
-}
-
-export function tutorialSteps(
-  difficulty: Difficulty,
-): { title: string; content: string }[] {
-  const cfg = difficultyConfig(difficulty);
-  const mandates = mandateRounds(cfg);
-  const maxTier = Object.keys(cfg.tierUnlock).reduce(
-    (highest, tier) => Math.max(highest, Number(tier)),
-    0,
-  );
-  const resourceTiers: readonly (readonly string[])[] = [
-    RESOURCES_TIER0,
-    RESOURCES_TIER1,
-    RESOURCES_TIER2,
-  ];
-  const productTiers: readonly (readonly string[])[] = [
-    PRODUCTS_TIER0,
-    PRODUCTS_TIER1,
-    PRODUCTS_TIER2,
-  ];
-  const availableResources = resourceTiers
-    .slice(0, maxTier + 1)
-    .flatMap((tier) => [...tier]);
-  const availableProducts = productTiers
-    .slice(0, maxTier + 1)
-    .flatMap((tier) => [...tier]);
-  const availableWorkers = WORKER_TYPES.filter(
-    (worker) => worker.tier <= maxTier,
-  );
-  const workerWages = availableWorkers.map((worker) => worker.wage);
-  const minimumWage = Math.min(...workerWages);
-  const maximumWage = Math.max(...workerWages);
-  const charterResources = availableResources.slice(RESOURCES_TIER0.length);
-  const marketCopy = charterResources.length
-    ? `The market begins with Hemp, Silk, and Tea. Later charters add ${charterResources.join(", ")}.`
-    : "The market remains on the founding trade: Hemp, Silk, and Tea.";
-  const workerCopy = availableWorkers
-    .map((worker) => `${worker.label} (${worker.wage}g)`)
-    .join(", ");
-  return [
-    {
-      title: "⚓ Welcome aboard",
-      content: `<p>${APP_NAME} puts you on the ancient Silk Road for a voyage of ${cfg.rounds} rounds with limited Gold and a harbor full of rival captains.</p>
-<p>These waters are <strong>${cfg.name}</strong>: ${cfg.tagline}</p>
-<p>The rules are easy to pick up, but money is tight early on and a string of bad calls compounds quickly. This guide covers the full round flow and the decisions that most often sink a first voyage.</p>
-<p style="color:var(--muted-foreground);font-size:13px">Use the full guide for reference during the voyage.</p>`,
-    },
-    {
-      title: "🏆 What you're playing for",
-      content: `<p>After round ${cfg.rounds}, the solvent captain with the highest Reputation is crowned <strong>Sea Master</strong>. Reputation comes mainly from profitable trade orders.</p>
-<p>Reaching zero Gold does not end the voyage by itself. Bankruptcy happens when settlement arrives and, even after seeking aid, you cannot cover wages or maintenance.</p>
-<p>These waters start you with <strong>${cfg.startingGold} Gold</strong> before any Renown bonus. That is enough to get moving, but not enough to ignore the next settlement.</p>`,
-    },
-    {
-      title: "🔄 How each round works",
-      content: `<p>Each of the ${cfg.rounds} rounds follows the same synchronized sequence:</p>
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr));gap:8px;margin:12px 0">
-  <div style="background:#F3E8FF;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #8B5CF6"><strong>Draft</strong><br><span style="font-size:12px;color:#444">Choose a Boon for this round</span></div>
-  <div style="background:#E8F5E9;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #4CAF50"><strong>1️⃣ Buy</strong><br><span style="font-size:12px;color:#444">Stock up at port markets</span></div>
-  <div style="background:#FFF8E1;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #FFA000"><strong>🤝 Barter</strong><br><span style="font-size:12px;color:#444">Swap goods with other captains</span></div>
-  <div style="background:#F0FDFA;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #0D9488"><strong>Artisans</strong><br><span style="font-size:12px;color:#444">Hire workers and assign production</span></div>
-  <div style="background:#E3F2FD;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #2196F3"><strong>2️⃣ Trade</strong><br><span style="font-size:12px;color:#444">Sell to waiting buyers</span></div>
-  <div style="background:#FFF3CD;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #FFC107"><strong>3️⃣ Settle</strong><br><span style="font-size:12px;color:#444">Production lands, pirates resolve, then bills come due</span></div>
-  <div style="background:#FCE4EC;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #E91E63"><strong>4️⃣ Upgrade</strong><br><span style="font-size:12px;color:#444">Improve your ship</span></div>
-</div>
-<p style="font-size:12px;color:var(--muted-foreground);margin:4px 0 0">The room advances only after every active captain is ready. In the game room, <kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">Ctrl+N</kbd> performs the current Next Phase action.</p>`,
-    },
-    {
-      title: "🏪 Phase 1: Buying",
-      content: `<p>${marketCopy} Prices and card selection change each round. Buy now, barter if you need to, then sell in Phase 2. That is the core loop.</p>
-<p>One thing worth knowing about: the <strong>Broker</strong>. Pay a small fee for a demand rumor and a specific trade order is <em>guaranteed</em> to appear when Phase 2 opens. Useful when you have stocked a particular good and want to make sure a buyer shows up.</p>
-<div style="background:#FFF8DC;color:#17212a;border:1px solid #FFA000;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
-  💡 Early on, raw materials are easier to manage because they can be sold in the same round. Finished goods need materials, an artisan, and one production cycle.
-</div>`,
-    },
-    {
-      title: "🤝 Bartering",
-      content: `<p>Right after buying, there's a short window where captains can trade directly with each other instead of through the market. Post an offer, like Hemp you don't need for Silk you do, and any other captain in the harbor can take it with one click.</p>
-<p>It is the easiest way to recover from a bad draw. All Tea and no Silk, and expecting a Sachet buyer? Someone else in the harbor has probably drawn the opposite problem.</p>
-<div style="background:#FFF8DC;color:#17212a;border:1px solid #FFA000;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
-  A few ground rules: you can't offer an item for itself, both amounts have to be whole numbers of at least one, and you can never offer more than you currently have. The moment you post an offer, that amount is set aside until someone takes it or you cancel it.
-</div>
-<p style="font-size:13px;color:var(--foreground);margin-top:8px">Nobody has to barter. If nothing on the board interests you, or nobody is offering anything, just move on to the next phase.</p>`,
-    },
-    {
-      title: "📋 Phase 2: Filling orders",
-      content: `<p>Trade orders appear and you match your cargo to them. Each one shows the goods needed, the reward, and the shipping fee. Your take is whatever is left after fees and tax.</p>
-<p>You can fill as many orders as your cargo allows in a single phase.</p>
-<div style="background:#E3F2FD;color:#17212a;border:1px solid #2196F3;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
-  📌 <strong>Finished goods</strong> available during this voyage include ${availableProducts.join(", ")}. They usually command larger rewards, but their recipes consume materials and production completes after the order phase.
-</div>
-${mandates.length ? `<p style="font-size:13px;margin-top:10px">📜 On round${mandates.length === 1 ? "" : "s"} ${mandates.join(", ")} the Emperor commissions a <strong>mandate</strong>: one large order at a fixed reward, with no VAT or reward bonuses. Plan your inventory and bartering around it.</p>` : ""}`,
-    },
-    {
-      title: "⚠️ The artisan trap",
-      content: `<p>Artisans turn raw materials into valuable finished goods and collect wages at each Phase 3. That part is simple. What catches most new players is this:</p>
-<div style="background:#C62828;color:#fff;border-radius:6px;padding:12px;margin:12px 0;text-align:center;font-size:14px;font-weight:bold;line-height:1.7">
-  Assign a task this round.<br>Production lands at settlement, after this round's order phase.
-</div>
-<p style="font-size:13px;color:var(--foreground);line-height:1.6">Artisans available during this voyage are ${workerCopy}. Every hired artisan charges wages <strong>each round</strong>, even when idle. Hire only when you can cover payroll alongside maintenance.</p>`,
-    },
-    {
-      title: "🏴‍☠️ Pirates at Phase 3",
-      content: `<p>After production and before the bills come due each round, there is ${raidCopy(cfg)} that pirates find your ship and take every Gold coin you are carrying.</p>
-<p>You get one choice before that roll happens: hire an escort for ${escortPct(cfg)} of your current Gold and sail through guaranteed safe, or set sail anyway and keep the Gold if the pirates don't show.</p>
-${cfg.brokerCorruption ? `<p>In these waters a broker can be corrupt. The rumor you buy is still true and still arrives, always, but a corrupt one also leaks your position to the pirates. The log says so plainly when it happens, and the odds you see already include it.</p>` : ""}
-<div style="background:#FFF8DC;color:#17212a;border:1px solid #FFA000;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
-  💡 The escort costs a share of whatever you're carrying that round, so it's cheapest exactly when you have the least to protect. Often worth it once your funds are already thin.
-</div>`,
-    },
-    {
-      title: "💸 Phase 3: Settlement",
-      content: `<p>Once the pirates are dealt with, two bills come due:</p>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0">
-  <div style="background:#E3F2FD;color:#17212a;border-radius:6px;padding:10px;text-align:center">
-    <div style="font-size:22px;margin-bottom:4px">🔧</div>
-    <strong>Ship Maintenance</strong><br>
-    <span style="font-size:12px;color:#444">${cfg.maintenance} Gold per round before modifiers</span>
-  </div>
-  <div style="background:#FCE4EC;color:#17212a;border-radius:6px;padding:10px;text-align:center">
-    <div style="font-size:22px;margin-bottom:4px">👥</div>
-    <strong>Artisan Wages</strong><br>
-    <span style="font-size:12px;color:#444">${minimumWage} to ${maximumWage} Gold per artisan per round</span>
-  </div>
-</div>
-<p style="font-size:13px;color:var(--foreground)">The <strong>Due</strong> total in Status and the Dues tab show exactly what is owed. Check them before spending anything.</p>
-<p style="font-size:13px;color:var(--foreground)">Coming up short isn't the end on its own. Right there on the settlement screen, you can ask another captain in the harbor for a loan, and they can send it to you on the spot if they've got the Gold to spare. Just repay it before the voyage's last round ends, or it comes out of your funds automatically and goes straight to them.</p>`,
-    },
-    {
-      title: "🚢 You are ready",
-      content: `<p>Keep these points in mind as you play:</p>
-<ul style="padding-left:18px;line-height:2.1;font-size:14px">
-  <li>Start with raw material orders. Fast money, no complications.</li>
-  <li>Keep a reserve above the exact wages and maintenance shown in Status and Dues.</li>
-  <li>Hire artisans only when you can cover their wages for more than the current round.</li>
-  <li>Ship upgrades add a module slot and reduce base freight. Keep enough Gold for later bills.</li>
-  <li>Caught short by pirates or a bad round? Ask the harbor for a loan before you assume the voyage is over.</li>
-  <li>An eligible finished voyage banks final Reputation as Renown XP, win or lose. Check your Captain's Legacy from the Lobby.</li>
-  <li><kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">Ctrl+S</kbd> saves, <kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">Ctrl/Cmd+K</kbd> opens Quick Actions, and <kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">F1</kbd> opens the full guide.</li>
-</ul>
-<div style="background:#E8F5E9;color:#17212a;border:2px solid #4CAF50;border-radius:8px;padding:12px;text-align:center;margin-top:14px">
-  <strong style="font-size:15px">Good winds and good margins, Captain. ⚓</strong>
-</div>`,
-    },
-  ];
-}

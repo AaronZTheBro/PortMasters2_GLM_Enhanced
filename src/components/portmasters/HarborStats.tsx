@@ -1,10 +1,10 @@
 "use client";
 
+import { ShipIcon } from "./ShipVisualizer";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users,
-  Ship,
   Trophy,
   Crown,
   Waves,
@@ -13,7 +13,6 @@ import {
   Anchor,
   Medal,
   Gift,
-  Sailboat,
   Flag,
   UserPlus,
   Filter,
@@ -35,7 +34,11 @@ type Stats = Awaited<ReturnType<typeof api.stats>>;
 // showing a raw type string. The tone drives the icon background chip.
 const ACTIVITY_META: Record<
   string,
-  { icon: typeof Users; tone: string; label: (d: string | null) => string }
+  {
+    icon: React.ComponentType<{ className?: string }>;
+    tone: string;
+    label: (d: string | null) => string;
+  }
 > = {
   register: {
     icon: UserPlus,
@@ -53,7 +56,7 @@ const ACTIVITY_META: Record<
     label: (d) => `charted ${d ?? "a harbor"}`,
   },
   voyage_start: {
-    icon: Sailboat,
+    icon: ShipIcon,
     tone: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
     label: () => "set sail on a voyage",
   },
@@ -104,7 +107,7 @@ const STAT_CARDS = [
   {
     key: "sailing" as const,
     label: "Sailing now",
-    icon: Ship,
+    icon: ShipIcon,
     tone: "from-emerald-500/15 to-emerald-500/5",
     accent: "text-emerald-600 dark:text-emerald-300",
     glowColor: "hover:shadow-emerald-300/30 dark:hover:shadow-emerald-500/20",
@@ -147,7 +150,7 @@ function HarborStatCard({
 }: {
   value: number;
   label: string;
-  icon: typeof Users;
+  icon: React.ComponentType<{ className?: string }>;
   tone: string;
   accent: string;
   glowColor: string;

@@ -25,6 +25,14 @@ Open [http://localhost:2154](http://localhost:2154).
 
 Register a captain, create or join a harbor, and start when two captains are present. Use separate browser profiles when testing two local accounts because tabs on one origin share a session cookie.
 
+## Voyage rules
+
+New voyages use the expanded cargo, recipe, Boon, and ship module catalogues. Fair Winds runs for eight rounds and introduces staple contracts and forecasts. Open Waters runs for twelve rounds and opens the wider charters in rounds four and eight. Monsoon Season runs for sixteen rounds, opens its charters in rounds six and eleven, and adds Broker leaks and heavier raid pressure.
+
+The harbor shares one forecast schedule. Each captain has a personal market and order board. Every Broker's Whisper creates one guaranteed buyer at the named port. Free and paid rumors share the available slots, while staple contracts and forecast buyers keep their places. The harbor also keeps its Tidewatch bonus and order race winner across reconnects.
+
+Voyages already underway keep their saved rules and boards. Starting a fresh voyage uses the expanded rules.
+
 ## Runtime
 
 The server defaults to port 2154. Set `PORT` in your shell or in `.env.local` to choose any available TCP port from 1 to 65535. Railway and Render supply their own `PORT` value. The web app, API, and Socket.IO share the selected port.
@@ -89,6 +97,8 @@ Back up a persistent production database before changing the schema. Schema push
 
 `npm run test:integration` runs the isolated full stack integration test on port 2154. Stop the development server in this checkout first.
 
+`npm run test:balance` simulates 5,000 voyages per difficulty using four captain strategies and verifies the affordability and profit of every opening staple trade. Pass a different seed count after `--` for a shorter or longer run.
+
 `npm run typecheck` checks TypeScript without output files.
 
 `npm run check` runs lint, tests, and type checking.
@@ -107,7 +117,7 @@ Run the full verification suite with the command below.
 npm run verify
 ```
 
-The integration test creates two temporary captains in one harbor. It verifies the live roster, chat, phase readiness, persisted room data, and standings replay without a second award. It removes its temporary database after the run.
+The integration test creates two temporary captains in one harbor. It verifies the live roster, chat, shared forecast and rules, checkpoint recovery after reconnecting, phase readiness, persisted room data, and standings replay without a second award. It removes its temporary database after the run.
 
 For a final visual check, register two captains in isolated browser profiles, create a public harbor, join it with the second captain, and advance both through a phase. Confirm the responsive workspace, dialogs, chat, one shared transaction, and a reload all preserve room state.
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { ShipMark, ShipIcon } from "./ShipVisualizer";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -44,7 +46,6 @@ import {
   Anchor,
   LogOut,
   Plus,
-  Ship,
   Star,
   Users,
   KeyRound,
@@ -60,7 +61,6 @@ import {
   Waves,
   Copy,
   Check,
-  Sailboat,
   CloudLightning,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -111,6 +111,19 @@ export function Lobby({
 }) {
   const { socket, connected, authed, onlineUsers } = useRealtime(me);
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [resumeRoom, setResumeRoom] = useState<RoomSummary | null>(null);
+  useEffect(() => {
+    let visible = true;
+    api
+      .getActiveRoom()
+      .then(({ room }) => {
+        if (visible) setResumeRoom(room);
+      })
+      .catch(() => {});
+    return () => {
+      visible = false;
+    };
+  }, [me.id]);
   const [legacy, setLegacy] = useState(DEFAULT_LEGACY_SUMMARY);
   const [legacyOpen, setLegacyOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -234,7 +247,7 @@ export function Lobby({
     } catch (error) {
       play("error");
       toast.error("Check in failed", {
-        description: "Could not reach the harbour master. Try again.",
+        description: "Could not reach the harbor. Try again.",
       });
       throw error;
     }
@@ -419,11 +432,35 @@ export function Lobby({
       <main className="mx-auto w-full max-w-6xl px-2 pb-10 sm:px-5">
         <div className="mt-2">
           <section className="space-y-4">
+            <div className="pm-harbor-banner flex min-w-0 items-center gap-3 rounded-2xl border p-4 sm:px-7">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-balance text-xl font-semibold sm:text-3xl">
+                  {resumeRoom ? resumeRoom.name : "Chart a voyage"}
+                </h2>
+                <p className="mt-1 text-sm">
+                  {resumeRoom
+                    ? `${difficultyConfig(resumeRoom.difficulty).name} · ${resumeRoom.memberCount} captains`
+                    : "Choose your waters and trade with other captains."}
+                </p>
+                {resumeRoom && (
+                  <Button
+                    className="mt-3 min-h-11"
+                    onClick={() => onEnterRoom(resumeRoom)}
+                  >
+                    Resume voyage
+                  </Button>
+                )}
+              </div>
+              <ShipMark
+                level={2}
+                className="h-auto w-24 shrink-0 text-[#C0E1D6] sm:w-36"
+              />
+            </div>
             <div className="pm-glass rounded-2xl p-3 sm:p-5">
               <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <div className="min-w-0">
                   <h2 className="flex items-center gap-2 text-lg font-semibold">
-                    <Ship className="h-5 w-5 text-primary" />
+                    <ShipIcon className="h-5 w-5 text-primary" />
                     Open harbors
                   </h2>
                   <p className="text-xs text-muted-foreground">
@@ -446,7 +483,7 @@ export function Lobby({
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="min-w-0 rounded-lg"
+                    className="min-h-11 min-w-0 rounded-lg"
                     onClick={() => {
                       setError(null);
                       setJoinOpen(true);
@@ -454,11 +491,11 @@ export function Lobby({
                     aria-label="Join a harbor"
                   >
                     <KeyRound className="h-4 w-4" />
-                    <span>Join</span>
+                    <span>Join by code</span>
                   </Button>
                   <Button
                     size="sm"
-                    className="min-w-0 rounded-lg"
+                    className="min-h-11 min-w-0 rounded-lg"
                     onClick={() => {
                       setError(null);
                       setCreateOpen(true);
@@ -466,7 +503,7 @@ export function Lobby({
                     aria-label="Create a harbor"
                   >
                     <Plus className="h-4 w-4" />
-                    <span>New</span>
+                    <span>Create harbor</span>
                   </Button>
                 </div>
               </div>
@@ -564,7 +601,7 @@ export function Lobby({
                                 "border-teal-500/30 dark:border-teal-400/30",
                               glow: "pm-glow-teal",
                               grad: "from-teal-500 to-teal-600",
-                              icon: <Sailboat className="h-3.5 w-3.5" />,
+                              icon: <ShipIcon className="h-3.5 w-3.5" />,
                             },
                             open_waters: {
                               bg: "bg-slate-500/10 dark:bg-slate-400/15",
@@ -754,7 +791,7 @@ export function Lobby({
                   <div className="py-10 text-center">
                     <div className="flex justify-center mb-3">
                       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-                        <Ship className="h-6 w-6 text-muted-foreground" />
+                        <ShipIcon className="h-6 w-6 text-muted-foreground" />
                       </div>
                     </div>
                     <p className="text-sm text-muted-foreground font-medium">
@@ -810,15 +847,14 @@ export function Lobby({
                             dc.icon,
                           )}
                         >
-                          {room.started ? (
-                            <Ship className="h-5 w-5 text-white" />
-                          ) : (
-                            <Ship className="h-5 w-5 text-white" />
-                          )}
+                          <ShipMark
+                            level={room.started ? 1 : 0}
+                            className="h-auto w-9 text-white"
+                          />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="min-w-0 flex-1 truncate font-medium">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className="min-w-0 flex-1 break-words font-medium">
                               {normalizeRoomName(room.name)}
                             </span>
                             <span
@@ -1010,7 +1046,7 @@ export function Lobby({
                                     )}
                                     {u.roomId && (
                                       <span className="inline-flex items-center gap-0.5 text-[9px] text-teal-600 dark:text-teal-400">
-                                        <Ship className="h-2.5 w-2.5" />
+                                        <ShipIcon className="h-2.5 w-2.5" />
                                       </span>
                                     )}
                                   </div>

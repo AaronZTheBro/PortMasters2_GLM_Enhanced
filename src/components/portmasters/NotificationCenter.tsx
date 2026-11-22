@@ -13,7 +13,7 @@ export function NotificationCenter({
   dismiss: () => void;
 }) {
   return (
-    <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-40 w-[min(360px,calc(100vw-2rem))]">
+    <div className="pointer-events-none fixed bottom-[max(4.5rem,calc(env(safe-area-inset-bottom)+4rem))] left-[max(1rem,env(safe-area-inset-left))] z-40 w-[min(22rem,calc(100vw-2rem))]">
       <AnimatePresence mode="wait">
         {current && (
           <motion.div
@@ -27,6 +27,7 @@ export function NotificationCenter({
               icon={current.icon}
               title={current.title}
               lines={current.lines}
+              fromLedger={current.fromLedger}
               onActivate={current.onActivate}
               toastId={current.id}
               dismiss={dismiss}

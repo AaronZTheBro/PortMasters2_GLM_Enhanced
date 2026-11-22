@@ -1,5 +1,6 @@
 "use client";
 
+import { ShipIcon } from "../../ShipVisualizer";
 import type { GameState } from "@/lib/game/types";
 import type { PublicUser } from "@/lib/api";
 import type { Backing } from "./PhaseShared";
@@ -8,15 +9,24 @@ import type { Backing } from "./PhaseShared";
 // Optional props keep the spectator view usable without loan data.
 export function Bankruptcy({
   game,
+  logs = [],
   members,
   backing,
   myUserId,
 }: {
   game: GameState;
+  logs?: string[];
   members?: PublicUser[];
   backing?: Backing;
   myUserId?: string;
 }) {
+  const entries = logs
+    .filter((line) =>
+      /Insufficient funds|Forced payment|Pirates took|raided your hold|Could not fully repay/.test(
+        line,
+      ),
+    )
+    .slice(-3);
   return (
     <div className="max-w-md mx-auto text-center py-4">
       <div className="text-7xl mb-2">💥</div>
@@ -24,10 +34,24 @@ export function Bankruptcy({
         Ship Fleet Bankrupt!
       </div>
       <p className="text-sm text-muted-foreground mb-4">
-        {game.money <= 0
-          ? "Funds depleted, unable to pay essential operational costs"
-          : "Insufficient funds to cover maintenance and wages"}
+        {game.insolvency === "wages"
+          ? "The voyage ended because the crew wages could not be paid."
+          : game.insolvency === "maintenance"
+            ? "The voyage ended because ship maintenance could not be paid."
+            : "The voyage ended with unpaid obligations."}
       </p>
+      {entries.length > 0 && (
+        <section
+          className="pm-brief rounded-xl border p-3 text-left text-sm"
+          aria-label="Ledger before bankruptcy"
+        >
+          <ul className="space-y-1">
+            {entries.map((line, index) => (
+              <li key={index}>{line}</li>
+            ))}
+          </ul>
+        </section>
+      )}
       <div className="grid grid-cols-2 gap-2 max-w-sm mx-auto text-left text-sm my-4">
         <div className="text-muted-foreground">🌊 Rounds Completed:</div>
         <div>
@@ -43,7 +67,9 @@ export function Bankruptcy({
         <div>
           <b>{game.score}</b>
         </div>
-        <div className="text-muted-foreground">🚢 Ship Level:</div>
+        <div className="text-muted-foreground">
+          <ShipIcon /> Ship Level:
+        </div>
         <div>
           <b>{game.shipLevel}</b>
         </div>

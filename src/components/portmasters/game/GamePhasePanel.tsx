@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useLayoutEffect, useRef } from "react";
-import type { GameState } from "@/lib/game/types";
+import type { GameContext, GameState } from "@/lib/game/types";
 import type { PublicUser } from "@/lib/api";
 import type { VoyageCompleteEvent } from "@/lib/realtime";
 import type { CaptainLegacySummary } from "@/lib/game/legacy";
@@ -16,12 +16,20 @@ import { Orders } from "./phases/Orders";
 import { Settlement } from "./phases/Settlement";
 import { Shipyard, ModuleDraft, ModuleSwap } from "./phases/Shipyard";
 import { Bankruptcy } from "./phases/Bankruptcy";
+import { CalendarDays, Compass, Telescope } from "lucide-react";
+import { MANDATE_TEMPLATES, mandateIndexFor } from "@/lib/game/difficulty";
+import { expanded, forecastFor } from "@/lib/game/expansion";
+import { announcedMandateRound, describeForecast } from "@/lib/game/forecast";
+import { featuredDemand } from "@/lib/game/engine/market";
+import { hasModule } from "@/lib/game/engine";
 import { Endgame } from "./phases/Endgame";
 
 // Module level phase components keep stable React identities and preserve
 // local state across game updates.
 type Props = {
   game: GameState;
+  context: GameContext;
+  logs: string[];
   act: (fn: (g: GameState, logs: string[]) => void) => void;
   members: PublicUser[];
   myUserId: string;
@@ -43,6 +51,8 @@ type Props = {
 
 export function GamePhasePanel({
   game,
+  context,
+  logs,
   act,
   members,
   myUserId,
@@ -82,6 +92,7 @@ export function GamePhasePanel({
             exit={{ opacity: 0, y: -12, scale: 0.98 }}
             transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1.0] }}
           >
+            <VoyageBrief game={game} context={context} />
             {renderPhase()}
           </motion.div>
         </AnimatePresence>
@@ -99,6 +110,7 @@ export function GamePhasePanel({
           isHost={isHost}
           onShowTutorial={onShowTutorial}
           difficulty={game.difficulty}
+          rulesVersion={game.rulesVersion}
         />
       );
     if (p === 5)
@@ -177,6 +189,7 @@ export function GamePhasePanel({
       return (
         <Bankruptcy
           game={game}
+          logs={logs}
           members={members}
           backing={backing}
           myUserId={myUserId}
@@ -186,6 +199,7 @@ export function GamePhasePanel({
       return (
         <Endgame
           game={game}
+          logs={logs}
           isHost={isHost}
           onRestart={onRestart}
           voyageResult={voyageResult}
@@ -197,4 +211,84 @@ export function GamePhasePanel({
     if (p === "module_swap") return <ModuleSwap game={game} act={act} />;
     return null;
   }
+}
+
+function VoyageBrief({
+  game,
+  context,
+}: {
+  game: GameState;
+  context: GameContext;
+}) {
+  if (!expanded(game) || ![5, 1, "worker_mgmt", 2, 3].includes(game.phase))
+    return null;
+  const forecast = forecastFor(game);
+  const briefing = forecast && describeForecast(forecast);
+  const announced = announcedMandateRound(game.difficulty, game.currentRound);
+  const mandateIndex =
+    announced === undefined
+      ? undefined
+      : mandateIndexFor(game.difficulty, announced);
+  const mandate =
+    mandateIndex === undefined ? undefined : MANDATE_TEMPLATES[mandateIndex];
+  const nextDemand =
+    game.phase === "worker_mgmt" && hasModule(game, "signal_lantern")
+      ? featuredDemand(game, context, game.currentRound + 1)
+      : undefined;
+  const scout =
+    game.phase === 1 || game.phase === "worker_mgmt"
+      ? game.scoutedOrder
+      : undefined;
+  if (!briefing && !mandate && !nextDemand && !scout) return null;
+  return (
+    <aside
+      aria-label="Voyage briefing"
+      className="pm-brief mb-4 grid min-w-0 gap-2 rounded-xl border p-3 text-sm"
+    >
+      {briefing && (
+        <div className="flex min-w-0 gap-2">
+          <Compass className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <div>
+            <strong>{briefing.title}</strong>
+            <p>{briefing.detail}</p>
+          </div>
+        </div>
+      )}
+      {mandate && announced !== undefined && (
+        <div className="flex min-w-0 gap-2">
+          <CalendarDays className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <div>
+            <strong>Imperial Mandate in round {announced}</strong>
+            <p>
+              {mandate.resources
+                .map(({ type, required }) => `${required} ${type}`)
+                .join(", ")}{" "}
+              for {mandate.reward} Gold at {mandate.port}.
+            </p>
+          </div>
+        </div>
+      )}
+      {nextDemand && (
+        <div className="flex min-w-0 gap-2">
+          <Telescope className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <p>
+            <strong>Signal Lantern</strong> · Next round features {nextDemand}{" "}
+            demand on the ordinary board.
+          </p>
+        </div>
+      )}
+      {scout && (
+        <div className="flex min-w-0 gap-2">
+          <Telescope className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <p>
+            <strong>Coastal Forecast</strong> · {scout.demandPort} will request{" "}
+            {scout.resources
+              .map(({ required, type }) => `${required} ${type}`)
+              .join(", ")}{" "}
+            for a quoted reward of {scout.reward} Gold.
+          </p>
+        </div>
+      )}
+    </aside>
+  );
 }

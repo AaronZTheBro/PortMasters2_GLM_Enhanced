@@ -8,6 +8,7 @@ export type NotificationItem = {
   title: string;
   lines: string[];
   at: number;
+  fromLedger?: boolean;
   onActivate?: () => void;
 };
 

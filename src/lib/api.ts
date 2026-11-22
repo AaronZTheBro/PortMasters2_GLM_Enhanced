@@ -1,3 +1,4 @@
+import type { VoyageRules } from "./game/expansion";
 // =====================================================================
 // PortMasters 2: REST API helpers (typed fetch wrappers)
 // =====================================================================
@@ -121,8 +122,12 @@ export const api = {
         currentRound: number;
         currentPhase: string;
         voyageEpoch: number;
+        harborPulse?: Record<string, number>;
       } | null;
       difficulty: Difficulty;
+      rules?: VoyageRules;
+      tidewatchSurge: boolean;
+      docksWon: boolean;
     }>(`/api/game/state?roomId=${roomId}`),
   saveGameState: (roomId: string, data: unknown, revision: number | null) =>
     jfetch<{ ok: true; updatedAt: string; revision: number }>(

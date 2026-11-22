@@ -32,6 +32,7 @@ import {
 import { swapBoonChoices } from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
 import type { PublicUser } from "@/lib/api";
+import { NEW_BOONS } from "@/lib/game/expansion";
 import { cn } from "@/lib/utils";
 import { ReadyBar } from "../ReadyBar";
 import { Term } from "../../Term";
@@ -41,6 +42,12 @@ import type { PhaseSync } from "./PhaseShared";
 // expose that grouping here as a "rarity" indicator. Purely decorative: it
 // does not affect game logic or which boons can be drafted.
 const TIER_INDEX: Record<string, "common" | "rare" | "legendary"> = {
+  ...Object.fromEntries(
+    NEW_BOONS.map((boon) => [
+      boon.id,
+      (["common", "rare", "legendary"] as const)[boon.tier],
+    ]),
+  ),
   ...Object.fromEntries(BOONS_TIER0.map((b) => [b.id, "common"])),
   ...Object.fromEntries(BOONS_TIER1.map((b) => [b.id, "rare"])),
   ...Object.fromEntries(BOONS_TIER2.map((b) => [b.id, "legendary"])),
@@ -380,7 +387,7 @@ function BoonCard({
       whileTap={{ scale: 0.98 }}
       style={{ transformStyle: "preserve-3d", perspective: 1000 }}
       className={cn(
-        "pm-glass rounded-2xl p-5 flex flex-col items-center text-center relative overflow-visible",
+        "pm-glass rounded-2xl p-4 flex flex-col items-center text-center relative pm-decision-card",
         "border border-amber-500/20 transition-colors",
         style.ring,
         style.aura,
@@ -679,7 +686,7 @@ export function BoonDraft({
         </div>
 
         <motion.div
-          className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-4"
+          className="pm-decision-grid"
           initial="hidden"
           animate="visible"
           variants={{

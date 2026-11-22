@@ -1,5 +1,6 @@
 "use client";
 
+import { ShipIcon } from "./ShipVisualizer";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Socket } from "socket.io-client";
@@ -8,7 +9,6 @@ import { useRoomRoster } from "@/lib/use-room-roster";
 import { Avatar, OnlineDot, Pill } from "./shared";
 import { cn } from "@/lib/utils";
 import {
-  Ship,
   Coins,
   Trophy,
   Crown,
@@ -78,8 +78,8 @@ export function MembersPanel({
     <div className="pm-glass rounded-2xl flex flex-col overflow-hidden h-full">
       <div className="px-4 py-3 border-b border-black/5 dark:border-white/10 flex items-center justify-between">
         <h3 className="text-sm font-semibold flex items-center gap-2">
-          <Ship className="h-4 w-4 text-teal-600 dark:text-teal-400" /> Harbor
-          Roster
+          <ShipIcon className="h-4 w-4 text-teal-600 dark:text-teal-400" />{" "}
+          Harbor Roster
         </h3>
         <Pill tone="sea">
           {members.length} captain{members.length !== 1 ? "s" : ""}

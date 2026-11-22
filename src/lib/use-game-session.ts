@@ -1,10 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BOONS, MODULES } from "@/lib/game/constants";
+import {
+  BOONS,
+  MODULES,
+  WORD_ON_THE_DOCKS_LEDGER_ENTRY,
+} from "@/lib/game/constants";
 import { api } from "@/lib/api";
 import type { Socket } from "socket.io-client";
-import { phaseLabel, showWelcome, snapToCheckpoint } from "@/lib/game/engine";
+import {
+  claimWordOnTheDocksReward,
+  phaseLabel,
+  showWelcome,
+  snapToCheckpoint,
+} from "@/lib/game/engine";
 import {
   createInitialGameState,
   normalizeInventory,
@@ -14,13 +23,13 @@ import {
 } from "@/lib/game/types";
 import { renownStartingGoldBonus } from "@/lib/game/legacy";
 import { normalizeDifficulty, type Difficulty } from "@/lib/game/difficulty";
+import { restoreBrokerWhispers } from "@/lib/game/broker-whispers";
+import type { VoyageRules } from "@/lib/game/expansion";
 
 // Maximum retained ledger lines. The APPLY reducer enforces this cap.
 const LEDGER_LINE_CAP = 500;
 
-// Exported with Action and reducer so callers can exercise the pure reducer
-// without mounting React.
-export type SessionState = {
+type SessionState = {
   game: GameState;
   logs: string[];
   // Lines added by the latest APPLY action, captured before older ledger
@@ -31,7 +40,7 @@ export type SessionState = {
   loadError: boolean;
 };
 
-export type Action =
+type Action =
   | { type: "INIT"; game: GameState; logs: string[] }
   | {
       type: "APPLY";
@@ -39,17 +48,24 @@ export type Action =
     }
   | {
       type: "START_FRESH";
-      checkpoint?: { round: number; phase: string } | null;
+      checkpoint?: {
+        round: number;
+        phase: string;
+        harborPulse?: Record<string, number>;
+      } | null;
       ctx?: GameContext;
       startingGoldBonus?: number;
       renownLevel?: number;
       voyageEpoch?: number;
       difficulty?: Difficulty;
+      rules?: VoyageRules;
+      tidewatchSurge?: boolean;
     }
   | { type: "SAVE_STATUS"; status: SessionState["saveStatus"] }
-  | { type: "LOAD_ERROR" };
+  | { type: "LOAD_ERROR" }
+  | { type: "LOAD_START" };
 
-export function reducer(state: SessionState, action: Action): SessionState {
+function reducer(state: SessionState, action: Action): SessionState {
   switch (action.type) {
     case "INIT":
       return {
@@ -66,13 +82,17 @@ export function reducer(state: SessionState, action: Action): SessionState {
         action.renownLevel ?? 1,
         action.voyageEpoch ?? 0,
         action.difficulty,
+        action.rules,
       );
+      g.seatSeed = action.ctx?.seedBase;
+      g.tidewatchSurge = action.tidewatchSurge ?? false;
       const logs: string[] = [];
       showWelcome(g, logs);
       // A genuinely new captain (no save of their own yet) joins wherever
       // the room's checkpoint already is, instead of always at round 1.
       const cp = action.checkpoint;
       if (cp && action.ctx && (cp.round > 1 || cp.phase !== "0")) {
+        g.harborPulse = cp.harborPulse ?? {};
         snapToCheckpoint(g, action.ctx, cp.round, cp.phase, logs);
       }
       return {
@@ -100,6 +120,8 @@ export function reducer(state: SessionState, action: Action): SessionState {
         ...state,
         saveStatus: action.status,
       };
+    case "LOAD_START":
+      return { ...state, loaded: false, loadError: false };
     case "LOAD_ERROR":
       return { ...state, loadError: true };
     default:
@@ -116,7 +138,10 @@ export function useGameSession(
   // Each captain has a deterministic seed identity for markets, orders, and
   // intel.
   const ctx: GameContext = useMemo(
-    () => ({ seedBase: userId ? `${roomId}:${userId}` : roomId }),
+    () => ({
+      roomSeed: roomId,
+      seedBase: userId ? `${roomId}:${userId}` : roomId,
+    }),
     [roomId, userId],
   );
   const [state, setState] = useState<SessionState>(() => ({
@@ -135,7 +160,10 @@ export function useGameSession(
   }, []);
   const getGame = useCallback(() => latest.current.game, []);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const retryLoad = useCallback(() => setLoadAttempt((n) => n + 1), []);
+  const retryLoad = useCallback(() => {
+    dispatch({ type: "LOAD_START" });
+    setLoadAttempt((n) => n + 1);
+  }, [dispatch]);
   const savedGame = useRef<GameState | null>(null);
   const savedRevision = useRef<number | null>(null);
   // The captain's Renown level translates to a small starting Gold bonus
@@ -162,7 +190,15 @@ export function useGameSession(
     (async () => {
       try {
         const [
-          { state: raw, checkpoint, revision, difficulty: roomDifficulty },
+          {
+            state: raw,
+            checkpoint,
+            revision,
+            difficulty: roomDifficulty,
+            rules,
+            tidewatchSurge,
+            docksWon,
+          },
           legacyResult,
         ] = await Promise.all([
           api.getGameState(roomId),
@@ -244,6 +280,10 @@ export function useGameSession(
           game.helperReputationEarned = game.helperReputationEarned ?? 0;
           // Missing voyage epochs belong to the room's first voyage.
           game.voyageEpoch = game.voyageEpoch ?? 0;
+          game.seatSeed = ctx.seedBase;
+          game.rulesVersion = rules?.version ?? game.rulesVersion;
+          game.forecasts = rules?.forecasts ?? game.forecasts;
+          restoreBrokerWhispers(game);
           // Refresh difficulty from the room (the authoritative source), the
           // same reason renownLevel is refreshed above; default an old save
           // that predates difficulty to whatever tier the room is on.
@@ -257,9 +297,19 @@ export function useGameSession(
                 .slice(-LEDGER_LINE_CAP)
             : [];
           delete stored.voyageLog;
+          game.docksRewardClaimed ??= logs.includes(
+            WORD_ON_THE_DOCKS_LEDGER_ENTRY,
+          );
+          if (tidewatchSurge) game.tidewatchSurge = true;
           savedGame.current = game;
-          dispatch({ type: "INIT", game, logs });
-          dispatch({ type: "SAVE_STATUS", status: "saved" });
+          const needsDocksReward = docksWon && !game.docksRewardClaimed;
+          const restored = needsDocksReward ? { ...game } : game;
+          if (needsDocksReward) claimWordOnTheDocksReward(restored, logs);
+          dispatch({ type: "INIT", game: restored, logs });
+          dispatch({
+            type: "SAVE_STATUS",
+            status: needsDocksReward ? "saving" : "saved",
+          });
         } else {
           dispatch({
             type: "START_FRESH",
@@ -267,6 +317,7 @@ export function useGameSession(
               ? {
                   round: checkpoint.currentRound,
                   phase: checkpoint.currentPhase,
+                  harborPulse: checkpoint.harborPulse,
                 }
               : null,
             ctx,
@@ -274,6 +325,8 @@ export function useGameSession(
             renownLevel,
             voyageEpoch: checkpoint?.voyageEpoch ?? 0,
             difficulty: roomDifficulty,
+            rules,
+            tidewatchSurge,
           });
         }
       } catch {

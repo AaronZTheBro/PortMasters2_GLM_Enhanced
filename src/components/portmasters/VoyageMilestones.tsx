@@ -1,5 +1,6 @@
 "use client";
 
+import { TextWithShipIcons } from "./ShipVisualizer";
 import { useEffect, useRef, useState } from "react";
 import type { GameState } from "@/lib/game/types";
 import { PRODUCTS } from "@/lib/game/constants";
@@ -112,10 +113,10 @@ export function VoyageMilestones({ game }: VoyageMilestonesProps) {
       if (!prev.has(id)) {
         const m = MILESTONES.find((m) => m.id === id);
         if (m) {
-          toast.success(`${m.emoji} ${m.name}`, {
-            description: "Voyage milestone reached!",
-            duration: 4000,
-          });
+          toast.success(
+            <TextWithShipIcons>{`${m.emoji} ${m.name}`}</TextWithShipIcons>,
+            { description: "Voyage milestone reached!", duration: 4000 },
+          );
         }
       }
     }
@@ -162,7 +163,9 @@ export function VoyageMilestones({ game }: VoyageMilestonesProps) {
                 <span className="shrink-0 w-3.5 text-center">
                   {done ? "✓" : "○"}
                 </span>
-                <span className="shrink-0">{m.emoji}</span>
+                <span className="shrink-0">
+                  <TextWithShipIcons>{m.emoji}</TextWithShipIcons>
+                </span>
                 <span
                   className={
                     done ? "" : "line-through decoration-muted-foreground/20"

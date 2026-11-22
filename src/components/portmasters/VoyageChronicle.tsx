@@ -1,5 +1,6 @@
 "use client";
 
+import { ShipIcon, TextWithShipIcons } from "./ShipVisualizer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -23,7 +24,6 @@ import {
   Swords,
   Wallet,
   LayoutGrid,
-  Ship,
   TrendingUp,
   TrendingDown,
   type LucideIcon,
@@ -566,7 +566,7 @@ function TimelineEvent({
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 flex-wrap">
             <span className="text-[11px] font-medium leading-tight text-foreground/90 break-words">
-              {event.description}
+              <TextWithShipIcons>{event.description}</TextWithShipIcons>
             </span>
             {event.quantity != null && event.quantity > 0 && (
               <span className="shrink-0 text-[9px] text-muted-foreground/60 tabular-nums">
@@ -622,7 +622,7 @@ function EmptyState() {
           }}
           className="relative"
         >
-          <Ship className="h-10 w-10 text-teal-500/60" aria-hidden />
+          <ShipIcon className="h-10 w-10 text-teal-500/60" aria-hidden />
         </motion.div>
         {/* Wave decoration */}
         <motion.div

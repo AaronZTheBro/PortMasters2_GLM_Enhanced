@@ -129,16 +129,18 @@ function MarketPriceReference({
             Resources
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {unlockedResources(game.difficulty, game.currentRound).map(
-              (item) => (
-                <PricePill
-                  key={item}
-                  item={item}
-                  game={game}
-                  colorFor={colorFor}
-                />
-              ),
-            )}
+            {unlockedResources(
+              game.difficulty,
+              game.currentRound,
+              game.rulesVersion,
+            ).map((item) => (
+              <PricePill
+                key={item}
+                item={item}
+                game={game}
+                colorFor={colorFor}
+              />
+            ))}
           </div>
         </div>
         <div>
@@ -146,16 +148,18 @@ function MarketPriceReference({
             Products
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {unlockedProducts(game.difficulty, game.currentRound).map(
-              (item) => (
-                <PricePill
-                  key={item}
-                  item={item}
-                  game={game}
-                  colorFor={colorFor}
-                />
-              ),
-            )}
+            {unlockedProducts(
+              game.difficulty,
+              game.currentRound,
+              game.rulesVersion,
+            ).map((item) => (
+              <PricePill
+                key={item}
+                item={item}
+                game={game}
+                colorFor={colorFor}
+              />
+            ))}
           </div>
         </div>
       </div>
@@ -308,7 +312,7 @@ export function Purchase({
           ))}
           <span className="text-muted-foreground">
             {" "}
-            (a matching order is guaranteed in Phase 2, buy accordingly).
+            (each rumor guarantees one order in Phase 2).
           </span>
         </div>
       )}
@@ -318,7 +322,7 @@ export function Purchase({
         dealsAvailable={dealsAvailable}
       />
       <MarketPriceReference game={game} colorFor={resolveColor} />
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div className="pm-decision-grid">
         {game.resourceCards.map((c, index) => {
           const finalCost = getCardFinalCost(game, c);
           const breakdown = explainCardPrice(game, c);
@@ -338,7 +342,7 @@ export function Purchase({
                 ease: "easeOut",
               }}
               className={cn(
-                "rounded-xl border overflow-hidden flex flex-col transition-colors duration-200",
+                "pm-decision-card rounded-xl border flex flex-col transition-colors duration-200",
                 accent.ring,
                 purchased
                   ? "border-emerald-500/30 bg-emerald-500/[0.04]"
@@ -349,7 +353,7 @@ export function Purchase({
             >
               {/* Port accent bar */}
               <div className={cn("h-1 w-full", accent.bar)} />
-              <div className="px-3.5 py-2 text-xs font-semibold border-b border-black/5 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] flex items-center justify-between">
+              <div className="px-3.5 py-2 text-xs font-semibold border-b border-black/5 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] flex flex-wrap items-center justify-between gap-1">
                 <span className={cn("flex items-center gap-1", accent.text)}>
                   📍 {c.port}
                 </span>
@@ -375,13 +379,22 @@ export function Purchase({
                     </motion.span>
                   )}
                   <span className="text-muted-foreground">
-                    {c.isProductCard ? "Product" : "Raw Material"}
+                    {c.staple
+                      ? "Staple lot"
+                      : c.featured
+                        ? "Forecast lot"
+                        : c.isProductCard
+                          ? "Product"
+                          : "Raw material"}
                   </span>
                 </div>
               </div>
               <div className="p-3.5 flex-1 space-y-1.5">
                 {c.resources.map((r, i) => (
-                  <div key={i} className="flex items-center text-[12px]">
+                  <div
+                    key={i}
+                    className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs"
+                  >
                     <ItemIcon item={r.type} className="mr-1.5 h-4 w-4" />
                     <Term
                       term={r.type}
@@ -396,7 +409,7 @@ export function Purchase({
                     </Term>
                     <span className="mx-1.5">×{r.quantity}</span>
                     <span className="ml-auto text-muted-foreground">
-                      Listed unit: {r.price}💰
+                      Own {game.inventory[r.type] ?? 0} · {r.price} Gold each
                     </span>
                   </div>
                 ))}
@@ -406,7 +419,7 @@ export function Purchase({
                     {c.resources[0].materialDetails})
                   </div>
                 ) : null}
-                <div className="pt-2 mt-1 border-t border-dashed border-black/10 dark:border-white/10 flex items-center justify-between gap-2">
+                <div className="pt-2 mt-1 border-t border-dashed border-black/10 dark:border-white/10 flex flex-wrap items-center justify-between gap-2">
                   <Term
                     content={<PriceBreakdownTooltip breakdown={breakdown} />}
                   >
@@ -432,6 +445,13 @@ export function Purchase({
                 </div>
               </div>
               <div className="p-3 pt-0">
+                {!purchased && (
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    {canAfford
+                      ? `Gold after purchase: ${game.money - finalCost}`
+                      : `Need ${finalCost - game.money} more Gold`}
+                  </p>
+                )}
                 <Button
                   className={cn(
                     "w-full rounded-lg",

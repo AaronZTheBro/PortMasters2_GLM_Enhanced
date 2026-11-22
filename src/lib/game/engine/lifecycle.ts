@@ -1,6 +1,7 @@
 // Orchestrates voyage phases, checkpoints, settlement, and restarts.
 import { APP_NAME, MERCHANT_RATINGS, type MerchantRating } from "../constants";
 import { DEFAULT_DIFFICULTY, type Difficulty } from "../difficulty";
+import type { VoyageRules } from "../expansion";
 import {
   createInitialGameState,
   type GameContext,
@@ -76,6 +77,7 @@ export function finishSettlement(state: GameState, logs: string[]) {
   logs.push("\n💰=== Paying Worker Wages ===");
   const wageResult = payWages(state, logs);
   if (wageResult === "bankruptcy") {
+    state.insolvency = "wages";
     settleOutstandingDebts(state, logs);
     state.gameOver = true;
     state.phase = "bankruptcy";
@@ -86,6 +88,7 @@ export function finishSettlement(state: GameState, logs: string[]) {
   );
   const maintResult = payMaintenance(state, logs);
   if (maintResult === "bankruptcy") {
+    state.insolvency = "maintenance";
     settleOutstandingDebts(state, logs);
     state.gameOver = true;
     state.phase = "bankruptcy";
@@ -124,6 +127,7 @@ export function endGame(state: GameState, logs: string[]) {
   logs.push(`🧾 Total Taxes Paid: ${state.vatPaid + state.incomeTaxPaid} Gold`);
   let rating: string;
   if (state.defaultedDebt) {
+    state.insolvency ??= "debt";
     rating = "💥 Bankrupt: Defaulted on a Loan";
   } else {
     const r = merchantRatingForScore(state.score);
@@ -140,12 +144,14 @@ export function restartGame(
   renownLevel: number = 1,
   voyageEpoch: number = 0,
   difficulty: Difficulty = DEFAULT_DIFFICULTY,
+  rules?: VoyageRules,
 ) {
   const fresh = createInitialGameState(
     startingGoldBonus,
     renownLevel,
     voyageEpoch,
     difficulty,
+    rules,
   );
   delete state.readyVote;
   delete state.pendingBoonId;

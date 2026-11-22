@@ -1,5 +1,7 @@
 "use client";
 
+import { ShipIcon } from "./ShipVisualizer";
+import { quoteDues } from "@/lib/game/engine";
 import {
   useCallback,
   useEffect,
@@ -20,6 +22,7 @@ import type { VoyageCompleteEvent } from "@/lib/realtime";
 import type { CaptainLegacySummary } from "@/lib/game/legacy";
 import {
   BROKERS_FAVOR_UNLOCK_LEVEL,
+  WORD_ON_THE_DOCKS_REWARD,
   WORD_ON_THE_DOCKS_THRESHOLD,
 } from "@/lib/game/constants";
 import { meritById } from "@/lib/game/merits";
@@ -95,7 +98,6 @@ import {
   Check,
   Users,
   MessageCircle,
-  Ship,
   LifeBuoy,
   Bell,
   Palette,
@@ -164,7 +166,7 @@ const MORE_WORKSPACE_TABS: Array<{
   { id: "logbook", label: "Logbook", icon: ScrollText },
 ];
 
-const DESKTOP_WORKSPACE_QUERY = "(min-width: 1024px)";
+const DESKTOP_WORKSPACE_QUERY = "(min-width: 1024px) and (min-height: 600px)";
 
 function subscribeToDesktopWorkspace(onChange: () => void) {
   const media = window.matchMedia(DESKTOP_WORKSPACE_QUERY);
@@ -237,6 +239,7 @@ export function GameRoom({
     authed,
     me.id,
     startingGoldBonus,
+    retryLoad,
   );
 
   // A loan involving me just resolved, on either side: as the helper
@@ -527,71 +530,84 @@ export function GameRoom({
     state.game._pendingDebtSettlements,
   ]);
 
-  // completeOrder in engine.ts sets this the
-  // instant this captain's own running total crosses the threshold; only
-  // the server actually knows whether anyone else in the room got there
-  // first, so this just reports the claim and clears the flag, the same
-  // relay and clear shape as _pendingDebtSettlements above.
-  useEffect(() => {
-    if (!state.game._pendingDocksClaim || !socket) return;
-    socket.emit("docks:claim", { roomId: room.id });
-    act((g) => {
-      g._pendingDocksClaim = undefined;
-    });
-  }, [state.game._pendingDocksClaim, socket, room.id, act]);
+  const docksPending = Boolean(state.game._pendingDocksClaim);
+  const voyageEpoch = state.game.voyageEpoch;
 
-  // The server has decided who, if anyone, won this voyage's Word on the
-  // Docks race. Only the winner's own client actually credits the Gold
-  // (claimWordOnTheDocksReward), since Gold is this captain's own local
-  // truth; everyone else in the room just hears about it, the same split
-  // every other event between players in this file already follows.
   useEffect(() => {
-    if (!socket) return;
+    if (!docksPending || !state.loaded || !socket || !connected || !authed)
+      return;
+    let active = true;
+    void (async () => {
+      await flush();
+      if (!active) return;
+      const accepted: boolean = await socket
+        .timeout(4000)
+        .emitWithAck("docks:claim", { roomId: room.id, voyageEpoch });
+      if (!active || !accepted || getGame().voyageEpoch !== voyageEpoch) return;
+      act((game) => {
+        game._pendingDocksClaim = undefined;
+      });
+    })().catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [
+    act,
+    authed,
+    connected,
+    docksPending,
+    flush,
+    getGame,
+    room.id,
+    socket,
+    state.loaded,
+    voyageEpoch,
+  ]);
+
+  useEffect(() => {
+    if (!socket || !state.loaded) return;
     const onDocksWon = (data: {
       roomId: string;
+      voyageEpoch: number;
       winnerId: string;
-      winnerName: string;
-      reward: number;
+      winnerName?: string;
     }) => {
-      if (data.roomId !== room.id) return;
+      const game = getGame();
+      if (data.roomId !== room.id || data.voyageEpoch !== game.voyageEpoch)
+        return;
       if (data.winnerId === me.id) {
-        act((g, l) => claimWordOnTheDocksReward(g, l));
+        if (game.docksRewardClaimed) return;
+        act((g, logs) => claimWordOnTheDocksReward(g, logs));
         toast.success("📣 Word on the Docks!", {
-          description: `First to complete ${WORD_ON_THE_DOCKS_THRESHOLD} trade orders this voyage. +${data.reward} Gold.`,
+          description: `First to complete ${WORD_ON_THE_DOCKS_THRESHOLD} trade orders this voyage. +${WORD_ON_THE_DOCKS_REWARD} Gold.`,
         });
-      } else {
+      } else if (data.winnerName) {
         toast("📣 Word on the Docks", {
           description: `${data.winnerName} was first to complete ${WORD_ON_THE_DOCKS_THRESHOLD} trade orders this voyage.`,
         });
       }
     };
-    socket.on("docks:won", onDocksWon);
-    return () => {
-      socket.off("docks:won", onDocksWon);
-    };
-  }, [socket, room.id, me.id, act]);
-
-  // The server has decided the room's
-  // combined Reputation cleared the threshold (see the game:status handler
-  // in src/server/realtime.ts). Unlike Word on the Docks there is no winner
-  // here, every captain in the room applies the same flip and sees the same
-  // toast; the room:system chat message is the announcement for the room,
-  // this toast is just each captain's own client noticing the same thing.
-  useEffect(() => {
-    if (!socket) return;
-    const onSurge = (data: { roomId: string }) => {
-      if (data.roomId !== room.id) return;
-      act((g, l) => applyTidewatchSurge(g, l));
+    const onSurge = (data: { roomId: string; voyageEpoch: number }) => {
+      const game = getGame();
+      if (
+        data.roomId !== room.id ||
+        data.voyageEpoch !== game.voyageEpoch ||
+        game.tidewatchSurge
+      )
+        return;
+      act((g, logs) => applyTidewatchSurge(g, logs));
       toast("🌊 Tidewatch Alert", {
         description:
-          "The harbor takes notice of a bustling crew. One more cargo lot joins the Port Merchant Exchange for the rest of this voyage.",
+          "One more cargo lot joins the Port Merchant Exchange for the rest of this voyage.",
       });
     };
+    socket.on("docks:won", onDocksWon);
     socket.on("tidewatch:surge", onSurge);
     return () => {
+      socket.off("docks:won", onDocksWon);
       socket.off("tidewatch:surge", onSurge);
     };
-  }, [socket, room.id, act]);
+  }, [act, getGame, me.id, room.id, socket, state.loaded]);
 
   const handleRepayLoan = useCallback(
     (debtId: string) => {
@@ -678,17 +694,24 @@ export function GameRoom({
 
   // Which chat tab is showing, lifted out of the Tabs component itself so
   // a notification click can jump the user straight to the right one.
+  const [roomDraft, setRoomDraft] = useState("");
+  const [directDrafts, setDirectDrafts] = useState<Record<string, string>>({});
   const [chatTab, setChatTab] = useState<"room" | "dm">("room");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("status");
   const [moreWorkspaceTab, setMoreWorkspaceTab] =
     useState<MoreWorkspaceTab>("milestones");
   const [mobileWorkspaceOpen, setMobileWorkspaceOpen] = useState(false);
+  const [desktopWorkspaceOpen, setDesktopWorkspaceOpen] = useState(true);
   const isDesktopWorkspace = useSyncExternalStore(
     subscribeToDesktopWorkspace,
     getDesktopWorkspaceSnapshot,
     getDesktopWorkspaceServerSnapshot,
   );
   const workspaceRef = useRef<HTMLElement | null>(null);
+  const workspaceButtonRef = useRef<HTMLButtonElement | null>(null);
+  const workspaceOpen = isDesktopWorkspace
+    ? desktopWorkspaceOpen
+    : mobileWorkspaceOpen;
   const [roomOptionsOpen, setRoomOptionsOpen] = useState(false);
 
   const openWorkspace = useCallback(
@@ -698,6 +721,7 @@ export function GameRoom({
 
       if (isDesktopWorkspace) {
         setMobileWorkspaceOpen(false);
+        setDesktopWorkspaceOpen(true);
         requestAnimationFrame(() => {
           workspaceRef.current?.focus({ preventScroll: true });
         });
@@ -780,6 +804,7 @@ export function GameRoom({
       icon: "📜",
       title: "Captain's Ledger",
       lines,
+      fromLedger: true,
     });
   }, [state.newLines, state.loaded, pushNotification]);
 
@@ -1166,7 +1191,11 @@ export function GameRoom({
       state.game.phase,
     ],
   );
-  useQuickActionTrigger(() => setQuickActionsOpen(true));
+  const openQuickActions = useCallback(
+    () => setQuickActionsOpen(true),
+    [setQuickActionsOpen],
+  );
+  useQuickActionTrigger(openQuickActions);
 
   if (state.loadError && !state.loaded) {
     return (
@@ -1187,7 +1216,7 @@ export function GameRoom({
     return (
       <div className="pm-canvas min-h-screen flex items-center justify-center">
         <div className="text-muted-foreground flex items-center gap-2">
-          <Ship className="h-5 w-5 animate-pulse text-teal-500" /> Weighing
+          <ShipIcon className="h-5 w-5 animate-pulse text-teal-500" /> Weighing
           anchor…
         </div>
       </div>
@@ -1300,6 +1329,8 @@ export function GameRoom({
               roomId={room.id}
               initialMessages={roomMessages}
               disabled={amIMuted}
+              draft={roomDraft}
+              onDraftChange={setRoomDraft}
             />
           </TabsContent>
           <TabsContent
@@ -1311,6 +1342,14 @@ export function GameRoom({
               me={me}
               target={dmTarget}
               history={dmHistory}
+              draft={dmTarget ? (directDrafts[dmTarget.id] ?? "") : ""}
+              onDraftChange={(value) => {
+                if (dmTarget)
+                  setDirectDrafts((drafts) => ({
+                    ...drafts,
+                    [dmTarget.id]: value,
+                  }));
+              }}
               candidates={[
                 ...members.map((member) => ({
                   ...member,
@@ -1427,6 +1466,27 @@ export function GameRoom({
               </button>
             </div>
           </div>
+          {state.game.phase !== 0 && !state.game.gameOver && (
+            <div
+              className="hidden min-w-0 flex-wrap gap-x-4 gap-y-1 px-2 text-xs md:flex"
+              aria-label="Round status"
+            >
+              <span>
+                Round <strong>{state.game.currentRound}</strong> of{" "}
+                {state.game.maxRounds}
+              </span>
+              <span>
+                <strong>{state.game.money}</strong> Gold
+              </span>
+              {[1, "barter", "worker_mgmt", 2, 3].includes(
+                state.game.phase,
+              ) && (
+                <span>
+                  Due <strong>{quoteDues(state.game).total}</strong> Gold
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
             <Pill tone="emerald" className="hidden lg:inline-flex">
               <OnlineDot online={connected && authed} size={8} />{" "}
@@ -1455,10 +1515,17 @@ export function GameRoom({
             <Button
               variant="ghost"
               size="sm"
-              className="h-9 w-9 rounded-lg p-0"
-              onClick={() => openWorkspace(workspaceTab)}
-              aria-label="Open workspace"
-              title="Workspace"
+              ref={workspaceButtonRef}
+              className="size-11 rounded-lg p-0"
+              onClick={() => {
+                if (isDesktopWorkspace)
+                  setDesktopWorkspaceOpen((open) => !open);
+                else openWorkspace(workspaceTab);
+              }}
+              aria-expanded={workspaceOpen}
+              aria-controls={workspaceOpen ? "roomWorkspace" : undefined}
+              aria-label={workspaceOpen ? "Hide workspace" : "Show workspace"}
+              title={workspaceOpen ? "Hide workspace" : "Show workspace"}
             >
               <LayoutGrid className="h-4 w-4" />
             </Button>
@@ -1477,7 +1544,7 @@ export function GameRoom({
       </header>
 
       <main className="pm-room-bg mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col px-2 pb-4 sm:px-4">
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-3 lg:grid-cols-[minmax(0,1fr)_clamp(19rem,29vw,23rem)]">
+        <div className="pm-room-grid grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3">
           <div
             className={cn(
               "order-1 flex min-h-0 min-w-0 flex-col gap-3 transition-colors duration-300",
@@ -1485,7 +1552,9 @@ export function GameRoom({
             )}
           >
             <GamePhasePanel
+              logs={state.logs}
               game={state.game}
+              context={ctx}
               act={act}
               members={members}
               myUserId={me.id}
@@ -1494,7 +1563,11 @@ export function GameRoom({
               barter={barter}
               aid={aid}
               backing={backing}
-              voyageResult={voyageResult}
+              voyageResult={
+                voyageResult?.voyageEpoch === state.game.voyageEpoch
+                  ? voyageResult
+                  : null
+              }
               myLegacy={myLegacy}
               onRestart={handleRestart}
               onShowRumors={() => setRumorOpen(true)}
@@ -1531,8 +1604,9 @@ export function GameRoom({
             </div>
           </div>
 
-          {isDesktopWorkspace && (
+          {isDesktopWorkspace && desktopWorkspaceOpen && (
             <aside
+              id="roomWorkspace"
               ref={workspaceRef}
               className="order-2 min-h-0 min-w-0"
               aria-label="Room workspace"
@@ -1549,7 +1623,14 @@ export function GameRoom({
           open={mobileWorkspaceOpen}
           onOpenChange={setMobileWorkspaceOpen}
         >
-          <DialogContent className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-[calc(100%-1rem)] rounded-2xl p-3 sm:h-[min(48rem,calc(100dvh-2rem))] sm:max-w-2xl sm:p-4 [&>div]:flex [&>div]:min-h-0 [&>div]:flex-col [&>div]:gap-3 [&>div]:overflow-hidden">
+          <DialogContent
+            id="roomWorkspace"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              workspaceButtonRef.current?.focus();
+            }}
+            className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-[calc(100%-1rem)] rounded-2xl p-3 sm:h-[min(48rem,calc(100dvh-2rem))] sm:max-w-2xl sm:p-4 [&>div]:flex [&>div]:min-h-0 [&>div]:flex-col [&>div]:gap-3 [&>div]:overflow-hidden"
+          >
             <DialogHeader className="shrink-0 pr-8 text-left">
               <DialogTitle>Room workspace</DialogTitle>
               <DialogDescription>
@@ -1621,7 +1702,7 @@ export function GameRoom({
               className="w-full justify-start gap-3 rounded-xl"
               onClick={() => {
                 setRoomOptionsOpen(false);
-                requestAnimationFrame(() => setQuickActionsOpen(true));
+                requestAnimationFrame(openQuickActions);
               }}
             >
               <Search className="h-4 w-4" /> Open commands
@@ -1645,11 +1726,13 @@ export function GameRoom({
         open={guideOpen}
         onOpenChange={setGuideOpen}
         difficulty={state.game.difficulty}
+        rulesVersion={state.game.rulesVersion}
       />
       <TipsModal
         open={tipsOpen}
         onOpenChange={setTipsOpen}
         difficulty={state.game.difficulty}
+        rulesVersion={state.game.rulesVersion}
       />
       <RumorBoardModal
         open={rumorOpen}
@@ -1661,6 +1744,7 @@ export function GameRoom({
         open={tutOpen}
         onOpenChange={handleTutorialOpenChange}
         difficulty={state.game.difficulty}
+        rulesVersion={state.game.rulesVersion}
       />
       <RestartConfirmModal
         open={restartConfirmOpen}
@@ -1688,6 +1772,7 @@ export function GameRoom({
         }
         isMe={selectedPlayerId === me.id}
         difficulty={state.game.difficulty}
+        rulesVersion={state.game.rulesVersion}
         colorFor={colorFor}
         detail={
           selectedPlayerId ? playerDetail.detail[selectedPlayerId] : undefined
@@ -1732,6 +1817,8 @@ function DmTab({
   candidates,
   onPick,
   onClear,
+  draft,
+  onDraftChange,
 }: {
   socket: Socket | null;
   me: PublicUser;
@@ -1740,6 +1827,8 @@ function DmTab({
   candidates: Array<PublicUser & { roomId?: string | null }>;
   onPick: (u: PublicUser) => void;
   onClear: () => void;
+  draft: string;
+  onDraftChange: (value: string) => void;
 }) {
   // Deduplicate candidates by id, exclude self.
   const seen = new Map<string, PublicUser & { roomId?: string | null }>();
@@ -1772,6 +1861,8 @@ function DmTab({
             mode="dm"
             other={target}
             initialMessages={history}
+            draft={draft}
+            onDraftChange={onDraftChange}
           />
         </div>
       </div>

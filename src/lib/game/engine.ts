@@ -20,6 +20,8 @@ export {
   getHireCost,
   getWorkerWage,
   workerWagesFor,
+  quoteDues,
+  quoteWages,
   type ExpectedPrice,
   type PriceBreakdown,
 } from "./engine/pricing";

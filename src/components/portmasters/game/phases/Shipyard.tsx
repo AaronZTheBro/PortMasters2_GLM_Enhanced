@@ -9,7 +9,6 @@ import {
 } from "@/components/ui/tooltip";
 import {
   Anchor,
-  Ship,
   Wrench,
   Coins,
   TrendingUp,
@@ -47,10 +46,15 @@ import {
   BOONS_TIER2,
 } from "@/lib/game/constants";
 import type { GameState } from "@/lib/game/types";
+import { NEW_BOONS, NEW_MODULES } from "@/lib/game/expansion";
 import { cn } from "@/lib/utils";
 import type { PublicUser } from "@/lib/api";
 import { Term } from "../../Term";
-import { ShipVisualizer } from "../../ShipVisualizer";
+import {
+  ShipVisualizer,
+  ShipIcon,
+  TextWithShipIcons,
+} from "../../ShipVisualizer";
 import { ReadyBar } from "../ReadyBar";
 import type { PhaseSync } from "./PhaseShared";
 
@@ -58,6 +62,12 @@ import type { PhaseSync } from "./PhaseShared";
 // three MODULES_TIER* arrays in constants.ts group modules by when they
 // unlock; we expose that grouping here as a "rarity" indicator.
 const MODULE_TIER_INDEX: Record<string, "common" | "rare" | "legendary"> = {
+  ...Object.fromEntries(
+    NEW_MODULES.map((module) => [
+      module.id,
+      (["common", "rare", "legendary"] as const)[module.tier],
+    ]),
+  ),
   ...Object.fromEntries(MODULES_TIER0.map((m) => [m.id, "common"])),
   ...Object.fromEntries(MODULES_TIER1.map((m) => [m.id, "rare"])),
   ...Object.fromEntries(MODULES_TIER2.map((m) => [m.id, "legendary"])),
@@ -99,7 +109,12 @@ function moduleTierOf(mod: Module): "common" | "rare" | "legendary" {
 // Module ↔ Boon synergy map. Curated, decorative only: surfaces boons that
 // pair well with a given module so the player can plan across phases. Does
 // not touch game logic.
-const ALL_BOONS: Boon[] = [...BOONS_TIER0, ...BOONS_TIER1, ...BOONS_TIER2];
+const ALL_BOONS: Boon[] = [
+  ...BOONS_TIER0,
+  ...BOONS_TIER1,
+  ...BOONS_TIER2,
+  ...NEW_BOONS,
+];
 
 const MODULE_SYNERGIES: Record<string, string[]> = {
   silk_monopoly: ["silk_wind"],
@@ -123,15 +138,11 @@ function synergisticBoons(mod: Module): Boon[] {
     .filter((b): b is Boon => Boolean(b));
 }
 
-// Derived ship metrics : cargo fill is a soft heuristic (no hard capacity in
-// the game state), capped at 1.0 for the ShipVisualizer. Crew = total
-// workers across all artisan types.
-function cargoFillOf(game: GameState): number {
-  const total = Object.values(game.inventory).reduce(
-    (sum, n) => sum + (typeof n === "number" ? n : 0),
+function cargoUnitsOf(game: GameState): number {
+  return Object.values(game.inventory).reduce(
+    (total, units) => total + units,
     0,
   );
-  return Math.min(1, total / 20);
 }
 
 function crewCountOf(game: GameState): number {
@@ -207,7 +218,7 @@ function StatChip({
 
 function ShipStatsPanel({ game }: { game: GameState }) {
   const canUpgrade = game.shipLevel < 3;
-  const cargoFill = cargoFillOf(game);
+  const cargoUnits = cargoUnitsOf(game);
   const crew = crewCountOf(game);
   const slotsUsed = game.equippedModules.length;
   const slotsMax = game.shipLevel;
@@ -216,7 +227,7 @@ function ShipStatsPanel({ game }: { game: GameState }) {
     <div className="rounded-xl border border-teal-500/20 bg-teal-500/[0.04] p-3">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <StatChip
-          icon={<Ship className="h-4 w-4" />}
+          icon={<ShipIcon className="h-4 w-4" />}
           label="Ship Level"
           value={`Lvl ${game.shipLevel}`}
           accent="text-teal-600 dark:text-teal-400"
@@ -230,7 +241,7 @@ function ShipStatsPanel({ game }: { game: GameState }) {
         <StatChip
           icon={<Package className="h-4 w-4" />}
           label="Cargo"
-          value={`${Math.round(cargoFill * 100)}%`}
+          value={String(cargoUnits)}
           accent="text-violet-600 dark:text-violet-400"
         />
         <StatChip
@@ -374,7 +385,7 @@ export function Shipyard({
   const canDraft = game.shipLevel > 0;
   const slotsFull =
     game.equippedModules.length >= game.shipLevel && game.shipLevel > 0;
-  const cargoFill = cargoFillOf(game);
+  const cargoUnits = cargoUnitsOf(game);
   const crew = crewCountOf(game);
 
   return (
@@ -412,7 +423,7 @@ export function Shipyard({
             <ShipVisualizer
               shipLevel={game.shipLevel}
               equippedModules={game.equippedModules}
-              cargoFill={cargoFill}
+              cargoUnits={cargoUnits}
               crewCount={crew}
               compact
             />
@@ -436,7 +447,7 @@ export function Shipyard({
                       className="flex items-start gap-2 text-xs"
                     >
                       <span className="shrink-0 text-base leading-tight">
-                        {m.icon}
+                        <TextWithShipIcons>{m.icon}</TextWithShipIcons>
                       </span>
                       <div className="flex-1 min-w-0">
                         <strong className="text-foreground">
@@ -492,7 +503,7 @@ export function Shipyard({
                       disabled={!affordable}
                       onClick={() => act((g, l) => upgradeShip(g, l))}
                     >
-                      <Ship className="h-4 w-4 mr-1.5 inline-block transition-transform group-hover:scale-110" />
+                      <ShipIcon className="h-4 w-4 mr-1.5 inline-block transition-transform group-hover:scale-110" />
                       Upgrade Ship to Lvl {game.shipLevel + 1}
                       <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-black/15 dark:bg-white/15 px-2 py-0.5 text-xs">
                         <Coins className="h-3 w-3" />
@@ -661,7 +672,7 @@ export function ModuleDraft({
               </Tooltip>
             </div>
             <motion.div
-              className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-4"
+              className="pm-decision-grid"
               initial="hidden"
               animate="visible"
               variants={{
@@ -745,13 +756,29 @@ function ModuleCard({
       whileTap={{ scale: 0.98 }}
       style={{ transformStyle: "preserve-3d", perspective: 1000 }}
       className={cn(
-        "pm-glass rounded-2xl p-5 flex flex-col items-center text-center relative",
+        "pm-decision-card pm-glass relative flex flex-col items-center rounded-2xl p-4 text-center",
         "border border-teal-500/20 transition-colors hover:border-teal-400/40",
         style.aura,
       )}
     >
-      {/* Tier ribbon */}
-      <div className="absolute top-2.5 right-2.5">
+      <div className="flex w-full flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+          {synergies.slice(0, 2).map((boon) => (
+            <Tooltip key={boon.id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300"
+                >
+                  {boon.icon} {boon.name}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-[200px] text-xs">
+                <strong>{boon.name}</strong> · {boon.desc}
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
         <span
           className={cn(
             "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-semibold tracking-wider",
@@ -763,27 +790,7 @@ function ModuleCard({
         </span>
       </div>
 
-      {/* Synergy badges */}
-      {synergies.length > 0 && (
-        <div className="absolute top-2.5 left-2.5 flex flex-col gap-1">
-          {synergies.slice(0, 2).map((b) => (
-            <Tooltip key={b.id}>
-              <TooltipTrigger asChild>
-                <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/15 px-1.5 py-0.5 text-[8px] font-medium text-violet-700 dark:text-violet-300">
-                  <Sparkles className="h-2.5 w-2.5" />
-                  {b.icon} {b.name}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs max-w-[200px]">
-                Synergizes with the <strong>{b.name}</strong> boon: {b.desc}
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
-      )}
-
-      {/* Icon with rotation on hover + glow */}
-      <div className="relative my-3 mt-6">
+      <div className="relative my-3">
         <motion.div
           className="pm-particle-orbit inline-flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-teal-500/10 to-amber-500/10 border border-teal-500/30"
           animate={{
@@ -800,7 +807,7 @@ function ModuleCard({
             whileHover={{ rotate: 15, scale: 1.1 }}
             transition={{ type: "spring", stiffness: 200 }}
           >
-            {mod.icon}
+            <TextWithShipIcons>{mod.icon}</TextWithShipIcons>
           </motion.span>
         </motion.div>
       </div>
@@ -881,7 +888,7 @@ function ComparePanel({
         </p>
         <div className="mt-1.5 rounded border border-amber-500/20 bg-amber-500/[0.06] px-2 py-1">
           <strong>
-            {newMod.icon} {newMod.name}
+            <TextWithShipIcons>{newMod.icon}</TextWithShipIcons> {newMod.name}
           </strong>
           <div className="text-[11px] text-muted-foreground">{newMod.desc}</div>
         </div>
@@ -903,7 +910,9 @@ function ComparePanel({
             key={eq.id}
             className="flex items-center gap-1.5 rounded border border-black/10 dark:border-white/10 bg-background/60 px-1.5 py-1"
           >
-            <span className="text-base">{eq.icon}</span>
+            <span className="text-base">
+              <TextWithShipIcons>{eq.icon}</TextWithShipIcons>
+            </span>
             <div className="flex-1 text-left min-w-0">
               <div className="font-medium truncate">{eq.name}</div>
               <div className="text-[10px] text-muted-foreground truncate">
@@ -949,7 +958,7 @@ export function ModuleSwap({
               animate={{ rotate: [0, -8, 8, 0] }}
               transition={{ duration: 2, repeat: Infinity }}
             >
-              {newMod.icon}
+              <TextWithShipIcons>{newMod.icon}</TextWithShipIcons>
             </motion.span>
             <div className="text-left">
               <strong className="text-amber-700 dark:text-amber-300">
@@ -972,7 +981,7 @@ export function ModuleSwap({
             >
               <div className="flex items-start gap-2 min-w-0">
                 <span className="text-base leading-tight shrink-0">
-                  {m.icon}
+                  <TextWithShipIcons>{m.icon}</TextWithShipIcons>
                 </span>
                 <div className="min-w-0">
                   <strong>

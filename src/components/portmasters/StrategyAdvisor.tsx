@@ -1,5 +1,6 @@
 "use client";
 
+import { ShipIcon } from "./ShipVisualizer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -12,7 +13,6 @@ import {
   ChevronDown,
   ChevronRight,
   X,
-  Ship,
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
@@ -22,7 +22,7 @@ import type { GameState } from "@/lib/game/types";
 import {
   maintenanceSurcharge,
   shipUpgradeSurcharge,
-  workerWagesFor,
+  quoteWages,
 } from "@/lib/game/engine";
 import { pirateChanceFor } from "@/lib/game/difficulty";
 import { quotePirateWaters } from "@/lib/game/engine/pirates";
@@ -108,13 +108,6 @@ const PRIORITY_META: Record<
 
 // Analysis engine (pure functions)
 
-function computeWagesDue(game: GameState): number {
-  return WORKER_TYPES.reduce(
-    (total, { id }) => total + workerWagesFor(game, id),
-    0,
-  );
-}
-
 /** Number of workers with no task assigned, across the whole roster. */
 function countIdleWorkers(game: GameState): number {
   let idle = 0;
@@ -183,7 +176,7 @@ function computeAdvice(game: GameState): Advice[] {
     });
   }
 
-  const wagesDue = computeWagesDue(game);
+  const wagesDue = quoteWages(game).due;
   if (wagesDue > 0 && game.money < wagesDue) {
     advice.push({
       id: "wages",
@@ -208,13 +201,13 @@ function computeAdvice(game: GameState): Advice[] {
   }
 
   const firstRoundRisk = pirateChanceFor(game.difficulty, 1, game.maxRounds);
-  const { chance } = quotePirateWaters(game);
+  const { chance, raidLoss } = quotePirateWaters(game);
   if (chance > firstRoundRisk && !game.pirateAttackResolved && !game.gameOver) {
     advice.push({
       id: "pirate_risk",
       priority: "warning",
       title: "Pirate risk increasing",
-      description: `You face a ${Number((chance * 100).toFixed(1))}% chance of losing all Gold this round.`,
+      description: `You face a ${Number((chance * 100).toFixed(1))}% chance of losing ${raidLoss} Gold this round.`,
       action:
         "Consider hiring an escort, or keep your treasury small before settlement.",
     });
@@ -720,7 +713,7 @@ export function StrategyAdvisor({ game, className }: Props) {
       )}
       {collapsed && visibleAdvice.length === 0 && (
         <div className="relative z-10 flex items-center gap-1.5 px-3.5 pb-2.5 text-[10px] text-amber-700/70 dark:text-amber-200/55">
-          <Ship className="h-3 w-3" aria-hidden />
+          <ShipIcon className="h-3 w-3" aria-hidden />
           <span>Smooth sailing</span>
         </div>
       )}

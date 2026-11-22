@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/api-auth";
+import { readVoyageRules } from "@/lib/game/forecast";
 import {
   checkSave,
   describeFindings,
@@ -17,20 +18,25 @@ export async function GET(req: NextRequest) {
   const roomId = req.nextUrl.searchParams.get("roomId");
   if (!roomId) return NextResponse.json({ state: null });
 
-  const state = await db.gameState.findUnique({
-    where: { userId_roomId: { userId: user.id, roomId } },
-  });
-
-  // Load current room settings and return its checkpoint when no save exists.
-  const room = await db.room.findUnique({
-    where: { id: roomId },
-    select: {
-      currentRound: true,
-      currentPhase: true,
-      voyageEpoch: true,
-      difficulty: true,
-    },
-  });
+  const [state, room] = await db.$transaction([
+    db.gameState.findUnique({
+      where: { userId_roomId: { userId: user.id, roomId } },
+    }),
+    db.room.findUnique({
+      where: { id: roomId },
+      select: {
+        currentRound: true,
+        currentPhase: true,
+        voyageEpoch: true,
+        difficulty: true,
+        rulesVersion: true,
+        forecastPlan: true,
+        phasePulse: true,
+        tidewatchSurge: true,
+        docksWinnerId: true,
+      },
+    }),
+  ]);
   const difficulty = room?.difficulty ?? "fair_winds";
   const checkpoint =
     !state && room
@@ -38,6 +44,7 @@ export async function GET(req: NextRequest) {
           currentRound: room.currentRound,
           currentPhase: room.currentPhase,
           voyageEpoch: room.voyageEpoch,
+          harborPulse: JSON.parse(room.phasePulse),
         }
       : null;
 
@@ -46,6 +53,9 @@ export async function GET(req: NextRequest) {
     checkpoint,
     revision: state?.revision ?? null,
     difficulty,
+    rules: readVoyageRules(room),
+    tidewatchSurge: room?.tidewatchSurge ?? false,
+    docksWon: room?.docksWinnerId === user.id,
   });
 }
 
@@ -93,7 +103,6 @@ export async function PUT(req: NextRequest) {
     ? checkSave(snapshot, room?.currentRound ?? 1)
     : { plausible: true, severity: "ok" as const, findings: [] };
 
-  const json = JSON.stringify(data);
   // Preserve the strongest integrity mark across later saves.
   const flag = verdict.plausible
     ? {}
@@ -111,7 +120,7 @@ export async function PUT(req: NextRequest) {
   const record = await db.$transaction(async (tx) => {
     const voyage = await tx.room.findUnique({
       where: { id: roomId },
-      select: { voyageEpoch: true },
+      select: { voyageEpoch: true, rulesVersion: true, forecastPlan: true },
     });
     if (
       !voyage ||
@@ -119,6 +128,12 @@ export async function PUT(req: NextRequest) {
         data.voyageEpoch !== voyage.voyageEpoch)
     )
       return null;
+    const rules = readVoyageRules(voyage);
+    const json = JSON.stringify({
+      ...data,
+      rulesVersion: rules.version,
+      forecasts: rules.forecasts,
+    });
     const key = { userId: user.id, roomId };
     const previous = await tx.gameState.findUnique({
       where: { userId_roomId: key },

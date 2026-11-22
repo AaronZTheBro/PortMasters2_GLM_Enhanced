@@ -1,5 +1,6 @@
 "use client";
 
+import { ShipIcon } from "./ShipVisualizer";
 // Tracks visible voyage prices in localStorage and renders their trends.
 
 import {
@@ -21,7 +22,6 @@ import {
   Package,
   Boxes,
   Anchor,
-  Ship,
   AlertCircle,
 } from "lucide-react";
 import type { GameState } from "@/lib/game/types";
@@ -1019,7 +1019,7 @@ export function PriceHistory({
               Price History
             </h3>
             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
-              <Ship className="h-2.5 w-2.5" />
+              <ShipIcon className="h-2.5 w-2.5" />
               Voyage epoch {game.voyageEpoch}
               <span aria-hidden>·</span>
               <span>

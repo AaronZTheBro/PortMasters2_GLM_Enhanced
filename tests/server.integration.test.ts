@@ -6,6 +6,9 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { io, type Socket } from "socket.io-client";
+import { EXPANDED_RULES, type VoyageRules } from "../src/lib/game/expansion";
+import { WORD_ON_THE_DOCKS_THRESHOLD } from "../src/lib/game/constants";
+import { createInitialGameState } from "../src/lib/game/types";
 import type { VoyageCompleteEvent } from "../src/lib/realtime";
 
 const projectRoot = resolve(import.meta.dirname, "..");
@@ -303,18 +306,47 @@ test(
       });
       assert.equal(activeRoom.data.room.id, room.id);
 
-      const alphaStarted = waitForEvent<{ roomId: string }>(
+      type Started = {
+        roomId: string;
+        voyageEpoch: number;
+        rules: VoyageRules;
+      };
+      const alphaStarted = waitForEvent<Started>(
         alphaSocket,
         "room:started",
         ({ roomId }) => roomId === room.id,
       );
-      const betaStarted = waitForEvent<{ roomId: string }>(
+      const betaStarted = waitForEvent<Started>(
         betaSocket,
         "room:started",
         ({ roomId }) => roomId === room.id,
       );
       alphaSocket.emit("room:start", { roomId: room.id });
-      await Promise.all([alphaStarted, betaStarted]);
+      const [start, otherStart] = await Promise.all([
+        alphaStarted,
+        betaStarted,
+      ]);
+      assert.deepEqual(start, otherStart);
+      assert.equal(start.rules.version, EXPANDED_RULES);
+      assert.ok(start.rules.forecasts.length > 0);
+      const recoverySocket = await connectCaptain(betaRegistration.data.token);
+      sockets.push(recoverySocket);
+      const checkpoint = waitForEvent<Started & { phase: string }>(
+        recoverySocket,
+        "phase:ready_update",
+        ({ roomId }) => roomId === room.id,
+      );
+      betaSocket.disconnect();
+      recoverySocket.emit("room:join", { roomId: room.id });
+      const recovered = await checkpoint;
+      assert.equal(recovered.phase, "5");
+      assert.equal(recovered.voyageEpoch, start.voyageEpoch);
+      assert.deepEqual(recovered.rules, start.rules);
+      const savedRules = await request(`/api/game/state?roomId=${room.id}`, {
+        cookie: betaCookie,
+      });
+      assert.deepEqual(savedRules.data.rules, start.rules);
+      assert.equal(savedRules.data.checkpoint.voyageEpoch, start.voyageEpoch);
 
       const alphaAdvanced = waitForEvent<{
         roomId: string;
@@ -333,7 +365,7 @@ test(
         round: number;
         phase: string;
       }>(
-        betaSocket,
+        recoverySocket,
         "phase:advance",
         (payload) =>
           payload.roomId === room.id &&
@@ -344,11 +376,13 @@ test(
         roomId: room.id,
         round: 1,
         phase: "5",
+        voyageEpoch: start.voyageEpoch,
       });
-      betaSocket.emit("phase:ready", {
+      recoverySocket.emit("phase:ready", {
         roomId: room.id,
         round: 1,
         phase: "5",
+        voyageEpoch: start.voyageEpoch,
       });
       await Promise.all([alphaAdvanced, betaAdvanced]);
 
@@ -356,6 +390,58 @@ test(
         cookie: alphaCookie,
       });
       assert.equal(startedRoom.data.room.started, true);
+
+      const claim = { roomId: room.id, voyageEpoch: start.voyageEpoch };
+      const claimDocks = (socket: Socket) =>
+        socket.timeout(4000).emitWithAck("docks:claim", claim);
+      assert.equal(await claimDocks(alphaSocket), false);
+      const statePath = `/api/game/state?roomId=${room.id}`;
+      for (const cookie of [alphaCookie, betaCookie]) {
+        const game = createInitialGameState(0, 1, start.voyageEpoch);
+        game.totalOrdersCompleted = WORD_ON_THE_DOCKS_THRESHOLD;
+        await request("/api/game/state", {
+          cookie,
+          method: "PUT",
+          body: { roomId: room.id, data: game },
+        });
+      }
+      const docks = waitForEvent<{ winnerId: string }>(
+        recoverySocket,
+        "docks:won",
+      );
+      assert.equal(await claimDocks(alphaSocket), true);
+      assert.equal((await docks).winnerId, alphaRegistration.data.user.id);
+      assert.equal(await claimDocks(recoverySocket), true);
+      assert.equal(
+        (await request(statePath, { cookie: alphaCookie })).data.docksWon,
+        true,
+      );
+      assert.equal(
+        (await request(statePath, { cookie: betaCookie })).data.docksWon,
+        false,
+      );
+
+      const surge = waitForEvent<{ voyageEpoch: number }>(
+        recoverySocket,
+        "tidewatch:surge",
+      );
+      alphaSocket.emit("game:status", {
+        ...claim,
+        round: 1,
+        phase: 1,
+        reputation: 280,
+      });
+      recoverySocket.emit("game:status", {
+        ...claim,
+        round: 1,
+        phase: 1,
+        reputation: 220,
+      });
+      assert.equal((await surge).voyageEpoch, start.voyageEpoch);
+      assert.equal(
+        (await request(statePath, { cookie: betaCookie })).data.tidewatchSurge,
+        true,
+      );
 
       const completed = waitForEvent<VoyageCompleteEvent>(
         alphaSocket,
@@ -372,7 +458,7 @@ test(
         phase: "endgame",
         reputation: 90,
       });
-      betaSocket.emit("game:status", {
+      recoverySocket.emit("game:status", {
         ...status,
         phase: "bankruptcy",
         reputation: 120,
@@ -388,8 +474,21 @@ test(
         "room:voyage_complete",
         ({ replayed }) => replayed === true,
       );
+      const restoredSurge = waitForEvent<{ voyageEpoch: number }>(
+        reconnected,
+        "tidewatch:surge",
+      );
+      const restoredDocks = waitForEvent<{ winnerId: string }>(
+        reconnected,
+        "docks:won",
+      );
       reconnected.emit("room:join", { roomId: room.id });
       assert.deepEqual(await restored, { ...result, replayed: true });
+      assert.equal((await restoredSurge).voyageEpoch, start.voyageEpoch);
+      assert.equal(
+        (await restoredDocks).winnerId,
+        alphaRegistration.data.user.id,
+      );
       reconnected.emit("game:status", {
         ...status,
         phase: "endgame",

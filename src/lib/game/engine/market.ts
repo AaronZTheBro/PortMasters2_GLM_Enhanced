@@ -7,6 +7,9 @@ import {
   RECIPES,
   RESOURCE_WEIGHTS,
 } from "../constants";
+import { brokerWhisperCapacity, revealBrokerWhisper } from "../broker-whispers";
+import { describeForecast } from "../forecast";
+import { expanded, forecastFor, spendEffect } from "../expansion";
 import { charterOpensOn, marketCountsFor } from "../difficulty";
 import { unlockedPorts, unlockedProducts, unlockedResources } from "../pools";
 import { createRng, pick, randInt, weightedPick, type Rng } from "../rng";
@@ -15,6 +18,7 @@ import { addOwnedAmount } from "./core";
 import {
   explainCardPrice,
   portResourcePrice,
+  marketResourceAdjustment,
   productPurchasePrice,
   recipeMaterialCost,
 } from "./pricing";
@@ -24,14 +28,16 @@ export type MarketPools = {
   resources: string[];
   products: string[];
   ports: string[];
+  expanded?: boolean;
 };
 
 export function poolsFor(state: GameState): MarketPools {
-  const { difficulty, currentRound } = state;
+  const { difficulty, currentRound, rulesVersion } = state;
   return {
-    resources: unlockedResources(difficulty, currentRound),
-    products: unlockedProducts(difficulty, currentRound),
+    resources: unlockedResources(difficulty, currentRound, rulesVersion),
+    products: unlockedProducts(difficulty, currentRound, rulesVersion),
     ports: unlockedPorts(difficulty, currentRound),
+    expanded: expanded(state),
   };
 }
 
@@ -40,11 +46,13 @@ export function genRawOrder(
   pools: MarketPools,
   filter: string | null = null,
   quantityOverride?: number,
+  portOverride?: string,
 ): Omit<OrderCard, "id"> {
-  const num = randInt(rng, 1, 3);
+  const num = pools.expanded && rng() < 0.7 ? 1 : randInt(rng, 1, 3);
   const resources: { type: string; required: number }[] = [];
   const available = [...pools.resources];
-  const port = pick(rng, pools.ports);
+  const drawnPort = pick(rng, pools.ports);
+  const port = portOverride ?? drawnPort;
   let total = 0;
   if (pools.resources.includes(filter ?? "")) {
     const req = quantityOverride ?? randInt(rng, 2, 5);
@@ -53,18 +61,31 @@ export function genRawOrder(
   } else {
     for (let i = 0; i < num; i++) {
       if (!available.length) break;
-      const r = pick(rng, available);
+      const r = pools.expanded
+        ? weightedPick(
+            rng,
+            available.map((item) => [item, RESOURCE_WEIGHTS[item]]),
+          )
+        : pick(rng, available);
       available.splice(available.indexOf(r), 1);
       const req = randInt(rng, 2, 5);
       total += req;
       resources.push({ type: r, required: req });
     }
   }
-  const base = resources.reduce((s, r) => s + r.required * 5, 0);
+  const base = resources.reduce((sum, good) => {
+    if (!pools.expanded) return sum + good.required * 5;
+    const [min, max] = COMMODITIES[good.type].basePrice;
+    const demand = COMMODITIES[good.type].ports.includes(port) ? 0 : 1;
+    return sum + good.required * ((min + max) / 2 + 2 + demand);
+  }, 0);
+  const reward = pools.expanded
+    ? Math.round(base * (0.98 + rng() * 0.16))
+    : base + randInt(rng, 10, 25);
   return {
     demandPort: port,
     resources,
-    reward: base + randInt(rng, 10, 25),
+    reward,
     totalItems: total,
     isProductOrder: false,
   };
@@ -101,7 +122,9 @@ export function genMixedOrder(
   rng: Rng,
   pools: MarketPools,
 ): Omit<OrderCard, "id"> {
-  return rng() < 0.5 ? genRawOrder(rng, pools) : genProductOrder(rng, pools);
+  return rng() < (pools.expanded ? 0.65 : 0.5)
+    ? genRawOrder(rng, pools)
+    : genProductOrder(rng, pools);
 }
 
 function genProductPurchaseCard(
@@ -136,7 +159,7 @@ function genProductPurchaseCard(
 function genResourceCard(
   rng: Rng,
   pools: MarketPools,
-  pulse: Record<string, number> = {},
+  state: GameState,
 ): Omit<ResourceCard, "id"> {
   if (rng() < 0.3) return genProductPurchaseCard(rng, pools);
   const num = randInt(rng, 1, 3);
@@ -156,7 +179,12 @@ function genResourceCard(
     const qty = randInt(rng, 1, 3);
     const [min, max] = COMMODITIES[chosen].basePrice;
     const base = randInt(rng, min, max);
-    const price = portResourcePrice(chosen, base, port, pulse[chosen] ?? 0);
+    const price = portResourcePrice(
+      chosen,
+      base,
+      port,
+      marketResourceAdjustment(state, chosen),
+    );
     resources.push({ type: chosen, quantity: qty, price });
   }
   const total = resources.reduce((s, r) => s + r.quantity * r.price, 0);
@@ -196,6 +224,110 @@ export function applyTidewatchSurge(state: GameState, logs: string[]) {
   );
 }
 
+const STAPLE_TERMS = {
+  fair_winds: { quantity: 2, premium: 1 },
+  open_waters: { quantity: 3, premium: 6 },
+  monsoon: { quantity: 4, premium: 14 },
+};
+
+function stapleGood(state: GameState, ctx: GameContext) {
+  const choices = state.currentRound >= 3 ? ["Hemp", "Bamboo"] : ["Hemp"];
+  return pick(
+    createRng(
+      `${ctx.seedBase}:V${state.voyageEpoch}:R${state.currentRound}:staple`,
+    ),
+    choices,
+  );
+}
+
+function stapleOrder(state: GameState, ctx: GameContext): OrderCard {
+  const type = stapleGood(state, ctx);
+  const [, high] = COMMODITIES[type].basePrice;
+  const { quantity, premium } = STAPLE_TERMS[state.difficulty];
+  return {
+    id: 0,
+    demandPort: "Quanzhou Port",
+    resources: [{ type, required: quantity }],
+    reward: high * quantity + premium,
+    totalItems: quantity,
+    isProductOrder: false,
+    staple: true,
+  };
+}
+
+export function featuredDemand(
+  state: GameState,
+  ctx: GameContext,
+  round = state.currentRound,
+) {
+  if (!expanded(state) || round > state.maxRounds) return undefined;
+  const forecast = forecastFor(state, round);
+  if (forecast?.kind === "guild" && forecast.item) return forecast.item;
+  const pool = unlockedProducts(state.difficulty, round, state.rulesVersion);
+  return pick(
+    createRng(
+      `${ctx.roomSeed ?? ctx.seedBase}:V${state.voyageEpoch}:R${round}:demand`,
+    ),
+    pool,
+  );
+}
+
+export function ordinaryOrders(state: GameState, ctx: GameContext) {
+  const random = createRng(
+    `${ctx.seedBase}:V${state.voyageEpoch}:R${state.currentRound}:orders`,
+  );
+  const pools = poolsFor(state);
+  const count = marketCountsFor(state.difficulty, state.currentRound).order;
+  const cards: OrderCard[] = Array.from({ length: count }, (_, id) => ({
+    id,
+    ...genMixedOrder(random, pools),
+  }));
+  if (expanded(state)) {
+    cards[0] = stapleOrder(state, ctx);
+    const item = featuredDemand(state, ctx);
+    cards[count - 1] = {
+      id: count - 1,
+      ...genProductOrder(random, pools, item),
+    };
+    if (forecastFor(state)?.kind === "guild") {
+      cards[count - 2] = {
+        id: count - 2,
+        ...genProductOrder(random, pools, item),
+      };
+    }
+  }
+  return { cards, random };
+}
+
+function featuredLot(
+  state: GameState,
+  item: string,
+  id: number,
+  staple = false,
+): ResourceCard {
+  const good = COMMODITIES[item];
+  const open = unlockedPorts(state.difficulty, state.currentRound);
+  const port =
+    good.ports.find((candidate) => open.includes(candidate)) ?? open[0];
+  const [min, max] = good.basePrice;
+  const quantity = staple ? STAPLE_TERMS[state.difficulty].quantity : 2;
+  const unit = portResourcePrice(
+    item,
+    staple ? min + 1 : Math.floor((min + max) / 2),
+    port,
+    marketResourceAdjustment(state, item),
+  );
+  return {
+    id,
+    port,
+    staple,
+    featured: !staple,
+    totalCost: unit * quantity,
+    resources: [{ type: item, quantity, price: unit }],
+    isProductCard: false,
+  };
+}
+
 export function purchaseCard(state: GameState, cardId: number, logs: string[]) {
   const card = state.resourceCards.find((c) => c.id === cardId);
   if (!card) return;
@@ -233,7 +365,8 @@ export function purchaseCard(state: GameState, cardId: number, logs: string[]) {
       .join(" + ");
     logs.push(`🛒 Bought at ${card.port}: ${txt}, Total ${cost} Gold`);
   }
-  for (const { label, delta } of steps) {
+  for (const { label, delta, effect } of steps) {
+    if (effect) spendEffect(state, effect);
     if (delta < 0) logs.push(`✨ ${label} saved ${-delta} Gold`);
   }
   logs.push(`📊 Purchased ${state.purchaseCount} cargo batches`);
@@ -245,6 +378,7 @@ export function startPhase1(
   logs: string[],
 ) {
   state.phase = 1;
+  state.seatSeed ??= ctx.seedBase;
   state.purchaseCount = 0;
   state.purchasedCards = [];
   state.phase2DemandTags = [];
@@ -254,7 +388,7 @@ export function startPhase1(
   );
   const marketPools = poolsFor(state);
   const allItems = [...marketPools.resources, ...marketPools.products];
-  for (let i = 0; i < 5 && allItems.length; i++) {
+  for (let i = 0; i < brokerWhisperCapacity(state) && allItems.length; i++) {
     const index = Math.floor(intelRng() * allItems.length);
     state.phase2DemandTags.push(allItems.splice(index, 1)[0]);
   }
@@ -262,12 +396,9 @@ export function startPhase1(
   // Farsight draws from this pool without consuming paid intel.
   const freeIntel = state.modifierFlags.free_intel ?? 0;
   for (let i = 0; i < freeIntel; i++) {
-    if (!state.phase2DemandTags.length) break;
-    const idx = Math.floor(intelRng() * state.phase2DemandTags.length);
-    const item = state.phase2DemandTags.splice(idx, 1)[0];
-    const openPorts = unlockedPorts(state.difficulty, state.currentRound);
-    const port = openPorts[Math.floor(intelRng() * openPorts.length)];
-    state.revealedIntel.push({ item, port });
+    const tip = revealBrokerWhisper(state, intelRng, marketPools.ports);
+    if (!tip) break;
+    const { item, port } = tip;
     logs.push(
       `🔮 Farsight: 'Word from ${port}: High demand for ${item}!' (free)`,
     );
@@ -294,11 +425,35 @@ export function startPhase1(
   }
   // Tidewatch adds one card without repeating its activation message.
   const purchaseCount = tierPurchaseCount + (state.tidewatchSurge ? 1 : 0);
+  state.scoutedOrder =
+    state.modifierFlags.coastal_forecast && expanded(state)
+      ? ordinaryOrders(state, ctx).cards.at(-1)
+      : undefined;
+  if (state.scoutedOrder)
+    logs.push(
+      `Coastal Forecast spotted an order at ${state.scoutedOrder.demandPort}.`,
+    );
+  const forecast = forecastFor(state);
   for (let i = 0; i < purchaseCount; i++) {
     state.resourceCards.push({
       id: i,
-      ...genResourceCard(marketRng, marketPools, state.harborPulse),
+      ...genResourceCard(marketRng, marketPools, state),
     });
+  }
+  if (expanded(state))
+    state.resourceCards[0] = featuredLot(
+      state,
+      stapleGood(state, ctx),
+      0,
+      true,
+    );
+  if (
+    forecast?.kind === "market" &&
+    forecast.item &&
+    marketPools.resources.includes(forecast.item)
+  ) {
+    state.resourceCards[1] = featuredLot(state, forecast.item, 1);
+    logs.push(describeForecast(forecast).detail);
   }
 }
 

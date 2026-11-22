@@ -1,14 +1,8 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import {
-  Anchor,
-  ArrowRight,
-  CircleAlert,
-  Eye,
-  EyeOff,
-  Loader2,
-} from "lucide-react";
+import { ShipMark } from "./ShipVisualizer";
+import { ArrowRight, CircleAlert, Eye, EyeOff, Loader2 } from "lucide-react";
 import { api, type PublicUser } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,7 +61,7 @@ export function AuthScreen({
   }
 
   return (
-    <div className="pm-auth-shell relative min-h-dvh w-full overflow-x-hidden text-slate-950 dark:text-slate-50">
+    <div className="pm-auth-shell relative min-h-dvh w-full overflow-x-hidden text-foreground">
       <div
         className="pointer-events-none absolute inset-0"
         aria-hidden="true"
@@ -79,42 +73,25 @@ export function AuthScreen({
 
       <main className="pm-auth-main relative z-10 mx-auto flex min-h-dvh w-full max-w-6xl items-center px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
         <section
-          className="pm-auth-layout grid min-w-0 w-full overflow-hidden rounded-3xl border border-slate-900/10 bg-white/95 shadow-[0_24px_80px_rgba(25,45,50,0.12)] backdrop-blur-sm lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] dark:border-white/10 dark:bg-[#111d21]/95 dark:shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+          className="pm-auth-layout grid min-w-0 w-full overflow-hidden rounded-3xl border border-slate-900/10 bg-card shadow-[0_24px_80px_rgba(25,45,50,0.12)] backdrop-blur-sm lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] dark:border-white/10 dark:bg-[#111d21]/95 dark:shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
           aria-labelledby="auth-brand"
         >
-          <div className="pm-auth-brand relative min-w-0 overflow-hidden bg-[#163b42] px-6 py-6 text-white sm:px-10 sm:py-8 lg:flex lg:min-h-[36rem] lg:flex-col lg:justify-between lg:p-12">
-            <div
-              className="relative flex items-center gap-3 text-sm text-white/75"
-              aria-hidden="true"
-            >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10">
-                <Anchor className="h-4 w-4" aria-hidden="true" />
-              </span>
-            </div>
-
-            <div className="relative mt-7 lg:mt-0">
-              <h1
-                id="auth-brand"
-                className="flex min-w-0 flex-wrap items-end gap-x-2 gap-y-0 lg:block"
-              >
-                <span className="sr-only">{APP_NAME}</span>
-                <span
-                  aria-hidden="true"
-                  className="block whitespace-nowrap break-normal pb-2 text-[clamp(2.15rem,10vw,4.5rem)] font-semibold leading-none tracking-normal lg:pb-0 lg:text-[clamp(2.75rem,4vw,3.5rem)]"
-                >
-                  PortMasters
-                </span>
-                <span
-                  aria-hidden="true"
-                  className="block text-[clamp(8rem,33vw,15rem)] font-black leading-[1.18] tracking-normal text-[var(--brand-highlight)] lg:mt-2"
-                >
-                  2
-                </span>
-              </h1>
-              <p className="mt-5 text-base font-medium text-white/90 sm:text-lg lg:mt-8">
+          <div className="pm-auth-brand relative flex min-w-0 flex-col justify-center overflow-hidden px-6 py-5 text-white sm:p-8 lg:min-h-[29rem] lg:p-10">
+            <div className="relative z-10">
+              <p className="mb-2 text-sm font-semibold text-[#F7DBA6]">
                 Lords of the Silk Road
               </p>
+              <h1
+                id="auth-brand"
+                className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl"
+              >
+                {APP_NAME}
+              </h1>
             </div>
+            <ShipMark
+              level={3}
+              className="pm-auth-vessel relative z-10 mx-auto mt-2 h-auto w-52 max-w-full text-[#A9D1C4] lg:mt-8 lg:w-80"
+            />
           </div>
 
           <div className="pm-auth-form min-w-0 px-5 py-7 sm:px-10 sm:py-9 lg:flex lg:flex-col lg:justify-center lg:px-14 lg:py-12">

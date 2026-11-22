@@ -22,6 +22,7 @@ import {
   CONVOY_VENTURE_MIN_TARGET,
   CONVOY_VENTURE_PAYOUT_MULTIPLIER,
   TIDEWATCH_SURGE_THRESHOLD,
+  WORD_ON_THE_DOCKS_LEDGER_ENTRY,
   WORD_ON_THE_DOCKS_REWARD,
   WORD_ON_THE_DOCKS_THRESHOLD,
 } from "../lib/game/constants";
@@ -43,6 +44,9 @@ import {
 } from "../lib/game/convoy";
 import { computeBackingResolution } from "../lib/game/backing";
 import { computeHarborPulse } from "../lib/game/harborPulse";
+import { EXPANDED_RULES, type VoyageRules } from "../lib/game/expansion";
+import { buildForecasts, readVoyageRules } from "../lib/game/forecast";
+import { unlockedResources } from "../lib/game/pools";
 import type { GameState } from "../lib/game/types";
 import type { BarterUpdate } from "../lib/game/barter-ledger";
 import type { VoyageCompleteEvent } from "../lib/realtime";
@@ -236,8 +240,6 @@ export function attachRealtime(httpServer: HttpServer): Server {
         // The database cascade already removed persistent Loan rows.
         roomOutstandingLoans.delete(roomId);
         roomPulseTallies.delete(roomId);
-        roomDocksWinners.delete(roomId);
-        roomSurges.delete(roomId);
         concludedRooms.delete(roomId);
         roomMutedUsers.delete(roomId);
       } else {
@@ -257,6 +259,9 @@ export function attachRealtime(httpServer: HttpServer): Server {
   // The checkpoint records the expected round, phase, and readiness quorum.
   // Clients apply their own deterministic transition after release.
   type Checkpoint = {
+    voyageEpoch: number;
+    difficulty: string;
+    rules: VoyageRules;
     round: number;
     phase: string;
     readyUserIds: Set<string>;
@@ -299,11 +304,18 @@ export function attachRealtime(httpServer: HttpServer): Server {
         currentPhase: true,
         phaseReleased: true,
         phasePulse: true,
+        voyageEpoch: true,
+        rulesVersion: true,
+        forecastPlan: true,
+        difficulty: true,
       },
     });
     cp = roomCheckpoints.get(roomId);
     if (cp) return cp;
     cp = {
+      voyageEpoch: room?.voyageEpoch ?? 0,
+      difficulty: room?.difficulty ?? "fair_winds",
+      rules: readVoyageRules(room),
       round: room?.currentRound ?? 1,
       phase: room?.currentPhase ?? "0",
       readyUserIds: new Set(),
@@ -331,6 +343,8 @@ export function attachRealtime(httpServer: HttpServer): Server {
     const roster = Array.from(await activeRosterSet(roomId));
     return {
       roomId,
+      voyageEpoch: cp.voyageEpoch,
+      rules: cp.rules,
       round: cp.round,
       phase: cp.phase,
       advancing: cp.advancing,
@@ -359,7 +373,12 @@ export function attachRealtime(httpServer: HttpServer): Server {
     cp.releasing = true;
     const harborPulse =
       cp.phase === "5"
-        ? computeHarborPulse(roomPulseTallies.get(roomId)?.get(cp.round - 1))
+        ? computeHarborPulse(
+            roomPulseTallies.get(roomId)?.get(cp.round - 1),
+            cp.rules.version === EXPANDED_RULES
+              ? unlockedResources(cp.difficulty, cp.round - 1, cp.rules.version)
+              : undefined,
+          )
         : undefined;
     try {
       if (cp.phase === "barter") {
@@ -378,6 +397,8 @@ export function attachRealtime(httpServer: HttpServer): Server {
       cp.advancing = true;
       io.to(`room:${roomId}`).emit("phase:advance", {
         roomId,
+        voyageEpoch: cp.voyageEpoch,
+        rules: cp.rules,
         round: cp.round,
         phase: cp.phase,
         harborPulse,
@@ -1094,16 +1115,6 @@ export function attachRealtime(httpServer: HttpServer): Server {
     byRound.set(round, existing);
   }
 
-  // Word on the Docks
-  // First valid threshold report wins. There is one winner per room and voyage,
-  // cleared when the voyage restarts.
-  const roomDocksWinners = new Map<string, { userId: string; name: string }>();
-
-  // Tidewatch Alerts
-  // Tidewatch does not alter difficulty or voyage length. It reads reported
-  // room Reputation and triggers at most once per voyage.
-  const roomSurges = new Set<string>();
-
   function combinedReputation(roomId: string): number {
     const statuses = roomStatuses.get(roomId);
     if (!statuses) return 0;
@@ -1335,7 +1346,16 @@ export function attachRealtime(httpServer: HttpServer): Server {
       // Verify durable room membership.
       const member = await db.roomMember.findUnique({
         where: { userId_roomId: { userId: s.userId, roomId } },
-        select: { room: { select: { voyageResult: true } } },
+        select: {
+          room: {
+            select: {
+              voyageResult: true,
+              voyageEpoch: true,
+              tidewatchSurge: true,
+              docksWinnerId: true,
+            },
+          },
+        },
       });
       if (!member) {
         socket.emit("room:error", {
@@ -1372,6 +1392,11 @@ export function attachRealtime(httpServer: HttpServer): Server {
         });
       }
       emitRoomMembers(roomId);
+      const { voyageEpoch, tidewatchSurge, docksWinnerId } = member.room;
+      if (tidewatchSurge)
+        socket.emit("tidewatch:surge", { roomId, voyageEpoch });
+      if (docksWinnerId === s.userId)
+        socket.emit("docks:won", { roomId, voyageEpoch, winnerId: s.userId });
       // Hydrate status, readiness, barter, and aid state for every join.
       sendStatusBatchTo(roomId, socket.id);
       const cp = await getCheckpoint(roomId);
@@ -1450,7 +1475,12 @@ export function attachRealtime(httpServer: HttpServer): Server {
 
         const room = await db.room.findUnique({
           where: { id: roomId },
-          select: { started: true, voyageEpoch: true, voyageResult: true },
+          select: {
+            started: true,
+            voyageEpoch: true,
+            voyageResult: true,
+            tidewatchSurge: true,
+          },
         });
         if (
           !room ||
@@ -1477,16 +1507,29 @@ export function attachRealtime(httpServer: HttpServer): Server {
 
         // Check Tidewatch against the latest room total once per voyage.
         if (
-          !roomSurges.has(roomId) &&
+          room.started &&
+          !room.tidewatchSurge &&
           combinedReputation(roomId) >= TIDEWATCH_SURGE_THRESHOLD
         ) {
-          roomSurges.add(roomId);
-          io.to(`room:${roomId}`).emit("tidewatch:surge", { roomId });
-          io.to(`room:${roomId}`).emit("room:system", {
-            roomId,
-            content:
-              "🌊 Tidewatch Alert: the harbor takes notice of a bustling crew! One more cargo lot joins every captain's Port Merchant Exchange, for the rest of this voyage.",
+          const { count } = await db.room.updateMany({
+            where: {
+              id: roomId,
+              voyageEpoch: room.voyageEpoch,
+              tidewatchSurge: false,
+            },
+            data: { tidewatchSurge: true },
           });
+          if (count) {
+            io.to(`room:${roomId}`).emit("tidewatch:surge", {
+              roomId,
+              voyageEpoch: room.voyageEpoch,
+            });
+            io.to(`room:${roomId}`).emit("room:system", {
+              roomId,
+              content:
+                "🌊 Tidewatch Alert: the harbor takes notice of a bustling crew! One more cargo lot joins every captain's Port Merchant Exchange for the rest of this voyage.",
+            });
+          }
         }
 
         // Resolve open ventures whose deadline is behind the reported round.
@@ -1544,6 +1587,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
         roomId?: string;
         round?: number;
         phase?: string | number;
+        voyageEpoch?: number;
       }) => {
         const s = requireAuth();
         if (!s) return;
@@ -1553,6 +1597,8 @@ export function attachRealtime(httpServer: HttpServer): Server {
         // Phase 0 advances only through the host room:start event.
         if (cp.phase === "0") return;
         if (
+          (payload?.voyageEpoch !== undefined &&
+            payload.voyageEpoch !== cp.voyageEpoch) ||
           payload?.round !== cp.round ||
           String(payload?.phase) !== cp.phase
         ) {
@@ -1571,24 +1617,31 @@ export function attachRealtime(httpServer: HttpServer): Server {
 
     socket.on(
       "phase:unready",
-      async (payload: {
-        roomId?: string;
-        round?: number;
-        phase?: string | number;
-      }) => {
+      async (
+        payload: {
+          roomId?: string;
+          round?: number;
+          phase?: string | number;
+          voyageEpoch?: number;
+        },
+        ack?: (accepted: boolean) => void,
+      ) => {
         const s = requireAuth();
-        if (!s) return;
+        if (!s) return ack?.(false);
         const roomId = payload?.roomId ?? s.roomId;
-        if (!roomId || roomId !== s.roomId) return;
+        if (!roomId || roomId !== s.roomId) return ack?.(false);
         const cp = await getCheckpoint(roomId);
         if (
           cp.advancing ||
           cp.releasing ||
+          (payload?.voyageEpoch !== undefined &&
+            payload.voyageEpoch !== cp.voyageEpoch) ||
           cp.round !== payload?.round ||
           cp.phase !== String(payload?.phase)
         )
-          return;
+          return ack?.(false);
         cp.readyUserIds.delete(s.userId);
+        ack?.(true);
         await broadcastReadyState(roomId, cp);
       },
     );
@@ -1611,27 +1664,73 @@ export function attachRealtime(httpServer: HttpServer): Server {
     );
 
     // Accept the first completed orders threshold claim for each voyage.
-    socket.on("docks:claim", (payload: { roomId?: string }) => {
-      const s = requireAuth();
-      if (!s) return;
-      const roomId = payload?.roomId ?? s.roomId;
-      if (!roomId || roomId !== s.roomId) return;
-      if (roomDocksWinners.has(roomId)) return;
-      roomDocksWinners.set(roomId, {
-        userId: s.userId,
-        name: s.user.displayName,
-      });
-      io.to(`room:${roomId}`).emit("docks:won", {
-        roomId,
-        winnerId: s.userId,
-        winnerName: s.user.displayName,
-        reward: WORD_ON_THE_DOCKS_REWARD,
-      });
-      io.to(`room:${roomId}`).emit("room:system", {
-        roomId,
-        content: `📣 Word on the Docks: ${s.user.displayName} was first to complete ${WORD_ON_THE_DOCKS_THRESHOLD} trade orders this voyage, and pockets ${WORD_ON_THE_DOCKS_REWARD} Gold for it!`,
-      });
-    });
+    socket.on(
+      "docks:claim",
+      async (
+        payload: { roomId?: string; voyageEpoch?: number },
+        ack?: (accepted: boolean) => void,
+      ) => {
+        const s = requireAuth();
+        const { roomId, voyageEpoch } = payload ?? {};
+        if (!s || !roomId || roomId !== s.roomId || voyageEpoch === undefined)
+          return ack?.(false);
+        try {
+          const result = await db.$transaction(async (tx) => {
+            const room = await tx.room.findUnique({
+              where: { id: roomId, voyageEpoch, started: true },
+              select: { docksWinnerId: true },
+            });
+            if (!room) return null;
+            if (room.docksWinnerId)
+              return { winnerId: room.docksWinnerId, announced: false };
+            const saved = await tx.gameState.findUnique({
+              where: { userId_roomId: { userId: s.userId, roomId } },
+              select: { data: true },
+            });
+            const game = saved && JSON.parse(saved.data);
+            if (
+              game?.voyageEpoch !== voyageEpoch ||
+              !(game.totalOrdersCompleted >= WORD_ON_THE_DOCKS_THRESHOLD)
+            )
+              return null;
+            const previous = await tx.gameState.findFirst({
+              where: {
+                roomId,
+                data: { contains: WORD_ON_THE_DOCKS_LEDGER_ENTRY },
+              },
+              select: { userId: true },
+            });
+            const winnerId = previous?.userId ?? s.userId;
+            await tx.room.update({
+              where: { id: roomId },
+              data: { docksWinnerId: winnerId },
+            });
+            return { winnerId, announced: !previous };
+          });
+          if (!result) return ack?.(false);
+          const event = {
+            roomId,
+            voyageEpoch,
+            winnerId: result.winnerId,
+            winnerName: s.user.displayName,
+            reward: WORD_ON_THE_DOCKS_REWARD,
+          };
+          if (result.announced) {
+            io.to(`room:${roomId}`).emit("docks:won", event);
+            io.to(`room:${roomId}`).emit("room:system", {
+              roomId,
+              content: `📣 Word on the Docks: ${s.user.displayName} was first to complete ${WORD_ON_THE_DOCKS_THRESHOLD} trade orders this voyage and earns ${WORD_ON_THE_DOCKS_REWARD} Gold!`,
+            });
+          } else if (result.winnerId === s.userId) {
+            socket.emit("docks:won", event);
+          }
+          ack?.(true);
+        } catch (error) {
+          console.error("Could not settle the completed orders race", error);
+          ack?.(false);
+        }
+      },
+    );
 
     // Return a fresh snapshot of open ventures.
     socket.on("venture:state:request", async (payload: { roomId?: string }) => {
@@ -2339,7 +2438,12 @@ export function attachRealtime(httpServer: HttpServer): Server {
 
       const room = await db.room.findUnique({
         where: { id: roomId },
-        select: { hostId: true, started: true },
+        select: {
+          hostId: true,
+          started: true,
+          voyageEpoch: true,
+          difficulty: true,
+        },
       });
       if (!room) return;
       if (room.started) {
@@ -2365,8 +2469,15 @@ export function attachRealtime(httpServer: HttpServer): Server {
         return;
       }
 
+      if (startingRooms.has(roomId)) return;
       startingRooms.add(roomId);
       try {
+        const forecasts = buildForecasts(
+          roomId,
+          room.voyageEpoch,
+          room.difficulty,
+        );
+        const rules = { version: EXPANDED_RULES, forecasts };
         await db.room.update({
           where: { id: roomId },
           data: {
@@ -2376,14 +2487,23 @@ export function attachRealtime(httpServer: HttpServer): Server {
             phaseReleased: false,
             phasePulse: "{}",
             voyageResult: "",
+            rulesVersion: rules.version,
+            forecastPlan: JSON.stringify(forecasts),
+            tidewatchSurge: false,
+            docksWinnerId: null,
           },
         });
         const cp = await getCheckpoint(roomId);
+        cp.rules = rules;
         cp.round = 1;
         cp.phase = "5";
         cp.readyUserIds.clear();
         cp.advancing = false;
-        io.to(`room:${roomId}`).emit("room:started", { roomId });
+        io.to(`room:${roomId}`).emit("room:started", {
+          roomId,
+          voyageEpoch: room.voyageEpoch,
+          rules,
+        });
         await broadcastReadyState(roomId, cp);
         // Record the voyage start in the harbor activity feed.
         void recordActivity({
@@ -2439,6 +2559,10 @@ export function attachRealtime(httpServer: HttpServer): Server {
               phasePulse: "{}",
               barterLedger: "{}",
               voyageResult: null,
+              rulesVersion: EXPANDED_RULES,
+              forecastPlan: "[]",
+              tidewatchSurge: false,
+              docksWinnerId: null,
               voyageEpoch: { increment: 1 },
             },
           }),
@@ -2452,10 +2576,6 @@ export function attachRealtime(httpServer: HttpServer): Server {
         clearLoans(roomId);
         // Clear Harbor Pulse tallies before round numbering restarts.
         roomPulseTallies.delete(roomId);
-        // Start a new completed orders race.
-        roomDocksWinners.delete(roomId);
-        // Reset the Tidewatch surge for the new voyage.
-        roomSurges.delete(roomId);
         // Mutes last only for the current voyage.
         if (roomMutedUsers.delete(roomId)) emitRoomMembers(roomId);
 
@@ -2463,6 +2583,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
           roomId,
           voyageEpoch: restarted.voyageEpoch,
           difficulty: restarted.difficulty,
+          rules: readVoyageRules(restarted),
         });
         const cp = await getCheckpoint(roomId);
         await broadcastReadyState(roomId, cp);
