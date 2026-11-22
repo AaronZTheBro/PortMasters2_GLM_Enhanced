@@ -114,38 +114,32 @@ export const PORTS_TIER2 = ["Srivijaya Port", "Dashi Port"] as const;
 
 export const RECIPES: Record<
   string,
-  { materials: Record<string, number>; value: number; worker_type: string }
+  { materials: Record<string, number>; worker_type: string }
 > = {
-  "Linen Clothes": { materials: { Hemp: 2 }, value: 15, worker_type: "weaver" },
+  "Linen Clothes": { materials: { Hemp: 2 }, worker_type: "weaver" },
   "Cotton Clothes": {
     materials: { Hemp: 2, Silk: 1 },
-    value: 35,
     worker_type: "weaver",
   },
-  Brocade: { materials: { Silk: 3 }, value: 60, worker_type: "master" },
+  Brocade: { materials: { Silk: 3 }, worker_type: "master" },
   Sachet: {
     materials: { Silk: 1, Tea: 2 },
-    value: 80,
     worker_type: "sachet_maker",
   },
   "Bronze Mirror": {
     materials: { "Copper Ore": 3 },
-    value: 45,
     worker_type: "coppersmith",
   },
   "Celadon Ware": {
     materials: { "Porcelain Clay": 3 },
-    value: 65,
     worker_type: "potter",
   },
   "Foreign Balm": {
     materials: { Spices: 2, Silk: 1 },
-    value: 85,
     worker_type: "perfumer",
   },
   "Pearl String": {
     materials: { Pearls: 2, Silk: 1 },
-    value: 105,
     worker_type: "jeweler",
   },
 };
@@ -309,49 +303,49 @@ export const BOONS_TIER0: Boon[] = [
     id: "silk_wind",
     name: "Silk Winds",
     icon: "🌬️",
-    desc: "Transport cost for Silk & Silk products is halved this round.",
+    desc: "Halves the share of freight for raw Silk and goods made with Silk this round.",
     modifiers: { transport_silk_discount: 0.5 },
   },
   {
     id: "favorable_tides",
     name: "Favorable Tides",
     icon: "🌊",
-    desc: "Base transport cost reduced by 4 Gold this round.",
+    desc: "Reduces freight by up to 4 Gold before module discounts this round. A 5 Gold minimum applies at this step.",
     modifiers: { transport_flat_discount: 4 },
   },
   {
     id: "merchant_charm",
     name: "Merchant's Charm",
     icon: "✨",
-    desc: "15% discount on all port purchases this round.",
+    desc: "Reduces each port cargo lot price by 15% before module discounts this round.",
     modifiers: { purchase_discount: 0.15 },
   },
   {
     id: "artisan_inspiration",
     name: "Artisan's Inspiration",
     icon: "🔨",
-    desc: "All workers produce one extra item this round.",
+    desc: "Each assigned artisan produces one extra item at settlement this round.",
     modifiers: { worker_bonus_production: 1 },
   },
   {
     id: "emergency_loan",
     name: "Emergency Loan",
     icon: "💰",
-    desc: "Gain 40 Gold immediately. No strings attached.",
+    desc: "Gain 40 Gold immediately. No repayment is required.",
     modifiers: { instant_gold: 40 },
   },
   {
     id: "tax_shelter",
     name: "Tax Shelter",
     icon: "📜",
-    desc: "Income tax rate reduced to 5% this round.",
+    desc: "Sets the base Income Tax rate to 5% this round before module adjustments.",
     modifiers: { income_tax_override: 0.05 },
   },
   {
     id: "hemp_monopoly",
     name: "Hemp Monopoly",
     icon: "🧶",
-    desc: "Hemp purchase prices reduced by 2 Gold per unit.",
+    desc: "Reduces port cargo lot prices by 2 Gold per unit of Hemp this round, to a minimum of zero.",
     modifiers: { hemp_price_reduction: 2 },
   },
   {
@@ -369,21 +363,21 @@ export const BOONS_TIER1: Boon[] = [
     id: "farsight",
     name: "Farsight",
     icon: "🔮",
-    desc: "Reveals one Broker's rumor for free this round.",
+    desc: "Reveals one free rumor from the Broker's Rumor Board this round without risking a leak.",
     modifiers: { free_intel: 1 },
   },
   {
     id: "kiln_and_forge_guild",
     name: "Kiln and Forge Guild",
     icon: "🏮",
-    desc: "Celadon Ware & Bronze Mirror orders pay 15% more this round.",
+    desc: "Adds 15% to the share of an order reward for Celadon Ware and Bronze Mirror this round, after VAT. Imperial Mandates keep their fixed reward.",
     modifiers: { charter_order_bonus: 0.15 },
   },
   {
     id: "frontier_tariff_relief",
     name: "Frontier Tariff Relief",
     icon: "🧾",
-    desc: "VAT on finished goods is halved this round.",
+    desc: "Halves VAT on finished good sales this round.",
     modifiers: { vat_discount: 0.5 },
   },
 ];
@@ -393,21 +387,21 @@ export const BOONS_TIER2: Boon[] = [
     id: "exotic_treasures",
     name: "Exotic Treasures",
     icon: "💎",
-    desc: "Foreign Balm & Pearl String orders pay 15% more this round.",
+    desc: "Adds 15% to the share of an order reward for Foreign Balm and Pearl String this round, after VAT. Imperial Mandates keep their fixed reward.",
     modifiers: { exotic_order_bonus: 0.15 },
   },
   {
     id: "deep_sea_escort_pact",
     name: "Deep Sea Escort Pact",
     icon: "🛡️",
-    desc: "Escort cost halved; pirate risk halved this round.",
+    desc: "Halves the escort fee and raid chance this round, including any added risk from a Broker leak.",
     modifiers: { escort_discount: 0.5, pirate_risk_discount: 0.5 },
   },
   {
     id: "merchants_converge",
     name: "Merchants Converge",
     icon: "🛍️",
-    desc: "One extra trade order appears this round's board.",
+    desc: "Adds one trade order to your board this round.",
     modifiers: { extra_order: 1 },
   },
 ];
@@ -421,49 +415,49 @@ export const MODULES_TIER0: Module[] = [
     id: "smugglers_hold",
     name: "Smuggler's Hold",
     icon: "🏴‍☠️",
-    desc: "Purchases cost 15% less. Income Tax costs 20% more.",
+    desc: "Port cargo lots cost 15% less after other discounts. The calculated Income Tax increases by 20% before any Tax Evasion Ledger reduction.",
   },
   {
     id: "bulk_hauler",
     name: "Bulk Hauler Rigging",
     icon: "🏗️",
-    desc: "Transport costs 1 Gold less per item. Ship upgrades cost 15 Gold more.",
+    desc: "Freight costs 1 Gold less per cargo unit, to a minimum of zero. Ship upgrades cost 15 Gold more.",
   },
   {
     id: "artisans_workshop",
     name: "Artisan's Workshop",
     icon: "🛠️",
-    desc: "Workers produce one extra item. Wages cost 20% more.",
+    desc: "Each assigned artisan produces one extra item at settlement. Wages cost 20% more after any apprenticeship discount.",
   },
   {
     id: "tax_evasion",
     name: "Tax Evasion Ledger",
     icon: "📕",
-    desc: "Income Tax & VAT halved. 15% chance of an audit after each order. The audit takes up to 20 Gold from available funds.",
+    desc: "Halves Income Tax and VAT after other adjustments. Each completed order has a 15% audit chance. An audit takes up to 20 Gold from available funds.",
   },
   {
     id: "silk_monopoly",
     name: "Silk Road Monopoly",
     icon: "👘",
-    desc: "Raw Silk ships free. Orders for products made with Silk pay 20% more.",
+    desc: "Raw Silk ships free. Adds 20% to the reward share for goods made with Silk after VAT. Imperial Mandates keep their fixed reward.",
   },
   {
     id: "brokers_network",
     name: "Broker's Network",
     icon: "🕵️",
-    desc: "A purchase costs 2 Gold and reveals up to 2 rumors.",
+    desc: "A paid Broker purchase costs 2 Gold and reveals up to two rumors. Ocean Interpreter can add one more.",
   },
   {
     id: "salvage_crane",
     name: "Salvage Crane",
     icon: "♻️",
-    desc: "30% chance to refund transport cost on order complete.",
+    desc: "Each completed order with a freight charge has a 30% chance to refund the full charge.",
   },
   {
     id: "overdrive_engine",
     name: "Overdrive Engine",
     icon: "⚙️",
-    desc: "Transport costs 5 Gold less. Maintenance costs 10 Gold more.",
+    desc: "Freight costs up to 5 Gold less. Ship maintenance costs 10 Gold more each round.",
   },
 ];
 
@@ -473,19 +467,19 @@ export const MODULES_TIER1: Module[] = [
     id: "bureau_token",
     name: "Maritime Bureau Token",
     icon: "🎫",
-    desc: "Charter goods (Porcelain Clay, Copper Ore and their products) pay 10% more on orders.",
+    desc: "Adds 10% to the reward share for Porcelain Clay, Copper Ore, Celadon Ware, and Bronze Mirror after VAT. Imperial Mandates keep their fixed reward.",
   },
   {
     id: "kiln_cellar",
     name: "Kiln Cellar",
     icon: "🔥",
-    desc: "Porcelain Clay and Copper Ore cost 2 Gold less per unit.",
+    desc: "Port cargo lots cost 2 Gold less per unit of Porcelain Clay or Copper Ore, to a minimum of zero.",
   },
   {
     id: "ocean_relay",
     name: "Ocean Interpreter",
     icon: "📡",
-    desc: "Broker's Whisper reveals 1 extra rumor at no extra cost.",
+    desc: "Each paid Broker purchase reveals one extra rumor when available at no extra cost.",
   },
 ];
 
@@ -494,19 +488,19 @@ export const MODULES_TIER2: Module[] = [
     id: "foreign_quarter_pass",
     name: "Foreign Quarter Pass",
     icon: "🪪",
-    desc: "Spices and Pearls cost 3 Gold less per unit.",
+    desc: "Port cargo lots cost 3 Gold less per unit of Spices or Pearls, to a minimum of zero.",
   },
   {
     id: "persian_dome_compass",
     name: "Persian Dome Compass",
     icon: "🧿",
-    desc: "Pirate raid risk reduced by 30%.",
+    desc: "Reduces the final pirate raid chance by 30% after any Broker leak and Deep Sea Escort Pact.",
   },
   {
     id: "fleet_of_treasures",
     name: "Fleet of Treasures",
     icon: "⛵",
-    desc: "Freight on Foreign Balm & Pearl String orders is 3 Gold cheaper per unit.",
+    desc: "Reduces freight by 3 Gold for each unit of Foreign Balm or Pearl String after other freight reductions, to a minimum of zero.",
   },
 ];
 
@@ -613,7 +607,7 @@ export function tutorialSteps(
       content: `<p>${APP_NAME} puts you on the ancient Silk Road for a voyage of ${cfg.rounds} rounds with limited Gold and a harbor full of rival captains.</p>
 <p>These waters are <strong>${cfg.name}</strong>: ${cfg.tagline}</p>
 <p>The rules are easy to pick up, but money is tight early on and a string of bad calls compounds quickly. This guide covers the full round flow and the decisions that most often sink a first voyage.</p>
-<p style="color:var(--muted-foreground);font-size:13px">Two minutes to read. Saves a lot of frustrated restarts.</p>`,
+<p style="color:var(--muted-foreground);font-size:13px">Use the full guide for reference during the voyage.</p>`,
     },
     {
       title: "🏆 What you're playing for",
@@ -624,7 +618,7 @@ export function tutorialSteps(
     {
       title: "🔄 How each round works",
       content: `<p>Each of the ${cfg.rounds} rounds follows the same synchronized sequence:</p>
-<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr));gap:8px;margin:12px 0">
   <div style="background:#F3E8FF;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #8B5CF6"><strong>Draft</strong><br><span style="font-size:12px;color:#444">Choose a Boon for this round</span></div>
   <div style="background:#E8F5E9;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #4CAF50"><strong>1️⃣ Buy</strong><br><span style="font-size:12px;color:#444">Stock up at port markets</span></div>
   <div style="background:#FFF8E1;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #FFA000"><strong>🤝 Barter</strong><br><span style="font-size:12px;color:#444">Swap goods with other captains</span></div>
@@ -646,7 +640,7 @@ export function tutorialSteps(
     {
       title: "🤝 Bartering",
       content: `<p>Right after buying, there's a short window where captains can trade directly with each other instead of through the market. Post an offer, like Hemp you don't need for Silk you do, and any other captain in the harbor can take it with one click.</p>
-<p>It is the easiest way to recover from a bad draw. All Tea and no Silk, with a Sachet order already on the board? Someone else in the harbor has probably drawn the opposite problem.</p>
+<p>It is the easiest way to recover from a bad draw. All Tea and no Silk, and expecting a Sachet buyer? Someone else in the harbor has probably drawn the opposite problem.</p>
 <div style="background:#FFF8DC;color:#17212a;border:1px solid #FFA000;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
   A few ground rules: you can't offer an item for itself, both amounts have to be whole numbers of at least one, and you can never offer more than you currently have. The moment you post an offer, that amount is set aside until someone takes it or you cancel it.
 </div>
@@ -659,7 +653,7 @@ export function tutorialSteps(
 <div style="background:#E3F2FD;color:#17212a;border:1px solid #2196F3;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
   📌 <strong>Finished goods</strong> available during this voyage include ${availableProducts.join(", ")}. They usually command larger rewards, but their recipes consume materials and production completes after the order phase.
 </div>
-${mandates.length ? `<p style="font-size:13px;margin-top:10px">📜 On round${mandates.length === 1 ? "" : "s"} ${mandates.join(", ")} the Emperor commissions a <strong>mandate</strong>: one large order at a fixed reward, and the only order exempt from VAT. Plan your inventory and bartering around it.</p>` : ""}`,
+${mandates.length ? `<p style="font-size:13px;margin-top:10px">📜 On round${mandates.length === 1 ? "" : "s"} ${mandates.join(", ")} the Emperor commissions a <strong>mandate</strong>: one large order at a fixed reward, with no VAT or reward bonuses. Plan your inventory and bartering around it.</p>` : ""}`,
     },
     {
       title: "⚠️ The artisan trap",
@@ -703,7 +697,7 @@ ${cfg.brokerCorruption ? `<p>In these waters a broker can be corrupt. The rumor 
   <li>Start with raw material orders. Fast money, no complications.</li>
   <li>Keep a reserve above the exact wages and maintenance shown in Status and Dues.</li>
   <li>Hire artisans only when you can cover their wages for more than the current round.</li>
-  <li>Phase 4 ship upgrades compound quickly. Do not skip them.</li>
+  <li>Ship upgrades add a module slot and reduce base freight. Keep enough Gold for later bills.</li>
   <li>Caught short by pirates or a bad round? Ask the harbor for a loan before you assume the voyage is over.</li>
   <li>An eligible finished voyage banks final Reputation as Renown XP, win or lose. Check your Captain's Legacy from the Lobby.</li>
   <li><kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">Ctrl+S</kbd> saves, <kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">Ctrl/Cmd+K</kbd> opens Quick Actions, and <kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">F1</kbd> opens the full guide.</li>

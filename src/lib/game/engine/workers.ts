@@ -8,33 +8,26 @@ import {
   type WorkerTypeId,
 } from "../constants";
 import type { GameState, Worker } from "../types";
-import { hasModule } from "./core";
+import { canProduce } from "../pools";
+import { hasModule, maintenanceSurcharge } from "./core";
 import { getHireCost, workerWagesFor } from "./pricing";
 
 export function hireWorker(state: GameState, type: string, logs: string[]) {
+  const def = workerType(type);
+  if (!def) return;
+  const list = state.workers[def.id];
   const wage = getHireCost(state, type);
   if (state.money < wage) {
     logs.push("❌ Insufficient funds to hire workers!");
     return;
   }
-  const names: Record<string, string> = {
-    weaver: "Weaver",
-    master: "Master Weaver",
-    sachet_maker: "Sachet Maker",
-  };
-  const list = state.workers[type as WorkerTypeId];
-  if (!list) return;
-  const def = workerType(type);
   list.push({
     task: null,
-    progress: 0,
     producedCount: 0,
     isSkilled: false,
     hiredRound: state.currentRound,
   });
-  logs.push(
-    `${def?.icon ?? "🧑"} Hired a ${def?.label ?? names[type]}! Due this round: ${wage} Gold`,
-  );
+  logs.push(`${def.icon} Hired a ${def.label}! Due this round: ${wage} Gold`);
 }
 
 export function fireWorker(
@@ -65,7 +58,7 @@ export function assignTask(
   logs: string[],
 ) {
   const list = state.workers[type as WorkerTypeId];
-  if (!list) return;
+  if (!list || !canProduce(type, task)) return;
   const recipe = RECIPES[task];
   for (const worker of list) {
     if (worker.task === null) {
@@ -89,7 +82,6 @@ export function assignTask(
       for (const [m, a] of Object.entries(recipe.materials))
         state.inventory[m] -= a;
       worker.task = task;
-      worker.progress = 0;
       const matTxt = Object.entries(recipe.materials)
         .map(([m, a]) => `${ICONS[m]}${m}×${a}`)
         .join(" + ");
@@ -130,7 +122,6 @@ export function processProduction(state: GameState, logs: string[]) {
           );
         }
         w.task = null;
-        w.progress = 0;
       }
     }
   }
@@ -170,7 +161,7 @@ export function payMaintenance(
   state: GameState,
   logs: string[],
 ): true | "bankruptcy" {
-  const cost = state.fixedCost + state.maintenancePenalty;
+  const cost = state.fixedCost + maintenanceSurcharge(state);
   if (state.money >= cost) {
     state.money -= cost;
     state.maintenanceCosts += cost;

@@ -7,9 +7,6 @@
 
 import {
   APP_NAME,
-  COMMODITIES,
-  PRODUCT_PRICES,
-  RECIPES,
   WORD_ON_THE_DOCKS_THRESHOLD,
   WORD_ON_THE_DOCKS_REWARD,
   TIDEWATCH_SURGE_THRESHOLD,
@@ -23,6 +20,7 @@ import {
   type DifficultyConfig,
 } from "./difficulty";
 import {
+  canProduce,
   unlockedProducts,
   unlockedResources,
   unlockedWorkerTypes,
@@ -76,22 +74,9 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
   const resources = unlockedResources(difficulty, cfg.rounds);
   const products = unlockedProducts(difficulty, cfg.rounds);
   const workers = unlockedWorkerTypes(difficulty, cfg.rounds);
-  const resourceCopy = resources
-    .map((resource) => {
-      const [minimum, maximum] = COMMODITIES[resource].basePrice;
-      return `${resource} (${minimum} to ${maximum} Gold)`;
-    })
-    .join(", ");
-  const productCopy = products
-    .map((product) => {
-      const [minimum, maximum] = PRODUCT_PRICES[product];
-      return `${product} (${minimum} to ${maximum} Gold)`;
-    })
-    .join(", ");
   const workerCopy = workers.map((worker) => {
-    const output = Object.entries(RECIPES)
-      .filter(([, recipe]) => recipe.worker_type === worker.id)
-      .map(([product]) => product)
+    const output = products
+      .filter((product) => canProduce(worker.id, product))
       .join(" or ");
     return `${worker.label} (${worker.wage} Gold per round): makes ${output}`;
   });
@@ -116,7 +101,7 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
         intro: `Sail ${cfg.rounds} rounds, trade profitably, and finish with the strongest Reputation.`,
         callout: {
           tone: "warning",
-          text: "The captain with the highest Reputation among everyone who reaches the endgame is crowned Sea Master.",
+          text: "The eligible solvent captain with the highest Reputation is crowned Sea Master.",
         },
       },
       {
@@ -126,12 +111,12 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
           "Every round follows the same synchronized sequence. The room advances after every active captain is ready.",
         bullets: [
           "Draft a Boon for one round",
-          "Phase 1: buy resources and optionally purchase Broker intel",
+          "Phase 1 buys cargo and reveals rumors from the Broker's Rumor Board",
           "Barter: exchange goods or Gold with other captains",
           "Artisan Management: hire workers and assign production",
           "Phase 2: complete trade orders",
           "Phase 3: finish production, resolve pirates, then pay wages and maintenance",
-          "Phase 4: upgrade the ship and manage modules",
+          "Phase 4 opens the Shipyard. Income Tax is assessed when you end the round.",
         ],
       },
     ],
@@ -150,8 +135,8 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
         intro:
           "Raw materials are bought at ports and either sold directly or assigned to artisans. Production lands at settlement, after that round's order phase.",
         bullets: [
-          `Raw materials available during this voyage: ${resourceCopy}`,
-          `Finished goods available during this voyage: ${productCopy}`,
+          `Raw materials available during this voyage: ${resources.join(", ")}`,
+          `Finished goods available during this voyage: ${products.join(", ")}`,
         ],
       },
       {
@@ -162,15 +147,15 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
         bullets: workerCopy,
         callout: {
           tone: "warning",
-          text: "Hire only as needed. Wages are settled at Phase 3, not on hire, so a hire you can't pay for shows up as a bill later, not a deduction now.",
+          text: "Hiring adds a wage to your Phase 3 bill. Dismissing an artisan immediately costs one base wage.",
         },
       },
       {
         icon: "🧾",
         title: "Tax System",
         bullets: [
-          "VAT: 5% of finished good profit margin",
-          "Income Tax: 10% of round net profit before boon and module adjustments",
+          "VAT is 5% of the positive margin per finished good sold, rounded down. The margin uses average recipe material prices and the recipe's base wage. Raw goods and Imperial Mandates are exempt.",
+          "Base Income Tax is 10% of positive round trading profit, rounded down, after deducting market purchases, freight, audits, wages, and maintenance. It is collected after the Shipyard.",
         ],
       },
       {
@@ -186,17 +171,17 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
         icon: "🔮",
         title: "Broker's Whisper",
         intro:
-          "Open the rumor board during buying. The board shows the current price and how many unique tips are left.",
+          "Open the Broker's Rumor Board during buying. It shows how many rumors the current price buys.",
         bullets: [
-          "Revealed intel guarantees matching orders will appear",
-          "The usual price is 5 Gold for one rumor. Broker’s Network charges 2 Gold for up to two, and Ocean Interpreter adds one when available.",
-          "Farsight costs no Gold and draws from the same pool.",
+          "Each revealed rumor guarantees a matching order at the named port in Phase 2.",
+          "The usual price is 5 Gold for one rumor. Broker's Network charges 2 Gold for up to two, and Ocean Interpreter adds one when available.",
+          "Farsight costs no Gold and draws from the same pool. Modules only add rumors to paid purchases.",
         ],
         ...(cfg.brokerCorruption
           ? {
               callout: {
                 tone: "danger" as CalloutTone,
-                text: "Each paid purchase has a 30% chance to leak your position until one leak occurs. It still delivers every rumor. The free Farsight tip never causes a leak.",
+                text: `Each paid purchase has a ${Math.round(cfg.brokerCorruptionChance * 100)}% chance to add ${Math.round(cfg.brokerCorruptionRisk * 100)} percentage points to base raid risk. The leak happens at most once per round, and you still receive every rumor.`,
               },
             }
           : {}),
@@ -252,7 +237,7 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
           "Any captain with enough Gold can lend it to you on the spot; it's in your hands immediately",
           "Repay it any time before the voyage's last round ends, or it's taken from your funds automatically and handed to your lender",
           "Still short when the voyage finishes? That unpaid loan is what bankrupts you, not the round it was borrowed in",
-          "Lending Gold raises your own reputation, scaled to how much you lent",
+          "Lending Gold raises your own Reputation, scaled to how much you lent",
         ],
       },
       {
@@ -300,7 +285,7 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
       )} the Emperor commissions one large order at a fixed reward.`,
       bullets: [
         "A mandate has a fixed reward with no VAT or reward bonuses. Freight discounts still apply.",
-        "Every captain in the harbor is dealt the same mandate, so it is a race",
+        "Every captain gets a personal copy of the same mandate. Completing yours leaves the other captains' copies available.",
       ],
     });
   }
@@ -318,7 +303,7 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
     {
       icon: "🌊",
       title: "Tidewatch Alerts",
-      intro: `Once everyone in the harbor's own Reputation adds up past ${TIDEWATCH_SURGE_THRESHOLD}, the harbor takes notice of a bustling crew.`,
+      intro: `Once everyone in the harbor's own Reputation reaches ${TIDEWATCH_SURGE_THRESHOLD}, the harbor takes notice of a bustling crew.`,
       bullets: [
         "From the next Port Merchant Exchange onward, every captain's board gets one extra cargo lot, for the rest of the voyage",
         "This never changes your voyage length or which tier's goods you see, only how busy the market gets",
@@ -347,8 +332,8 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
         title: "Ship Modules",
         intro: "Phase 4: Upgrade your ship to unlock Module Slots.",
         bullets: [
-          "Draft powerful modules to create unique synergies",
-          "Swap modules to adapt to your current run!",
+          "A module stays equipped for the voyage until you replace it. Each upgrade opens one slot, up to three.",
+          "You can reroll the remaining draft once per round for free. Boon rerolls cost 10 Gold once per round.",
         ],
       },
       {
@@ -359,7 +344,7 @@ export function guideTabs(difficulty: Difficulty): GuideTab[] {
         bullets: [
           "Renown is permanent: it survives a restart and carries into every future voyage, in any harbor, unlike Gold, cargo, and ship level",
           "Each Renown level grants a small Gold bonus at the start of your next fresh voyage",
-          "Whoever ends a voyage with the highest Reputation among everyone who reached the endgame screen is crowned Sea Master",
+          "A captain who cannot repay a loan at the end of the voyage is bankrupt and cannot win the Sea Master crown",
           "Check your current Renown level, title, and Sea Master crowns any time from the Lobby",
         ],
         callout: {
@@ -445,9 +430,9 @@ export function tipsGroups(difficulty: Difficulty): TipsGroup[] {
       icon: "🔮",
       title: "Broker's Whisper Strategy",
       items: [
-        "Buy rumors early if you have spare gold",
-        "Hoard revealed items to guarantee Phase 2 profits",
-        "Balance intel purchases with other investments",
+        "Buy rumors early if you have spare Gold",
+        "Use revealed demand to plan purchases and production. Check freight and VAT before filling the order.",
+        "Balance rumor purchases with other expenses",
       ],
     },
     {
@@ -457,7 +442,7 @@ export function tipsGroups(difficulty: Difficulty): TipsGroup[] {
         "Reserve funds for maintenance + wages first",
         "Select goods with strong value for money",
         `Goods that can open during this voyage: ${resources.join(", ")}`,
-        "Prioritize port specialties + revealed intel",
+        "Prioritize port specialties and goods named in rumors",
       ],
     },
     {
@@ -475,7 +460,7 @@ export function tipsGroups(difficulty: Difficulty): TipsGroup[] {
       items: [
         "Prioritize highest profit orders",
         "Consider freight impact on margins",
-        "Finished orders yield high profit but incur VAT",
+        "Finished good orders can have larger rewards. Compare the payout after freight and VAT.",
       ],
     },
     {
@@ -501,7 +486,7 @@ export function tipsGroups(difficulty: Difficulty): TipsGroup[] {
       title: "Borrowing and Lending",
       items: [
         `Repay a loan as soon as you can afford it, instead of waiting for it to be deducted automatically at Round ${cfg.rounds}`,
-        "Lending Gold raises your own reputation, so helping a captain who can clearly repay you is rarely a bad trade",
+        "Lending Gold raises your own Reputation, so helping a captain who can clearly repay you is rarely a bad trade",
         "Watch how much you've lent out across the voyage; it's still your Gold until it's actually repaid",
       ],
     },
@@ -509,7 +494,7 @@ export function tipsGroups(difficulty: Difficulty): TipsGroup[] {
       icon: "🛡️",
       title: "Backing Strategy",
       items: [
-        "Back a loan you'd have happily lent Gold on yourself; you're taking on the same risk without earning the lender's own full reputation rate",
+        "Back a loan you'd have happily lent Gold on yourself; you're taking on the same risk and earn Reputation if the loan is fully repaid",
         "Only pledge what you can afford to lose outright, the same rule as lending directly",
         "A loan to a captain who's clearly about to turn a profit is a safer backing bet than one taken late in the voyage with little runway left to repay it",
       ],

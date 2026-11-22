@@ -16,7 +16,6 @@ import {
   RESOURCES_TIER0,
   RESOURCES_TIER1,
   RESOURCES_TIER2,
-  RESOURCE_WEIGHTS,
   WORKER_TYPES,
   type Boon,
   type Module,
@@ -82,27 +81,14 @@ export function unlockedWorkerTypes(
   return WORKER_TYPES.filter((w) => w.tier <= tier);
 }
 
-// Normalizes unlocked resource weights into draw probabilities.
-export function unlockedResourceDraw(
-  difficulty: unknown,
-  roundNo: number,
-): { items: string[]; probs: number[] } {
-  const items = unlockedResources(difficulty, roundNo);
-  const weights = items.map((i) => RESOURCE_WEIGHTS[i] ?? 0);
-  const total = weights.reduce((sum, w) => sum + w, 0) || 1;
-  return { items, probs: weights.map((w) => w / total) };
-}
-
-// Identifies goods introduced by a charter.
-export function isCharterGood(item: string): boolean {
-  return (
-    (RESOURCES_TIER1 as readonly string[]).includes(item) ||
-    (PRODUCTS_TIER1 as readonly string[]).includes(item) ||
-    (RESOURCES_TIER2 as readonly string[]).includes(item) ||
-    (PRODUCTS_TIER2 as readonly string[]).includes(item)
-  );
-}
-
 export function isSilkProduct(item: string): boolean {
   return (RECIPES[item]?.materials.Silk ?? 0) > 0;
+}
+
+export function canProduce(workerId: string, product: string): boolean {
+  const recipeWorker = RECIPES[product]?.worker_type;
+  return (
+    recipeWorker === workerId ||
+    (workerId === "master" && recipeWorker === "weaver")
+  );
 }

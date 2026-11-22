@@ -10,7 +10,7 @@ import { attachRealtime } from "./src/server/realtime";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 
-// HTTP, API, and realtime traffic always share port 2154.
+// HTTP, API, and realtime traffic share the configured port.
 const PORT = getApplicationPort();
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 const dev = process.env.NODE_ENV !== "production";
@@ -90,9 +90,13 @@ app
       void shutdown(1);
     });
 
-    httpServer.listen(PORT, () => {
-      console.log(`> PortMasters 2 ready on http://localhost:${PORT}`);
-    });
+    httpServer.listen(
+      PORT,
+      process.env.RENDER_SERVICE_ID ? "0.0.0.0" : undefined,
+      () => {
+        console.log(`> PortMasters 2 ready on http://localhost:${PORT}`);
+      },
+    );
   })
   .catch(async (error) => {
     console.error("PortMasters 2 preparation failed:", error);

@@ -443,6 +443,7 @@ export function GameRoom({
         .getLegacy()
         .then(({ legacy }) => setMyLegacy(legacy))
         .catch(() => {});
+      if (data.replayed) return;
       const mine = data.standings.find((s) => s.userId === me.id);
       // Sound design: a crown fanfare plays first if the captain won Sea
       // Master, then the longer voyage complete chord sequence. A captain

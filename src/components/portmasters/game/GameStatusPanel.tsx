@@ -8,7 +8,11 @@ import {
   CONVOY_VENTURE_MIN_ROUNDS_AHEAD,
   CONVOY_VENTURE_MIN_TARGET,
 } from "@/lib/game/constants";
-import { getWorkerWage, workerWagesFor } from "@/lib/game/engine";
+import {
+  getWorkerWage,
+  maintenanceSurcharge,
+  workerWagesFor,
+} from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
 import { difficultyConfig } from "@/lib/game/difficulty";
 import {
@@ -115,7 +119,7 @@ export function GameStatusPanel({
     },
   );
   const pendWages = roster.reduce((sum, r) => sum + r.due, 0);
-  const pendMaint = game.fixedCost + game.maintenancePenalty;
+  const pendMaint = game.fixedCost + maintenanceSurcharge(game);
   const pendTotal = pendWages + pendMaint;
   const nextRoundDue =
     pendMaint +

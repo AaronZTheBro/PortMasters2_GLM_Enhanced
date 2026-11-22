@@ -8,23 +8,22 @@ import {
   RESOURCE_WEIGHTS,
 } from "../constants";
 import { charterOpensOn, marketCountsFor } from "../difficulty";
-import {
-  unlockedPorts,
-  unlockedProducts,
-  unlockedResourceDraw,
-  unlockedResources,
-} from "../pools";
-import { createRng, pick, randInt, type Rng } from "../rng";
+import { unlockedPorts, unlockedProducts, unlockedResources } from "../pools";
+import { createRng, pick, randInt, weightedPick, type Rng } from "../rng";
 import type { GameContext, GameState, OrderCard, ResourceCard } from "../types";
 import { addOwnedAmount } from "./core";
-import { explainCardPrice, portResourcePrice } from "./pricing";
+import {
+  explainCardPrice,
+  portResourcePrice,
+  productPurchasePrice,
+  recipeMaterialCost,
+} from "./pricing";
 
 // Optional pools and quantities support charter content and Broker orders.
 export type MarketPools = {
   resources: string[];
   products: string[];
   ports: string[];
-  draw: { items: string[]; probs: number[] };
 };
 
 export function poolsFor(state: GameState): MarketPools {
@@ -33,7 +32,6 @@ export function poolsFor(state: GameState): MarketPools {
     resources: unlockedResources(difficulty, currentRound),
     products: unlockedProducts(difficulty, currentRound),
     ports: unlockedPorts(difficulty, currentRound),
-    draw: unlockedResourceDraw(difficulty, currentRound),
   };
 }
 
@@ -113,18 +111,11 @@ function genProductPurchaseCard(
   const product = pick(rng, pools.products);
   const qty = randInt(rng, 1, 2);
   const port = pick(rng, pools.ports);
-  const recipe = RECIPES[product];
-  let matCost = 0;
-  const details: string[] = [];
-  for (const [m, a] of Object.entries(recipe.materials)) {
-    const avg = (COMMODITIES[m].basePrice[0] + COMMODITIES[m].basePrice[1]) / 2;
-    matCost += avg * a;
-    details.push(`${m}×${a}`);
-  }
-  const markup = 1.4 + rng() * 0.4;
-  let unitPrice = Math.floor(matCost * markup);
-  const [min, max] = PRODUCT_PRICES[product];
-  unitPrice = Math.max(min, Math.min(unitPrice, max));
+  const matCost = recipeMaterialCost(product);
+  const details = Object.entries(RECIPES[product].materials)
+    .map(([item, amount]) => `${item}×${amount}`)
+    .join(" + ");
+  const unitPrice = productPurchasePrice(product, matCost, rng());
   return {
     port,
     resources: [
@@ -133,7 +124,7 @@ function genProductPurchaseCard(
         quantity: qty,
         price: unitPrice,
         materialCost: matCost,
-        materialDetails: details.join(" + "),
+        materialDetails: details,
       },
     ],
     totalCost: unitPrice * qty,
@@ -150,24 +141,18 @@ function genResourceCard(
   if (rng() < 0.3) return genProductPurchaseCard(rng, pools);
   const num = randInt(rng, 1, 3);
   const resources: { type: string; quantity: number; price: number }[] = [];
-  const available = [...pools.draw.items];
-  const probs = [...pools.draw.probs];
+  const available = pools.resources.map((item): [string, number] => [
+    item,
+    RESOURCE_WEIGHTS[item],
+  ]);
   const port = pick(rng, pools.ports);
   for (let i = 0; i < num; i++) {
     if (!available.length) break;
-    const r = rng();
-    let acc = 0;
-    let chosen = available[0];
-    for (let j = 0; j < available.length; j++) {
-      acc += probs[j];
-      if (r <= acc) {
-        chosen = available[j];
-        break;
-      }
-    }
-    const idx = available.indexOf(chosen);
-    available.splice(idx, 1);
-    probs.splice(idx, 1);
+    const chosen = weightedPick(rng, available);
+    available.splice(
+      available.findIndex(([item]) => item === chosen),
+      1,
+    );
     const qty = randInt(rng, 1, 3);
     const [min, max] = COMMODITIES[chosen].basePrice;
     const base = randInt(rng, min, max);

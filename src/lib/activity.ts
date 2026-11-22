@@ -34,10 +34,7 @@ export async function recordActivity(args: {
         roomId: args.roomId ?? null,
       },
     });
-    // Keep the feed bounded. Anything older than the most recent 200 rows
-    // gets pruned on every insert, so the table never grows unbounded even
-    // for a persistent server. 200 is plenty for the lobby view (which
-    // shows ~15) and leaves headroom for a future filter by captain.
+    // Each insert prunes activity older than thirty days.
     await db.activity.deleteMany({
       where: {
         createdAt: {

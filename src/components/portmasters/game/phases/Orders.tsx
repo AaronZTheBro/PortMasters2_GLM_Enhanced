@@ -17,7 +17,7 @@ import { Coins } from "lucide-react";
 import type { PublicUser } from "@/lib/api";
 import { Term } from "../../Term";
 import { ItemIcon } from "../../shared";
-import { PriceBreakdownTooltip } from "../PriceTooltips";
+import { PriceBreakdownTooltip, VatBreakdownTooltip } from "../PriceTooltips";
 import { ReadyFooter, type PhaseSync } from "./PhaseShared";
 
 export function Orders({
@@ -206,7 +206,7 @@ export function Orders({
               key={o.id}
               className={cn(
                 "rounded-xl border overflow-hidden flex flex-col",
-                // Harbour gold, filled rather than outlined. The intel
+                // Harbor gold, filled rather than outlined. The intel
                 // "Guaranteed" highlight already owns amber as a thin outline,
                 // so filled versus outlined keeps the two distinguishable
                 // without relying on hue alone.
@@ -301,8 +301,8 @@ export function Orders({
                 )}
                 {vat && (
                   <div className="text-[10px] text-muted-foreground">
-                    <Term content={<PriceBreakdownTooltip breakdown={vat} />}>
-                      🧾 Est. VAT: {totalVat} Gold (select for unit details)
+                    <Term content={<VatBreakdownTooltip vat={vat} />}>
+                      🧾 VAT: {totalVat} Gold (select for unit details)
                     </Term>
                   </div>
                 )}

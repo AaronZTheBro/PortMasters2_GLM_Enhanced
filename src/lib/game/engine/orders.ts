@@ -19,7 +19,7 @@ import {
 import { isSilkProduct, unlockedPorts } from "../pools";
 import { createRng, type Rng } from "../rng";
 import type { GameContext, GameState, OrderCard } from "../types";
-import { hasModule } from "./core";
+import { hasModule, whisperCost } from "./core";
 import {
   genMixedOrder,
   genProductOrder,
@@ -259,15 +259,16 @@ export function purchaseIntel(state: GameState, logs: string[]) {
     logs.push("🔮 The Broker has no more whispers...");
     return;
   }
-  if (state.money < state.intelCost) {
-    logs.push(`❌ Need ${state.intelCost} Gold for this purchase`);
+  const cost = whisperCost(state);
+  if (state.money < cost) {
+    logs.push(`❌ Need ${cost} Gold for this purchase`);
     return;
   }
   // Ocean Interpreter adds a rumor without increasing the fee.
   const count = intelPurchaseCount(state);
   const openPorts = unlockedPorts(state.difficulty, state.currentRound);
   const cfg = difficultyConfig(state.difficulty);
-  state.money -= state.intelCost;
+  state.money -= cost;
   for (let i = 0; i < count; i++) {
     const item =
       state.phase2DemandTags[

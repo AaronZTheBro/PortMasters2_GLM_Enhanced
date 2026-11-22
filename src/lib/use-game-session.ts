@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MODULES } from "@/lib/game/constants";
+import { BOONS, MODULES } from "@/lib/game/constants";
 import { api } from "@/lib/api";
 import type { Socket } from "socket.io-client";
 import { phaseLabel, showWelcome, snapToCheckpoint } from "@/lib/game/engine";
@@ -213,7 +213,17 @@ export function useGameSession(
           // left by saves that predate the catalogue (stored as null by JSON).
           // This lets a damaged hold heal on load instead of staying broken.
           game.inventory = normalizeInventory(game.inventory);
-          game.boonChoices = game.boonChoices ?? [];
+          game.boonChoices = (game.boonChoices ?? []).map(
+            (boon) => BOONS.find(({ id }) => id === boon.id) ?? boon,
+          );
+          game.lastBoonId ??=
+            BOONS.find(({ modifiers }) => {
+              const keys = Object.keys(modifiers);
+              return (
+                keys.length === Object.keys(game.modifierFlags).length &&
+                keys.every((key) => modifiers[key] === game.modifierFlags[key])
+              );
+            })?.id ?? null;
           game.boonSwapUsed = game.boonSwapUsed ?? false;
           game.moduleSwapUsed = game.moduleSwapUsed ?? false;
           game.pirateAttackResolved = game.pirateAttackResolved ?? false;
@@ -280,6 +290,9 @@ export function useGameSession(
   }, [roomId, enabled, ctx, dispatch, loadAttempt]);
 
   // Broadcast live status to the room on every game change.
+  const statusPhase = state.game.defaultedDebt
+    ? "bankruptcy"
+    : state.game.phase;
   const broadcastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!enabled || !state.loaded || !socket) return;
@@ -288,8 +301,12 @@ export function useGameSession(
       socket.emit("game:status", {
         roomId,
         round: state.game.currentRound,
-        phase: state.game.phase,
-        phaseLabel: phaseLabel(state.game),
+        phase: statusPhase,
+        phaseLabel: phaseLabel({
+          phase: statusPhase,
+          currentRound: state.game.currentRound,
+        }),
+        voyageEpoch: state.game.voyageEpoch,
         gold: state.game.money,
         reputation: state.game.score,
         shipLevel: state.game.shipLevel,
@@ -299,7 +316,7 @@ export function useGameSession(
     return () => {
       if (broadcastTimer.current) clearTimeout(broadcastTimer.current);
     };
-  }, [state.game, state.loaded, socket, roomId, enabled]);
+  }, [state.game, state.loaded, statusPhase, socket, roomId, enabled]);
 
   // Heartbeat: broadcast status again every 8s so the server cache stays
   // fresh and late joiners (or reconnects after a realtime restart) hydrate.
@@ -309,11 +326,12 @@ export function useGameSession(
       socket.emit("game:status", {
         roomId,
         round: state.game.currentRound,
-        phase: state.game.phase,
+        phase: statusPhase,
         phaseLabel: phaseLabel({
-          phase: state.game.phase,
+          phase: statusPhase,
           currentRound: state.game.currentRound,
         }),
+        voyageEpoch: state.game.voyageEpoch,
         gold: state.game.money,
         reputation: state.game.score,
         shipLevel: state.game.shipLevel,
@@ -327,7 +345,8 @@ export function useGameSession(
     roomId,
     enabled,
     state.game.currentRound,
-    state.game.phase,
+    statusPhase,
+    state.game.voyageEpoch,
     state.game.money,
     state.game.score,
     state.game.shipLevel,

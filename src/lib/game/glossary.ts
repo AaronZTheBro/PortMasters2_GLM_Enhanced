@@ -51,11 +51,11 @@ export const GLOSSARY: Record<string, string> = {
 
   // Core stats
   Reputation:
-    "Your score for the voyage, earned mainly from profitable trade orders. The solvent captain with the highest Reputation at the final round is crowned Sea Master.",
+    "Your score for the voyage, earned mainly from profitable trade orders. The eligible solvent captain with the highest final Reputation is crowned Sea Master.",
   Gold: "Your spendable funds. Reaching zero is not an automatic loss, but failing to cover wages or maintenance at settlement causes bankruptcy.",
-  VAT: "A 5% tax on the profit margin of finished good sales (selling price minus material cost minus wage). Raw material sales are not taxed this way.",
+  VAT: "A base tax of 5% on the positive margin per finished good sold, using average recipe material prices and the recipe's base wage. Raw goods and Imperial Mandates are exempt.",
   "Income Tax":
-    "A 10% tax on your net profit for the round, charged at Phase 3 settlement after everything else is paid.",
+    "A base tax of 10% on positive round trading profit. It is charged when the round ends after the Shipyard.",
   Freight:
     "The shipping fee for completing a trade order, based on how many items you're moving. Reduced by your ship level and certain boons or modules.",
   Maintenance:
@@ -66,7 +66,7 @@ export const GLOSSARY: Record<string, string> = {
     "What your hired artisans cost per round, paid at Phase 3 whether they produced anything or not.",
   Boon: "A bonus drafted for one round at the start of each round. Choices are personal, so captains can receive different offers.",
   Module:
-    "A ship upgrade for the current voyage, drafted from the Shipyard when a slot is available. It stays equipped until swapped or the voyage resets.",
+    "A ship upgrade for the current voyage, drafted in the Shipyard for an open slot or to replace an installed module. It stays equipped until swapped or the voyage resets.",
   Barter:
     "A short window right after buying where captains trade directly with each other instead of through the market. Post what you have for what you want; the offered amount is set aside the moment you post it, and comes back to you if it's canceled or nobody takes it.",
   "Pirate Attack":
@@ -75,6 +75,8 @@ export const GLOSSARY: Record<string, string> = {
     "Guarantees safety from that round's pirate attack. Its cost is a percentage of your current Gold set by the selected waters.",
   "Financial Aid":
     "A loan from another captain when you cannot cover wages or maintenance. The lender's Gold transfers immediately; unpaid debt is settled automatically at the voyage's final round.",
+  "Broker's Rumor Board":
+    "Buy rumors during Phase 1 to guarantee matching trade orders at the named ports. The board has a limited number of unique rumors each round.",
   Debt: "Gold owed after taking Financial Aid. Repay it before the final round ends; any remaining amount is taken from available funds, and an uncovered shortfall marks the voyage bankrupt.",
 };
 

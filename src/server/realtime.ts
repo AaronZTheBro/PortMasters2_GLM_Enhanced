@@ -45,6 +45,7 @@ import { computeBackingResolution } from "../lib/game/backing";
 import { computeHarborPulse } from "../lib/game/harborPulse";
 import type { GameState } from "../lib/game/types";
 import type { BarterUpdate } from "../lib/game/barter-ledger";
+import type { VoyageCompleteEvent } from "../lib/realtime";
 import {
   closeBarter,
   modifyBarter,
@@ -71,6 +72,7 @@ type SocketState = {
 // Keep this server type independent from the browser Socket.IO client module.
 type CaptainStatus = {
   roomId: string;
+  voyageEpoch: number;
   user: PublicUser;
   round: number;
   phase: number | string;
@@ -391,26 +393,33 @@ export function attachRealtime(httpServer: HttpServer): Server {
   // Conclude after every member reports endgame or bankruptcy. Persist eligible
   // results once, then award the Sea Master crown to the highest Reputation.
   const concludedRooms = new Set<string>();
+  type VoyageFinisher = {
+    userId: string;
+    user: PublicUser;
+    reputation: number;
+    gold: number;
+    phase: string;
+  };
 
   async function maybeConcludeVoyage(roomId: string) {
     if (concludedRooms.has(roomId)) return;
     const memberIds = await roomMemberIds(roomId);
-    if (memberIds.length === 0) return;
+    if (memberIds.length === 0 || concludedRooms.has(roomId)) return;
     const statuses = roomStatuses.get(roomId);
     if (!statuses) return;
 
-    const finished: {
-      userId: string;
-      user: PublicUser;
-      reputation: number;
-      gold: number;
-      phase: string;
-    }[] = [];
+    const voyageEpoch = statuses.get(memberIds[0])?.voyageEpoch;
+    if (voyageEpoch === undefined) return;
+    const finished: VoyageFinisher[] = [];
     for (const id of memberIds) {
       const st = statuses.get(id);
       // A member without a terminal cached status is still active.
       const phase = st ? String(st.phase) : "";
-      if (!st || (phase !== "endgame" && phase !== "bankruptcy")) return;
+      if (
+        st?.voyageEpoch !== voyageEpoch ||
+        (phase !== "endgame" && phase !== "bankruptcy")
+      )
+        return;
       finished.push({
         userId: id,
         user: st.user,
@@ -420,26 +429,51 @@ export function attachRealtime(httpServer: HttpServer): Server {
       });
     }
 
-    // Claim conclusion before any asynchronous persistence begins.
+    // Serialize conclusion in this process until the result is persisted.
     concludedRooms.add(roomId);
+    try {
+      await concludeVoyage(roomId, voyageEpoch, finished);
+    } finally {
+      concludedRooms.delete(roomId);
+    }
+  }
 
-    // Scale banked Renown XP by the room difficulty.
-    const roomForDifficulty = await db.room.findUnique({
-      where: { id: roomId },
-      select: { difficulty: true, voyageEpoch: true },
+  async function concludeVoyage(
+    roomId: string,
+    voyageEpoch: number,
+    finished: VoyageFinisher[],
+  ) {
+    const room = await db.room.findUnique({
+      where: { id: roomId, voyageEpoch, started: true },
+      select: { difficulty: true, voyageResult: true },
     });
-    const roomDifficulty = normalizeDifficulty(roomForDifficulty?.difficulty);
+    if (!room || room.voyageResult) return;
+    const roomDifficulty = normalizeDifficulty(room.difficulty);
     const renownMultiplier = renownMultiplierFor(roomDifficulty);
 
-    // Fail any venture still open when the voyage ends.
-    if (roomForDifficulty) {
-      await resolveExpiredVentures(
-        roomId,
-        roomForDifficulty.voyageEpoch,
-        0,
-        true,
-      );
+    // Older voyages may already have banked rewards before standings were saved.
+    const previousAwards = new Set<string | null>();
+    if (room.voyageResult === null) {
+      const start = await db.activity.findFirst({
+        where: { roomId, type: "voyage_start" },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true },
+      });
+      if (start) {
+        const awards = await db.activity.findMany({
+          where: {
+            roomId,
+            type: "voyage_complete",
+            createdAt: { gte: start.createdAt },
+          },
+          select: { userId: true },
+        });
+        for (const award of awards) previousAwards.add(award.userId);
+      }
     }
+
+    // Fail any venture still open when the voyage ends.
+    await resolveExpiredVentures(roomId, voyageEpoch, 0, true);
 
     for (const loan of [...loanList(roomId)]) {
       if ((userSockets.get(loan.borrowerId)?.size ?? 0) > 0) continue;
@@ -491,134 +525,158 @@ export function attachRealtime(httpServer: HttpServer): Server {
         ).userId
       : null;
 
-    const standings: {
-      userId: string;
-      displayName: string;
-      avatarHue: number;
-      reputation: number;
-      gold: number;
-      crowned: boolean;
-      bankrupt: boolean;
-      renownLevel: number;
-      renownTitle: string;
-      xpGained: number;
-      leveledUp: boolean;
-      brokersFavorUnlocked: boolean;
-      newMerits: string[];
-    }[] = [];
-
-    for (const f of finished) {
-      // Impossible finishes remain visible but do not change account progress.
-      const forged = isForged(f.userId);
-      const xpGained = forged
-        ? 0
-        : Math.round(Math.max(0, f.reputation) * renownMultiplier);
-      const crowned = f.userId === winnerId;
-      const bankrupt = f.phase === "bankruptcy";
-      const prior = await db.captainLegacy.findUnique({
-        where: { userId: f.userId },
+    const result = await db.$transaction(async (tx) => {
+      const claimed = await tx.room.updateMany({
+        where: {
+          id: roomId,
+          voyageEpoch,
+          started: true,
+          voyageResult: room.voyageResult,
+        },
+        data: { voyageResult: "{}" },
       });
-      const priorLevel = prior?.renownLevel ?? 1;
-      const newXP = (prior?.renownXP ?? 0) + xpGained;
-      const newLevel = levelForRenownXP(newXP);
-      const leveledUp = newLevel > priorLevel;
-      // Detect unlocks across the full level span gained this voyage.
-      const brokersFavorUnlocked =
-        priorLevel < BROKERS_FAVOR_UNLOCK_LEVEL &&
-        newLevel >= BROKERS_FAVOR_UNLOCK_LEVEL;
-      // Preserve persistent counters for impossible finishes.
-      const newBestScore = forged
-        ? (prior?.bestScore ?? 0)
-        : Math.max(prior?.bestScore ?? 0, f.reputation);
-      const newVoyagesCompleted =
-        (prior?.voyagesCompleted ?? 0) + (forged ? 0 : 1);
-      // Bankruptcy resets the solvent streak. Impossible finishes do not alter it.
-      const newConsecutiveSolventVoyages = forged
-        ? (prior?.consecutiveSolventVoyages ?? 0)
-        : bankrupt
+      if (claimed.count === 0) return null;
+      const standings: VoyageCompleteEvent["standings"] = [];
+      for (const f of finished) {
+        // Impossible finishes remain visible but do not change account progress.
+        const forged = isForged(f.userId);
+        const awarded = !forged && !previousAwards.has(f.userId);
+        const xpGained = forged
           ? 0
-          : (prior?.consecutiveSolventVoyages ?? 0) + 1;
-      // Record crowns and scores for the room difficulty.
-      const priorStats = parseStatsByDifficulty(prior?.statsByDifficulty);
-      const newStatsByDifficulty = forged
-        ? priorStats
-        : recordVoyageInStats(priorStats, roomDifficulty, {
-            crowned,
-            reputation: f.reputation,
+          : Math.round(Math.max(0, f.reputation) * renownMultiplier);
+        const crowned = f.userId === winnerId;
+        const bankrupt = f.phase === "bankruptcy";
+        const prior = await tx.captainLegacy.findUnique({
+          where: { userId: f.userId },
+        });
+        const priorLevel = prior?.renownLevel ?? 1;
+        const newXP = (prior?.renownXP ?? 0) + (awarded ? xpGained : 0);
+        const newLevel = levelForRenownXP(newXP);
+        const leveledUp = newLevel > priorLevel;
+        // Detect unlocks across the full level span gained this voyage.
+        const brokersFavorUnlocked =
+          priorLevel < BROKERS_FAVOR_UNLOCK_LEVEL &&
+          newLevel >= BROKERS_FAVOR_UNLOCK_LEVEL;
+        // Preserve persistent counters for impossible finishes.
+        const newBestScore = !awarded
+          ? (prior?.bestScore ?? 0)
+          : Math.max(prior?.bestScore ?? 0, f.reputation);
+        const newVoyagesCompleted =
+          (prior?.voyagesCompleted ?? 0) + (awarded ? 1 : 0);
+        // Bankruptcy resets the solvent streak. Impossible finishes do not alter it.
+        const newConsecutiveSolventVoyages = !awarded
+          ? (prior?.consecutiveSolventVoyages ?? 0)
+          : bankrupt
+            ? 0
+            : (prior?.consecutiveSolventVoyages ?? 0) + 1;
+        // Record crowns and scores for the room difficulty.
+        const priorStats = parseStatsByDifficulty(prior?.statsByDifficulty);
+        const newStatsByDifficulty = !awarded
+          ? priorStats
+          : recordVoyageInStats(priorStats, roomDifficulty, {
+              crowned,
+              reputation: f.reputation,
+            });
+        if (awarded)
+          await tx.captainLegacy.upsert({
+            where: { userId: f.userId },
+            create: {
+              userId: f.userId,
+              renownXP: newXP,
+              renownLevel: newLevel,
+              // Use the integrity gated voyage total for a new legacy row.
+              voyagesCompleted: newVoyagesCompleted,
+              seaMasterCrowns: crowned ? 1 : 0,
+              bestScore: newBestScore,
+              consecutiveSolventVoyages: newConsecutiveSolventVoyages,
+              statsByDifficulty: JSON.stringify(newStatsByDifficulty),
+            },
+            update: {
+              renownXP: newXP,
+              renownLevel: newLevel,
+              // Increment atomically when the finish qualifies.
+              voyagesCompleted: { increment: 1 },
+              ...(crowned ? { seaMasterCrowns: { increment: 1 } } : {}),
+              bestScore: newBestScore,
+              consecutiveSolventVoyages: newConsecutiveSolventVoyages,
+              statsByDifficulty: JSON.stringify(newStatsByDifficulty),
+            },
           });
-      await db.captainLegacy.upsert({
-        where: { userId: f.userId },
-        create: {
-          userId: f.userId,
-          renownXP: newXP,
-          renownLevel: newLevel,
-          // Use the integrity gated voyage total for a new legacy row.
-          voyagesCompleted: newVoyagesCompleted,
-          seaMasterCrowns: crowned ? 1 : 0,
-          bestScore: newBestScore,
-          consecutiveSolventVoyages: newConsecutiveSolventVoyages,
-          statsByDifficulty: JSON.stringify(newStatsByDifficulty),
-        },
-        update: {
-          renownXP: newXP,
-          renownLevel: newLevel,
-          // Increment atomically when the finish qualifies.
-          ...(forged ? {} : { voyagesCompleted: { increment: 1 } }),
-          ...(crowned ? { seaMasterCrowns: { increment: 1 } } : {}),
-          bestScore: newBestScore,
-          consecutiveSolventVoyages: newConsecutiveSolventVoyages,
-          statsByDifficulty: JSON.stringify(newStatsByDifficulty),
-        },
-      });
 
-      // Compare qualifying Merits with persisted awards to find new ones.
-      const existingMerits = await db.captainMerit.findMany({
-        where: { userId: f.userId },
-        select: { meritId: true },
-      });
-      const existingMeritIds = new Set(existingMerits.map((m) => m.meritId));
-      const qualifying = qualifyingMerits({
-        newVoyagesCompleted,
-        crowned,
-        priorSeaMasterCrowns: prior?.seaMasterCrowns ?? 0,
-        reputation: f.reputation,
-        newRenownLevel: newLevel,
-        consecutiveSolventVoyages: newConsecutiveSolventVoyages,
-        difficulty: roomDifficulty,
-        bankrupt,
-      });
-      // Impossible finishes cannot grant persistent merits.
-      const newMerits = forged
-        ? []
-        : qualifying.filter((id) => !existingMeritIds.has(id));
-      // Upsert each Merit because SQLite does not support skipDuplicates here.
-      for (const meritId of newMerits) {
-        await db.captainMerit.upsert({
-          where: { userId_meritId: { userId: f.userId, meritId } },
-          create: { userId: f.userId, meritId },
-          update: {},
+        // Compare qualifying Merits with persisted awards to find new ones.
+        const existingMerits = await tx.captainMerit.findMany({
+          where: { userId: f.userId },
+          select: { meritId: true },
+        });
+        const existingMeritIds = new Set(existingMerits.map((m) => m.meritId));
+        const qualifying = qualifyingMerits({
+          newVoyagesCompleted,
+          crowned,
+          priorSeaMasterCrowns: prior?.seaMasterCrowns ?? 0,
+          reputation: f.reputation,
+          newRenownLevel: newLevel,
+          consecutiveSolventVoyages: newConsecutiveSolventVoyages,
+          difficulty: roomDifficulty,
+          bankrupt,
+        });
+        // Impossible finishes cannot grant persistent merits.
+        const newMerits = !awarded
+          ? []
+          : qualifying.filter((id) => !existingMeritIds.has(id));
+        // Upsert each Merit because SQLite does not support skipDuplicates here.
+        for (const meritId of newMerits) {
+          await tx.captainMerit.upsert({
+            where: { userId_meritId: { userId: f.userId, meritId } },
+            create: { userId: f.userId, meritId },
+            update: {},
+          });
+        }
+
+        standings.push({
+          userId: f.userId,
+          displayName: f.user.displayName,
+          avatarHue: f.user.avatarHue,
+          reputation: f.reputation,
+          gold: f.gold,
+          crowned,
+          bankrupt,
+          renownLevel: newLevel,
+          renownTitle: renownTitleForLevel(newLevel),
+          xpGained,
+          leveledUp,
+          brokersFavorUnlocked,
+          newMerits,
         });
       }
-
-      standings.push({
-        userId: f.userId,
-        displayName: f.user.displayName,
-        avatarHue: f.user.avatarHue,
-        reputation: f.reputation,
-        gold: f.gold,
-        crowned,
-        bankrupt,
-        renownLevel: newLevel,
-        renownTitle: renownTitleForLevel(newLevel),
-        xpGained,
-        leveledUp,
-        brokersFavorUnlocked,
-        newMerits,
+      standings.sort((a, b) => b.reputation - a.reputation);
+      const result: VoyageCompleteEvent = {
+        roomId,
+        voyageEpoch,
+        winnerId,
+        standings,
+      };
+      await tx.room.update({
+        where: { id: roomId },
+        data: { voyageResult: JSON.stringify(result) },
       });
+      return result;
+    });
+    if (!result) return;
+
+    for (const standing of result.standings) {
+      const {
+        userId,
+        displayName,
+        reputation,
+        crowned,
+        renownLevel,
+        leveledUp,
+        newMerits,
+      } = standing;
       if (leveledUp) {
         io.to(`room:${roomId}`).emit("room:system", {
           roomId,
-          content: `${f.user.displayName} reached Renown Level ${newLevel}: ${renownTitleForLevel(newLevel)}!`,
+          content: `${displayName} reached Renown Level ${renownLevel}: ${renownTitleForLevel(renownLevel)}!`,
         });
       }
       for (const meritId of newMerits) {
@@ -626,41 +684,41 @@ export function attachRealtime(httpServer: HttpServer): Server {
         if (!merit) continue;
         io.to(`room:${roomId}`).emit("room:system", {
           roomId,
-          content: `${f.user.displayName} earned the Captain's Merit: ${merit.name}!`,
+          content: `${displayName} earned the Captain's Merit: ${merit.name}!`,
         });
         // Record each merit in the harbor activity feed.
         void recordActivity({
-          userId: f.userId,
+          userId,
           type: "merit_earned",
           detail: merit.name,
           roomId,
         });
       }
       // Record the voyage completion (and a crown, if earned) in the feed.
-      if (!forged) {
+      if (!isForged(userId) && !previousAwards.has(userId)) {
         void recordActivity({
-          userId: f.userId,
+          userId,
           type: "voyage_complete",
-          detail: `${f.reputation} Reputation`,
+          detail: `${reputation} Reputation`,
           roomId,
         });
         if (crowned) {
           void recordActivity({
-            userId: f.userId,
+            userId,
             type: "sea_master",
-            detail: `${f.reputation} Reputation`,
+            detail: `${reputation} Reputation`,
             roomId,
           });
         }
       }
     }
-    standings.sort((a, b) => b.reputation - a.reputation);
-
-    io.to(`room:${roomId}`).emit("room:voyage_complete", {
-      roomId,
-      winnerId,
-      standings,
-    });
+    const replayed = finished.every(
+      (f) => isForged(f.userId) || previousAwards.has(f.userId),
+    );
+    io.to(`room:${roomId}`).emit(
+      "room:voyage_complete",
+      replayed ? { ...result, replayed } : result,
+    );
   }
 
   // Bartering
@@ -1277,6 +1335,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
       // Verify durable room membership.
       const member = await db.roomMember.findUnique({
         where: { userId_roomId: { userId: s.userId, roomId } },
+        select: { room: { select: { voyageResult: true } } },
       });
       if (!member) {
         socket.emit("room:error", {
@@ -1327,6 +1386,12 @@ export function attachRealtime(httpServer: HttpServer): Server {
         requests: aidList(roomId),
       });
       void replayLoanSettlements(socket.id, s.userId, roomId);
+      if (member.room.voyageResult) {
+        const result = JSON.parse(
+          member.room.voyageResult,
+        ) as VoyageCompleteEvent;
+        socket.emit("room:voyage_complete", { ...result, replayed: true });
+      }
       broadcastPresence();
     });
 
@@ -1358,6 +1423,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
         round?: number;
         phase?: number | string;
         phaseLabel?: string;
+        voyageEpoch?: number;
         gold?: number;
         reputation?: number;
         shipLevel?: number;
@@ -1382,8 +1448,20 @@ export function attachRealtime(httpServer: HttpServer): Server {
           if (!newest) return;
         }
 
+        const room = await db.room.findUnique({
+          where: { id: roomId },
+          select: { started: true, voyageEpoch: true, voyageResult: true },
+        });
+        if (
+          !room ||
+          (payload.voyageEpoch !== undefined &&
+            payload.voyageEpoch !== room.voyageEpoch)
+        )
+          return;
+
         const broadcast = {
           roomId,
+          voyageEpoch: room.voyageEpoch,
           user: s.user,
           round: payload?.round ?? 0,
           phase: payload?.phase ?? 0,
@@ -1411,14 +1489,8 @@ export function attachRealtime(httpServer: HttpServer): Server {
           });
         }
 
-        // Advance the shared checkpoint only while the database room is started.
-        // This rejects delayed status reports from a voyage that just restarted.
-        const room = await db.room.findUnique({
-          where: { id: roomId },
-          select: { started: true, voyageEpoch: true },
-        });
         // Resolve open ventures whose deadline is behind the reported round.
-        if (room) {
+        if (room.started && !room.voyageResult) {
           await resolveExpiredVentures(
             roomId,
             room.voyageEpoch,
@@ -1441,8 +1513,12 @@ export function attachRealtime(httpServer: HttpServer): Server {
           cp.advancing = false;
           cp.harborPulse = undefined;
           await db.room
-            .update({
-              where: { id: roomId },
+            .updateMany({
+              where: {
+                id: roomId,
+                voyageEpoch: room.voyageEpoch,
+                started: true,
+              },
               data: {
                 currentRound: cp.round,
                 currentPhase: cp.phase,
@@ -1457,7 +1533,8 @@ export function attachRealtime(httpServer: HttpServer): Server {
         await broadcastReadyState(roomId, cp);
         await maybeAdvance(roomId, cp);
         // A terminal status report may complete the room's voyage.
-        if (broadcast.gameOver) await maybeConcludeVoyage(roomId);
+        if (broadcast.gameOver && !room.voyageResult)
+          await maybeConcludeVoyage(roomId);
       },
     );
 
@@ -2298,6 +2375,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
             currentPhase: "5",
             phaseReleased: false,
             phasePulse: "{}",
+            voyageResult: "",
           },
         });
         const cp = await getCheckpoint(roomId);
@@ -2360,6 +2438,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
               phaseReleased: false,
               phasePulse: "{}",
               barterLedger: "{}",
+              voyageResult: null,
               voyageEpoch: { increment: 1 },
             },
           }),
@@ -2377,8 +2456,6 @@ export function attachRealtime(httpServer: HttpServer): Server {
         roomDocksWinners.delete(roomId);
         // Reset the Tidewatch surge for the new voyage.
         roomSurges.delete(roomId);
-        // Allow the restarted room to conclude its new voyage.
-        concludedRooms.delete(roomId);
         // Mutes last only for the current voyage.
         if (roomMutedUsers.delete(roomId)) emitRoomMembers(roomId);
 

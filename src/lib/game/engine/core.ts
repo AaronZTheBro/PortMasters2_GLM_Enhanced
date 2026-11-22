@@ -5,6 +5,18 @@ export function hasModule(state: GameState, id: string): boolean {
   return state.equippedModules.some((m) => m.id === id);
 }
 
+export function shipUpgradeSurcharge(state: GameState): number {
+  return hasModule(state, "bulk_hauler") ? 15 : 0;
+}
+
+export function maintenanceSurcharge(state: GameState): number {
+  return hasModule(state, "overdrive_engine") ? 10 : 0;
+}
+
+export function whisperCost(state: GameState): number {
+  return hasModule(state, "brokers_network") ? 2 : 5;
+}
+
 // Treats Gold and cargo through one ownership interface.
 export function getOwnedAmount(state: GameState, item: string): number {
   return item === "Gold" ? state.money : state.inventory[item] || 0;

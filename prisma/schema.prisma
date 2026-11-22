@@ -85,6 +85,8 @@ model Room {
   // new voyage (fresh market, orders, and Broker intel for everyone),
   // while a reload during the voyage still reproduces the current one.
   voyageEpoch Int @default(0)
+  // Empty during a current voyage. Older saves lack the snapshot.
+  voyageResult String?
 
   // Flips to true the moment the host starts the voyage (see the
   // "room:start" handler in src/server/realtime.ts). A room sits open in

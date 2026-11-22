@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { io, type Socket } from "socket.io-client";
+import type { VoyageCompleteEvent } from "../src/lib/realtime";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 const databasePath = join(projectRoot, "prisma", "integration.db");
@@ -355,6 +356,48 @@ test(
         cookie: alphaCookie,
       });
       assert.equal(startedRoom.data.room.started, true);
+
+      const completed = waitForEvent<VoyageCompleteEvent>(
+        alphaSocket,
+        "room:voyage_complete",
+      );
+      const status = {
+        roomId: room.id,
+        voyageEpoch: 0,
+        round: 8,
+        gameOver: true,
+      };
+      alphaSocket.emit("game:status", {
+        ...status,
+        phase: "endgame",
+        reputation: 90,
+      });
+      betaSocket.emit("game:status", {
+        ...status,
+        phase: "bankruptcy",
+        reputation: 120,
+      });
+      const result = await completed;
+      assert.equal(result.winnerId, alphaRegistration.data.user.id);
+      assert.equal(result.standings[0].bankrupt, true);
+
+      const reconnected = await connectCaptain(alphaRegistration.data.token);
+      sockets.push(reconnected);
+      const restored = waitForEvent<VoyageCompleteEvent>(
+        reconnected,
+        "room:voyage_complete",
+        ({ replayed }) => replayed === true,
+      );
+      reconnected.emit("room:join", { roomId: room.id });
+      assert.deepEqual(await restored, { ...result, replayed: true });
+      reconnected.emit("game:status", {
+        ...status,
+        phase: "endgame",
+        reputation: 90,
+      });
+      const legacy = await request("/api/legacy", { cookie: alphaCookie });
+      assert.equal(legacy.data.legacy.voyagesCompleted, 1);
+      assert.equal(legacy.data.legacy.seaMasterCrowns, 1);
     } finally {
       for (const socket of sockets) socket.disconnect();
       let forced = false;

@@ -19,18 +19,28 @@ import {
 import {
   completeOrder,
   draftBoons,
+  explainExpectedPrice,
   explainTransportCost,
   hireEscort,
   hireWorker,
+  handleModuleSelect,
+  finalizeModuleSwap,
   payMaintenance,
   payWages,
   purchaseIntel,
   resolvePirateAttack,
+  selectBoon,
+  shipUpgradeSurcharge,
   startPhase1,
+  whisperCost,
   workerWagesFor,
 } from "../src/lib/game/engine";
 import { applyBarterEntries } from "../src/lib/game/barter-ledger";
-import { BROKERS_FAVOR_PAYOUT_CAP, MODULES } from "../src/lib/game/constants";
+import {
+  BOONS,
+  BROKERS_FAVOR_PAYOUT_CAP,
+  MODULES,
+} from "../src/lib/game/constants";
 import { endRound } from "../src/lib/game/engine/lifecycle";
 import { quoteOrder } from "../src/lib/game/engine/orders";
 import { quotePirateWaters } from "../src/lib/game/engine/pirates";
@@ -45,33 +55,24 @@ import {
   getDatabaseUrl,
 } from "../src/server/environment";
 
-test("application port defaults to 2154 and accepts Railway assignment", () => {
+test("Application port defaults to 2154 and accepts valid custom ports", () => {
   const previousPort = process.env.PORT;
-  const previousRailwayEnvironmentId = process.env.RAILWAY_ENVIRONMENT_ID;
   try {
-    delete process.env.RAILWAY_ENVIRONMENT_ID;
     delete process.env.PORT;
     assert.equal(getApplicationPort(), DEFAULT_APPLICATION_PORT);
 
-    process.env.PORT = "2154";
-    assert.equal(getApplicationPort(), DEFAULT_APPLICATION_PORT);
+    for (const port of [1, 2154, 4321, 65535]) {
+      process.env.PORT = String(port);
+      assert.equal(getApplicationPort(), port);
+    }
 
-    process.env.PORT = "4321";
-    assert.throws(() => getApplicationPort(), /must be 2154/);
-
-    process.env.RAILWAY_ENVIRONMENT_ID = "test";
-    assert.equal(getApplicationPort(), 4321);
-
-    process.env.PORT = "invalid";
-    assert.throws(() => getApplicationPort(), /valid TCP port/);
+    for (const invalidPort of ["", "0", "4321.5", "65536", "invalid"]) {
+      process.env.PORT = invalidPort;
+      assert.throws(() => getApplicationPort(), /valid TCP port/);
+    }
   } finally {
     if (previousPort === undefined) delete process.env.PORT;
     else process.env.PORT = previousPort;
-    if (previousRailwayEnvironmentId === undefined) {
-      delete process.env.RAILWAY_ENVIRONMENT_ID;
-    } else {
-      process.env.RAILWAY_ENVIRONMENT_ID = previousRailwayEnvironmentId;
-    }
   }
 });
 
@@ -156,7 +157,7 @@ test("difficulty changes pirate risk after the midpoint", () => {
   assert.equal(pirateChanceFor("monsoon", 9, 16), 0.38);
 });
 
-test("daily check-in advances once per UTC day and wraps after day seven", () => {
+test("Daily check in advances once per UTC day and wraps after day seven", () => {
   const today = "2026-08-06";
   const claim = applyCheckIn(
     { checkInCount: 6, lastCheckInDate: "2026-08-05" },
@@ -343,7 +344,6 @@ test("Round taxes count wages and maintenance once, with separate VAT totals", (
   game.totalCosts = 40;
   game.modifierFlags = { income_tax_override: 0.05 };
   game.equippedModules = MODULES.filter(({ id }) => id === "overdrive_engine");
-  game.maintenancePenalty = 10;
   game.vatPaid = 13;
   game.roundVatPaid = 4;
   hireWorker(game, "weaver", []);
@@ -386,13 +386,75 @@ test("A crew of charter artisans can draw Artisan Inspiration", (t) => {
   assert.ok(drawn.some(({ id }) => id === "artisan_inspiration"));
 });
 
+test("The previous boon is recorded after its effects expire", () => {
+  const game = createInitialGameState();
+  const loan = BOONS.find(({ id }) => id === "emergency_loan")!;
+  const shelter = BOONS.find(({ id }) => id === "tax_shelter")!;
+  const ctx = { seedBase: "boon history" };
+  game.phase = 5;
+  game.boonChoices = [loan];
+  selectBoon(game, ctx, shelter.id, []);
+  assert.equal(game.phase, 5);
+  selectBoon(game, ctx, loan.id, []);
+  assert.equal(game.money, 140);
+  selectBoon(game, ctx, loan.id, []);
+  assert.equal(game.money, 140);
+  endRound(game, []);
+  assert.deepEqual(game.modifierFlags, {});
+  assert.equal(game.lastBoonId, loan.id);
+});
+
+test("Module swaps change costs based on the installed module", () => {
+  const game = createInitialGameState();
+  const findModule = (id: string) => MODULES.find((m) => m.id === id)!;
+  game.shipLevel = 1;
+  game._draftChoices = [
+    findModule("brokers_network"),
+    findModule("bulk_hauler"),
+  ];
+  game.phase = "module_draft";
+  handleModuleSelect(game, 0, []);
+  assert.equal(whisperCost(game), 2);
+  game.phase = "module_draft";
+  handleModuleSelect(game, 0, []);
+  finalizeModuleSwap(game, 8, []);
+  assert.equal(whisperCost(game), 2);
+  finalizeModuleSwap(game, 0, []);
+  assert.equal(whisperCost(game), 5);
+  assert.equal(shipUpgradeSurcharge(game), 15);
+  assert.deepEqual(
+    game.equippedModules.map(({ id }) => id),
+    ["bulk_hauler"],
+  );
+});
+
+test("Finished good price ranges and later weighted draws match the market", () => {
+  const game = createInitialGameState();
+  const quote = explainExpectedPrice(game, "Linen Clothes");
+  assert.equal(quote.min, 30);
+  assert.equal(quote.max, 30);
+
+  let hempFirst = 0;
+  let silkSecond = 0;
+  for (let seed = 0; seed < 300; seed++) {
+    startPhase1(game, { seedBase: `weighted:${seed}` }, []);
+    for (const card of game.resourceCards) {
+      const [first, second] = card.resources;
+      if (first.type !== "Hemp" || !second) continue;
+      hempFirst++;
+      if (second.type === "Silk") silkSecond++;
+    }
+  }
+  assert.ok(hempFirst > 250);
+  assert.ok(Math.abs(silkSecond / hempFirst - 35 / 60) < 0.06);
+});
+
 test("Broker bundles share one corruption roll and a finite pool of unique tips", (t) => {
   const game = createInitialGameState(0, 1, 0, "monsoon");
   game.currentRound = 12;
   game.equippedModules = MODULES.filter(({ id }) =>
     ["brokers_network", "ocean_relay"].includes(id),
   );
-  game.intelCost = 2;
   game.modifierFlags = { free_intel: 1 };
   startPhase1(game, { seedBase: "broker bundle" }, []);
   assert.equal(

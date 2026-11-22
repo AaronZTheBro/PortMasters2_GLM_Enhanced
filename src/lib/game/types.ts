@@ -69,7 +69,6 @@ export type IntelItem = { item: string; port: string };
 
 export type Worker = {
   task: string | null;
-  progress: number;
   producedCount: number;
   isSkilled: boolean;
   hiredRound?: number;
@@ -127,8 +126,6 @@ export type GameState = {
   fixedCost: number;
   shipLevel: number;
   shipUpgradeCost: number[];
-  shipUpgradePenalty: number;
-  maintenancePenalty: number;
   phase: Phase;
   resourceCards: ResourceCard[];
   customerCards: OrderCard[];
@@ -153,9 +150,9 @@ export type GameState = {
   _pendingDocksClaim?: { total: number };
   gameOver: boolean;
   modifierFlags: Record<string, number>;
+  lastBoonId: string | null;
   phase2DemandTags: string[];
   revealedIntel: IntelItem[];
-  intelCost: number;
   // A price nudge for each resource in this
   // round's Phase 1, keyed by resource name (Hemp, Silk, Tea), derived room
   // wide from what the whole harbor bought last round (see
@@ -200,10 +197,7 @@ export type GameState = {
   _draftChoices?: Module[];
   moduleSwapUsed: boolean;
   _newModule?: Module;
-  // Reset every round in startBoonDrafting, same as boonSwapUsed/
-  // moduleSwapUsed above. Resolved once per round, in Phase 3, before the
-  // wage and maintenance settlement: either a 20% chance of losing every
-  // Gold on hand, or a guaranteed safe escort for 10% of it.
+  // Reset for each round and resolved before wages and maintenance.
   pirateAttackResolved: boolean;
   escortHired: boolean;
   // Set when a corrupt broker leaked this captain's position (Monsoon only,
@@ -339,8 +333,6 @@ export function createInitialGameState(
     fixedCost: cfg.maintenance,
     shipLevel: 0,
     shipUpgradeCost: [15, 25, 40],
-    shipUpgradePenalty: 0,
-    maintenancePenalty: 0,
     phase: 0,
     resourceCards: [],
     customerCards: [],
@@ -352,9 +344,9 @@ export function createInitialGameState(
     totalOrdersCompleted: 0,
     gameOver: false,
     modifierFlags: {},
+    lastBoonId: null,
     phase2DemandTags: [],
     revealedIntel: [],
-    intelCost: 5,
     harborPulse: {},
     tidewatchSurge: false,
     equippedModules: [],

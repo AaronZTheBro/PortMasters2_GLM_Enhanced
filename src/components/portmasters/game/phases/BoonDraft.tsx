@@ -11,7 +11,6 @@ import {
   Sparkles,
   Compass,
   Coins,
-  Clock,
   HelpCircle,
   Crown,
   Star,
@@ -24,6 +23,7 @@ import {
   Lock,
 } from "lucide-react";
 import {
+  BOONS,
   BOONS_TIER0,
   BOONS_TIER1,
   BOONS_TIER2,
@@ -95,19 +95,19 @@ function isRecommended(boon: Boon, game: GameState): boolean {
     case "tax_shelter":
       return game.money > 80;
     case "hemp_monopoly":
-      return (inv["Hemp"] ?? 0) >= 2;
+      return game.money > 0 && (inv.Hemp ?? 0) < 5;
     case "silk_wind":
       return (inv["Silk"] ?? 0) >= 2;
     case "artisan_inspiration":
       return workerCount > 0;
     case "master_apprentice":
-      return workerCount >= 3;
+      return workerCount === 0 && game.money >= 4;
     case "farsight":
-      return game.revealedIntel.length === 0 && game.money >= 5;
+      return game.money < 40;
     case "kiln_and_forge_guild":
-      return (inv["Porcelain Clay"] ?? 0) > 1 || (inv["Copper Ore"] ?? 0) > 1;
+      return (inv["Celadon Ware"] ?? 0) > 0 || (inv["Bronze Mirror"] ?? 0) > 0;
     case "exotic_treasures":
-      return (inv["Spices"] ?? 0) > 1 || (inv["Pearls"] ?? 0) > 1;
+      return (inv["Foreign Balm"] ?? 0) > 0 || (inv["Pearl String"] ?? 0) > 0;
     case "deep_sea_escort_pact":
       return game.money > 60;
     case "merchant_charm":
@@ -198,17 +198,6 @@ function highlightDesc(desc: string): React.ReactNode[] {
       );
     return <span key={i}>{part}</span>;
   });
-}
-
-// "Boon History" : the engine does not persist prior rounds' boons, but the
-// active modifierFlags from the previous round survive into Phase 5 until
-// the new boon is applied, so we can surface the most recent pick here.
-const ALL_BOONS: Boon[] = [...BOONS_TIER0, ...BOONS_TIER1, ...BOONS_TIER2];
-
-function lastBoonFromState(game: GameState): Boon | undefined {
-  const keys = Object.keys(game.modifierFlags);
-  if (!keys.length) return undefined;
-  return ALL_BOONS.find((b) => keys.some((k) => k in b.modifiers));
 }
 
 // Compass rose watermark : large faded SVG sitting behind the picker.
@@ -354,21 +343,6 @@ function SynergyGuideBadge() {
   );
 }
 
-// "Take your time" decorative timer : not a real countdown, just a gentle
-// pulse to signal there is no rush to lock in.
-function TakeYourTimeBadge() {
-  return (
-    <motion.div
-      className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/25 bg-teal-500/10 px-2.5 py-1 text-[11px] font-medium text-teal-700 dark:text-teal-300"
-      animate={{ opacity: [0.85, 1, 0.85] }}
-      transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-    >
-      <Clock className="h-3.5 w-3.5" />
-      Take your time
-    </motion.div>
-  );
-}
-
 // Boon card : the visual heart of the picker. Each card animates in with a
 // subtle 3D flip and scale motion, glows on hover, and shows tier, recommended, and active
 // particles around the icon.
@@ -478,18 +452,6 @@ function BoonCard({
         <Term term={boon.name}>{boon.name}</Term>
       </div>
 
-      {/* Active modifier chips */}
-      <div className="flex flex-wrap justify-center gap-1 mb-2 min-h-[1rem]">
-        {Object.keys(boon.modifiers).map((key) => (
-          <span
-            key={key}
-            className="text-[9px] tracking-wide rounded-full bg-teal-500/10 border border-teal-500/20 px-1.5 py-0.5 text-teal-700 dark:text-teal-300"
-          >
-            {key.replace(/_/g, " ")}
-          </span>
-        ))}
-      </div>
-
       <div className="text-xs text-muted-foreground leading-relaxed flex-1 mb-4">
         {highlightDesc(boon.desc)}
       </div>
@@ -505,17 +467,15 @@ function BoonCard({
   );
 }
 
-// Boon History compact display: surfaces the boon carried from the prior round
-// (still live in modifierFlags during Phase 5 until the new pick applies).
 function BoonHistory({ game }: { game: GameState }) {
-  const last = lastBoonFromState(game);
+  const last = BOONS.find((boon) => boon.id === game.lastBoonId);
   if (!last) {
     return (
       <div className="inline-flex items-center gap-2 rounded-lg border border-black/5 dark:border-white/10 bg-background/40 px-3 py-1.5 text-[11px] text-muted-foreground">
         <BookOpen className="h-3.5 w-3.5" />
         <span>
           <strong className="text-foreground/70">Boon History:</strong> No
-          previous voyage boon recorded.
+          previous round recorded.
         </span>
       </div>
     );
@@ -652,7 +612,6 @@ export function BoonDraft({
             members={members}
             className="justify-center"
           />
-          <TakeYourTimeBadge />
           <SynergyGuideBadge />
         </div>
 

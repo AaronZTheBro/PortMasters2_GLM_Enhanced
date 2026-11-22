@@ -231,4 +231,18 @@ Additional verification still matters for Safari and Firefox, browser chrome and
 2. PM28 through PM30. Price details opened by touch and exposed a keyboard round selector. Freight details opened by keyboard focus and touch. Dark tutorial headings and body text used readable colors on their respective surfaces.
 3. PM31 through PM36. Landscape sign in fit within the 375 pixel viewport. Dialogs kept side gutters, and the production Directory scrolled by touch to the lower rows with Close still reachable. Barter tint values parsed as CSS colors. Monsoon Welcome showed 16 rounds. The narrow lobby Harbor button had an accessible name. The logbook account switch check preserved the original author’s entry.
 
+## Follow up audit
+
+1. Market draws reused the probabilities of removed goods. Later draws now use the weights of the remaining goods. Item previews use the same finished good price calculation as generated cargo lots. The market reference shows unlocked goods and the Prices view remains the source for recorded trends.
+2. Boon History read modifiers that had already expired. The selected Boon ID now persists separately, and saved draft cards refresh their descriptions from the catalogue. Only offered Boons can be selected.
+3. Three module effects depended on redundant values in the save. Upgrade surcharges, maintenance surcharges, and paid rumor prices now derive from equipped modules. Drafts exclude already equipped modules. Paid rumor bundles and the free Farsight rumor use the same finite pool.
+4. A worker card showed base output while the production preview included Boon and module bonuses. Both now use the shared production calculation. The guide also lists the recipes a Master Weaver inherits from a Weaver. The unused worker progress field, recipe values, pricing wrappers, and decorative price charts were removed.
+5. The VAT breakdown treated the sale price as the base and displayed a tax amount as the result. The breakdown now shows the taxable margin, base VAT, adjustments, and amount charged. Welcome and the guides show the current difficulty, round sequence, and costs.
+6. Shared standings could crown a captain who defaulted on a loan. Bankruptcy now reaches the standings, and SQLite records the result together with Renown and merits. Reconnecting restores the standings. Older voyages can recover already awarded progress from retained activity records.
+7. The Render Blueprint provides one web service with persistent SQLite storage. The custom server accepts Render's assigned port, and the README records the deployment steps. A clean install with the refreshed dependency lock reported no advisories.
+
+The effect checks covered 7,050 Boon and module combinations and 35,715 installation orders. The full verification suite covered 24 unit tests, the realtime integration test, lint, type checking, and the production build. Chromium checks covered nine viewport sizes and verified the difficulty copy, saved Boon descriptions, production bonuses, and paid rumor bundles.
+
+A local production restart on the Render port restored the standings without paying Renown twice. The same check excluded a captain who defaulted on a loan despite having the highest Reputation. A fixture with the older result format recovered its standings using retained activity without issuing another award.
+
 The repository verification passed lint, type checking, 21 game rules tests, the server integration test, and the production build. The effect fixture covered 7,050 boon and loadout combinations and 35,715 installation sequences. The schema update preserved the seeded save in a database using the earlier schema. Browser checks used Chromium viewport and touch emulation.

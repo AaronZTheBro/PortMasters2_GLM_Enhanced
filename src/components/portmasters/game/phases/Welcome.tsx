@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { APP_NAME } from "@/lib/game/constants";
+import { APP_NAME, STARTING_STOCK } from "@/lib/game/constants";
 import { cn } from "@/lib/utils";
 import {
   Ship,
@@ -22,8 +22,11 @@ import {
 import type { PublicUser } from "@/lib/api";
 import { Avatar } from "../../shared";
 import type { PhaseSync } from "./PhaseShared";
-import { roundsFor, type Difficulty } from "@/lib/game/difficulty";
-import { DIFFICULTIES } from "@/lib/game/difficulty";
+import {
+  DIFFICULTIES,
+  difficultyConfig,
+  type Difficulty,
+} from "@/lib/game/difficulty";
 import { motion } from "framer-motion";
 
 // === Animated Ship SVG Decoration ========================================
@@ -356,6 +359,12 @@ export function Welcome({
 }) {
   const harborIds = phaseSync.ready?.requiredUserIds ?? [];
   const canStart = harborIds.length >= 2;
+  const cfg = difficultyConfig(difficulty);
+  const [earlyRaid, lateRaid = earlyRaid] = cfg.pirateChance;
+  const raidCopy =
+    lateRaid === earlyRaid
+      ? `${Math.round(earlyRaid * 100)}% chance of losing all Gold each round`
+      : `${Math.round(earlyRaid * 100)}% raid chance, rising to ${Math.round(lateRaid * 100)}% after round ${Math.floor(cfg.rounds / 2)}`;
   return (
     <div className="max-w-3xl mx-auto text-center py-4">
       {/* == Animated ship + title == */}
@@ -367,8 +376,8 @@ export function Welcome({
         <DifficultyBadge difficulty={difficulty} />
       </div>
       <p className="text-sm text-muted-foreground mb-2">
-        Sail {roundsFor(difficulty)} rounds with your crew and compete to become
-        Sea Master.
+        Sail {cfg.rounds} rounds with your crew and compete to become Sea
+        Master.
       </p>
 
       {/* == Wave divider == */}
@@ -439,12 +448,14 @@ export function Welcome({
           title="Starting Resources"
           rows={[
             {
-              text: "Hemp x 8, Silk x 5, Tea x 3",
+              text: Object.entries(STARTING_STOCK)
+                .map(([item, amount]) => `${item} × ${amount}`)
+                .join(", "),
               icon: Package,
               iconClassName: "text-teal-700 dark:text-teal-300",
             },
             {
-              text: "100 Gold starting funds",
+              text: `${cfg.startingGold} Gold before the Renown bonus`,
               icon: Coins,
               iconClassName: "text-amber-700 dark:text-amber-300",
             },
@@ -464,7 +475,7 @@ export function Welcome({
           tone="sea"
           title="Round end costs"
           rows={[
-            "Maintenance: 15 Gold every round",
+            `Base maintenance is ${cfg.maintenance} Gold every round`,
             "Wages settle at Phase 3, not on hire",
           ]}
           icon={Coins}
@@ -473,8 +484,8 @@ export function Welcome({
           tone="rose"
           title="Taxes Explained"
           rows={[
-            "Value tax: 5 percent of finished good margin",
-            "Income tax: 10 percent of round net profit",
+            "Base VAT is 5% of finished good margin",
+            "Base Income Tax is 10% of round net profit after the Shipyard",
           ]}
           icon={Receipt}
         />
@@ -482,8 +493,8 @@ export function Welcome({
           tone="amber"
           title="Pirates & Borrowing"
           rows={[
-            "20% chance of losing all Gold each round",
-            "Hire an escort, or ask the harbor for a loan",
+            raidCopy,
+            "Hire an escort for safe passage. Request Financial Aid if bills are due.",
           ]}
           icon={Skull}
         />

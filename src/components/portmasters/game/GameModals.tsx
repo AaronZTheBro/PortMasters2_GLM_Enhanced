@@ -21,7 +21,7 @@ import {
   unlockedWorkerTypes,
 } from "@/lib/game/pools";
 import type { GameState } from "@/lib/game/types";
-import { phaseLabel } from "@/lib/game/engine";
+import { phaseLabel, whisperCost } from "@/lib/game/engine";
 import { intelPurchaseCount } from "@/lib/game/engine/orders";
 import type { PlayerDetailData } from "@/lib/use-player-detail";
 import type { PublicUser } from "@/lib/api";
@@ -354,7 +354,8 @@ export function RumorBoardModal({
   onBuy: () => void;
 }) {
   const count = intelPurchaseCount(game);
-  const canBuy = game.phase === 1 && count > 0 && game.money >= game.intelCost;
+  const cost = whisperCost(game);
+  const canBuy = game.phase === 1 && count > 0 && game.money >= cost;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -375,14 +376,14 @@ export function RumorBoardModal({
           >
             {count === 0
               ? "No rumors available"
-              : `Buy ${count} ${count === 1 ? "rumor" : "rumors"} for ${game.intelCost} Gold`}
+              : `Buy ${count} ${count === 1 ? "rumor" : "rumors"} for ${cost} Gold`}
           </Button>
         </div>
         <div className="rounded-lg border border-teal-500/15 bg-teal-500/[0.04] p-3.5 min-h-[110px]">
           {game.revealedIntel.length ? (
             <>
               <div className="font-semibold text-teal-700 dark:text-teal-300 text-sm mb-1.5">
-                📜 Revealed Intel:
+                📜 Revealed Rumors:
               </div>
               {game.revealedIntel.map((i, idx) => (
                 <div key={idx} className="text-[13px] py-0.5">

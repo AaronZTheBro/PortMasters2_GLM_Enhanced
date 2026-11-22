@@ -31,6 +31,7 @@ import {
 import {
   finalizeModuleSwap,
   handleModuleSelect,
+  shipUpgradeSurcharge,
   startModuleDrafting,
   swapModuleChoices,
   upgradeShip,
@@ -105,7 +106,6 @@ const MODULE_SYNERGIES: Record<string, string[]> = {
   tax_evasion: ["tax_shelter", "frontier_tariff_relief"],
   artisans_workshop: ["artisan_inspiration", "master_apprentice"],
   bulk_hauler: ["favorable_tides"],
-  brokers_network: ["farsight"],
   kiln_cellar: ["kiln_and_forge_guild"],
   foreign_quarter_pass: ["exotic_treasures"],
   fleet_of_treasures: ["exotic_treasures"],
@@ -113,7 +113,6 @@ const MODULE_SYNERGIES: Record<string, string[]> = {
   salvage_crane: ["favorable_tides"],
   overdrive_engine: ["favorable_tides"],
   bureau_token: ["kiln_and_forge_guild"],
-  ocean_relay: ["farsight"],
   smugglers_hold: ["tax_shelter", "merchant_charm"],
 };
 
@@ -367,8 +366,9 @@ export function Shipyard({
   members: PublicUser[];
 }) {
   const canUpgrade = game.shipLevel < 3;
+  const surcharge = shipUpgradeSurcharge(game);
   const upgCost = canUpgrade
-    ? game.shipUpgradeCost[game.shipLevel] + game.shipUpgradePenalty
+    ? game.shipUpgradeCost[game.shipLevel] + surcharge
     : 0;
   const affordable = game.money >= upgCost;
   const canDraft = game.shipLevel > 0;
@@ -513,7 +513,7 @@ export function Shipyard({
                 <TooltipContent side="top" className="max-w-xs">
                   <CostBreakdown
                     base={game.shipUpgradeCost[game.shipLevel]}
-                    penalty={game.shipUpgradePenalty}
+                    penalty={surcharge}
                     total={upgCost}
                     affordable={affordable}
                     balance={game.money}
@@ -1000,7 +1000,7 @@ export function ModuleSwap({
           className="rounded-xl group"
           onClick={() =>
             act((g) => {
-              g.phase = "module_draft";
+              startModuleDrafting(g);
             })
           }
         >

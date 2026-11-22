@@ -1,8 +1,9 @@
 // Drafts round boons and voyage modules from the current content pool.
-import { BOONS, type Boon, type Module } from "../constants";
+import { type Boon, type Module } from "../constants";
 import { unlockedBoons, unlockedModules } from "../pools";
 import { weightedPick } from "../rng";
 import type { GameContext, GameState } from "../types";
+import { hasModule, shipUpgradeSurcharge } from "./core";
 import { startPhase1 } from "./market";
 
 export function draftBoons(state: GameState): Boon[] {
@@ -62,7 +63,8 @@ export function draftBoons(state: GameState): Boon[] {
 }
 
 export function applyBoon(state: GameState, boon: Boon, logs: string[]) {
-  state.modifierFlags = boon.modifiers;
+  state.lastBoonId = boon.id;
+  state.modifierFlags = { ...boon.modifiers };
   if (boon.modifiers.instant_gold) {
     state.money += boon.modifiers.instant_gold;
     logs.push(`💰 Boon applied: Gained ${boon.modifiers.instant_gold} Gold!`);
@@ -72,7 +74,7 @@ export function applyBoon(state: GameState, boon: Boon, logs: string[]) {
 export function upgradeShip(state: GameState, logs: string[]) {
   if (state.shipLevel >= 3) return;
   const cost =
-    state.shipUpgradeCost[state.shipLevel] + state.shipUpgradePenalty;
+    state.shipUpgradeCost[state.shipLevel] + shipUpgradeSurcharge(state);
   if (state.money < cost) {
     logs.push(`❌ Need ${cost} Gold to upgrade the ship`);
     return;
@@ -84,38 +86,12 @@ export function upgradeShip(state: GameState, logs: string[]) {
   );
 }
 
-export function equipModule(
-  state: GameState,
-  mod: Module,
-  swapIdx: number | null,
-  logs: string[],
-) {
-  if (swapIdx !== null) {
-    const old = state.equippedModules[swapIdx];
-    if (old.id === "bulk_hauler") state.shipUpgradePenalty -= 15;
-    if (old.id === "overdrive_engine") state.maintenancePenalty -= 10;
-    if (old.id === "brokers_network") state.intelCost = 5;
-    state.equippedModules[swapIdx] = mod;
-    logs.push(`🔄 Swapped ${old.name} for ${mod.name}!`);
-  } else {
-    if (state.equippedModules.length < state.shipLevel) {
-      state.equippedModules.push(mod);
-      logs.push(`✅ Installed ${mod.name}!`);
-    } else {
-      logs.push("❌ No empty slots! Must swap.");
-      return;
-    }
-  }
-  if (mod.id === "bulk_hauler") state.shipUpgradePenalty += 15;
-  if (mod.id === "overdrive_engine") state.maintenancePenalty += 10;
-  if (mod.id === "brokers_network") state.intelCost = 2;
-}
-
 export function startBoonDrafting(state: GameState, logs: string[]) {
   state.phase = 5;
   state.boonSwapUsed = false;
   state.moduleSwapUsed = false;
   state._draftChoices = undefined;
+  state._newModule = undefined;
   state.boonChoices = draftBoons(state);
   state.pirateAttackResolved = false;
   state.escortHired = false;
@@ -146,8 +122,8 @@ export function selectBoon(
   boonId: string,
   logs: string[],
 ) {
-  const boon = BOONS.find((b) => b.id === boonId);
-  if (!boon) return;
+  const boon = state.boonChoices.find((b) => b.id === boonId);
+  if (state.phase !== 5 || !boon) return;
   logs.push(`🧭 Boon Locked In: ${boon.icon} ${boon.name}`);
   applyBoon(state, boon, logs);
   state.boonChoices = [];
@@ -155,23 +131,21 @@ export function selectBoon(
 }
 
 function rollModuleChoices(state: GameState): Module[] {
-  const MODULES = unlockedModules(state.difficulty, state.currentRound);
-  const available = MODULES.filter(
-    (m) => !state.equippedModules.some((eq) => eq.id === m.id),
-  );
-  const pool = available.length >= 3 ? available : MODULES;
+  const available = unlockedModules(
+    state.difficulty,
+    state.currentRound,
+  ).filter((m) => !hasModule(state, m.id));
   const picks: Module[] = [];
-  const copy = [...pool];
-  for (let i = 0; i < 3; i++) {
-    if (!copy.length) break;
-    const idx = Math.floor(Math.random() * copy.length);
-    picks.push(copy.splice(idx, 1)[0]);
+  while (picks.length < 3 && available.length) {
+    const idx = Math.floor(Math.random() * available.length);
+    picks.push(available.splice(idx, 1)[0]);
   }
   return picks;
 }
 
 // Reuses the existing module pool when the draft is reopened.
 export function startModuleDrafting(state: GameState) {
+  state._newModule = undefined;
   if (state._draftChoices === undefined) {
     state._draftChoices = rollModuleChoices(state);
   }
@@ -198,12 +172,13 @@ export function handleModuleSelect(
   idx: number,
   logs: string[],
 ) {
-  const mod = state._draftChoices?.[idx];
-  if (!mod) return;
+  const choices = state._draftChoices ?? [];
+  const mod = choices[idx];
+  if (!mod || hasModule(state, mod.id)) return;
   if (state.equippedModules.length < state.shipLevel) {
-    equipModule(state, mod, null, logs);
-    // Installed modules leave the pool immediately.
-    state._draftChoices = state._draftChoices!.filter((m) => m.id !== mod.id);
+    state.equippedModules.push(mod);
+    logs.push(`✅ Installed ${mod.name}!`);
+    state._draftChoices = choices.filter((m) => m.id !== mod.id);
     state.phase = 4;
   } else {
     state._newModule = mod;
@@ -218,13 +193,13 @@ export function finalizeModuleSwap(
   logs: string[],
 ) {
   const mod = state._newModule;
-  if (!mod) return;
-  equipModule(state, mod, slotIdx, logs);
+  const previous = state.equippedModules[slotIdx];
+  if (!mod || !previous || hasModule(state, mod.id)) return;
+  state.equippedModules[slotIdx] = mod;
+  logs.push(`🔄 Swapped ${previous.name} for ${mod.name}!`);
   state._draftChoices = (state._draftChoices ?? []).filter(
     (m) => m.id !== mod.id,
   );
   state._newModule = undefined;
   state.phase = 4;
 }
-
-// Initializes a joining captain at the room's current checkpoint.

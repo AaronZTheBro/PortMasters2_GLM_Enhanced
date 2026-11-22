@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { PRODUCTS, RESOURCES } from "@/lib/game/constants";
+import { unlockedProducts, unlockedResources } from "@/lib/game/pools";
 import {
   explainCardPrice,
   explainExpectedPrice,
@@ -111,60 +111,6 @@ const DEAL_BADGE: Record<DealQuality, { label: string; className: string }> = {
   },
 };
 
-// Sparkline: a deterministic compact chart derived from the item
-// name. The trend is purely visual and does not reflect real price history.
-function hashString(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-}
-
-function Sparkline({ item, color }: { item: string; color: string }) {
-  const w = 30;
-  const h = 10;
-  const seed = hashString(item);
-  const points = 8;
-  const vals = Array.from({ length: points }, (_, i) => {
-    const r = (Math.sin(seed * 0.001 + i * 1.3) + 1) / 2;
-    const trend = i / (points - 1);
-    return 0.15 + r * 0.45 + trend * 0.25;
-  });
-  const max = Math.max(...vals);
-  const min = Math.min(...vals);
-  const range = max - min || 1;
-  const path = vals
-    .map((v, i) => {
-      const x = (i / (points - 1)) * w;
-      const y = h - ((v - min) / range) * (h - 2) - 1;
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
-  const lastY = h - ((vals[vals.length - 1] - min) / range) * (h - 2) - 1;
-  return (
-    <svg
-      width={w}
-      height={h}
-      className="inline-block align-middle opacity-70"
-      aria-hidden
-    >
-      <path
-        d={path}
-        fill="none"
-        stroke={color}
-        strokeWidth={1}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx={w} cy={lastY} r={1} fill={color} />
-    </svg>
-  );
-}
-
-// Market price reference : grouped resources vs products, with sparklines.
-// Every raw material and product gets a price preview here, not just the
-// ones that happened to roll onto one of this round's five market cards.
 function MarketPriceReference({
   game,
   colorFor,
@@ -183,14 +129,16 @@ function MarketPriceReference({
             Resources
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {[...RESOURCES].map((item) => (
-              <PricePill
-                key={item}
-                item={item}
-                game={game}
-                colorFor={colorFor}
-              />
-            ))}
+            {unlockedResources(game.difficulty, game.currentRound).map(
+              (item) => (
+                <PricePill
+                  key={item}
+                  item={item}
+                  game={game}
+                  colorFor={colorFor}
+                />
+              ),
+            )}
           </div>
         </div>
         <div>
@@ -198,14 +146,16 @@ function MarketPriceReference({
             Products
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {[...PRODUCTS].map((item) => (
-              <PricePill
-                key={item}
-                item={item}
-                game={game}
-                colorFor={colorFor}
-              />
-            ))}
+            {unlockedProducts(game.difficulty, game.currentRound).map(
+              (item) => (
+                <PricePill
+                  key={item}
+                  item={item}
+                  game={game}
+                  colorFor={colorFor}
+                />
+              ),
+            )}
           </div>
         </div>
       </div>
@@ -232,7 +182,6 @@ function PricePill({
       >
         <ItemIcon item={item} className="h-3 w-3" />
         {item}
-        <Sparkline item={item} color={color} />
       </span>
     </Term>
   );

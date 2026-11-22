@@ -168,7 +168,9 @@ export function showWelcome(state: GameState, logs: string[]) {
 export function canAdvancePhase(state: GameState) {
   if (state.gameOver) return false;
   if (state.phase === 3) return state.pirateAttackResolved;
-  if (state.phase === 5) return Boolean(state.pendingBoonId);
+  if (state.phase === 5) {
+    return state.boonChoices.some((boon) => boon.id === state.pendingBoonId);
+  }
   return [1, 2, 4, "barter", "worker_mgmt"].includes(state.phase);
 }
 

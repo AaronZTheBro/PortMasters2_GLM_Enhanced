@@ -13,6 +13,7 @@ import {
 } from "@/lib/game/engine";
 import { productionOutput } from "@/lib/game/engine/workers";
 import {
+  canProduce,
   unlockedProducts,
   unlockedResources,
   unlockedWorkerTypes,
@@ -158,7 +159,6 @@ function WorkerList({
                     <span className="hidden sm:inline">{mood.label}</span>
                   </span>
                 </div>
-                {/* Task + decorative progress bar */}
                 {w.task ? (
                   <div className="mt-1 flex items-center gap-1.5">
                     <span
@@ -168,21 +168,8 @@ function WorkerList({
                       <ItemIcon item={w.task} className="h-3 w-3" />
                       {w.task}
                     </span>
-                    <div className="flex-1 h-1 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
-                      <motion.div
-                        className={cn("h-full rounded-full", "pm-artisan-chip")}
-                        initial={{ width: "10%" }}
-                        animate={{ width: "55%" }}
-                        transition={{
-                          duration: 2.2,
-                          repeat: Infinity,
-                          repeatType: "reverse",
-                          ease: "easeInOut",
-                        }}
-                      />
-                    </div>
-                    <span className="text-[9px] text-muted-foreground shrink-0">
-                      +{w.isSkilled ? 2 : 1} next phase
+                    <span className="text-[10px] text-muted-foreground">
+                      +{productionOutput(game, w).total} at settlement
                     </span>
                   </div>
                 ) : (
@@ -323,10 +310,7 @@ export function WorkerMgmt({
         list,
         cost,
         due: workerWagesFor(game, w.id),
-        tasks: openProducts.filter((p) => {
-          const owner = RECIPES[p]?.worker_type;
-          return owner === w.id || (w.id === "master" && owner === "weaver");
-        }),
+        tasks: openProducts.filter((product) => canProduce(w.id, product)),
       };
     },
   );
@@ -772,7 +756,7 @@ export function WorkerMgmt({
           >
             <span className="text-xs font-semibold flex items-center gap-1.5">
               <PartyPopper className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-              Production Preview · next round
+              Production preview for this round's settlement
             </span>
             <span className="text-[10px] text-muted-foreground">
               {showPreview ? "hide" : "show"}

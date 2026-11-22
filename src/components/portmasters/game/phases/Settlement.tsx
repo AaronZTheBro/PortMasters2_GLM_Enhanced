@@ -7,6 +7,7 @@ import { WORKER_TYPES } from "@/lib/game/constants";
 import { roundsFor } from "@/lib/game/difficulty";
 import { quotePirateWaters } from "@/lib/game/engine/pirates";
 import {
+  maintenanceSurcharge,
   workerWagesFor,
   hireEscort,
   resolvePirateAttack,
@@ -98,7 +99,8 @@ function SettlementBills({
     0,
   );
   const nWorkers = roster.reduce((sum, n) => sum + n, 0);
-  const maintCost = game.fixedCost + game.maintenancePenalty;
+  const surcharge = maintenanceSurcharge(game);
+  const maintCost = game.fixedCost + surcharge;
   const totalDue = wagesDue + maintCost;
   const canAfford = game.money >= totalDue;
   const balanceAfter = game.money - totalDue;
@@ -150,10 +152,9 @@ function SettlementBills({
           <span>🔧 Ship Maintenance Fee</span>
           <span className="font-bold">{maintCost} Gold</span>
         </div>
-        {game.maintenancePenalty > 0 && (
+        {surcharge > 0 && (
           <div className="text-[11px] text-muted-foreground pl-2.5">
-            ↳ Base {game.fixedCost}g + Overdrive Engine penalty{" "}
-            {game.maintenancePenalty}g
+            ↳ Base {game.fixedCost}g + Overdrive Engine penalty {surcharge}g
           </div>
         )}
         <div className="flex justify-between text-sm py-0.5 border-t border-orange-500/20 pt-1.5 mt-1.5 font-bold">
