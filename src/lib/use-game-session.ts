@@ -23,8 +23,10 @@ import {
 } from "@/lib/game/types";
 import { renownStartingGoldBonus } from "@/lib/game/legacy";
 import { normalizeDifficulty, type Difficulty } from "@/lib/game/difficulty";
+import type { Module } from "@/lib/game/constants";
+import { voyageBoon, voyageModule } from "@/lib/game/pools";
 import { restoreBrokerWhispers } from "@/lib/game/broker-whispers";
-import type { VoyageRules } from "@/lib/game/expansion";
+import { type VoyageRules } from "@/lib/game/expansion";
 
 // Maximum retained ledger lines. The APPLY reducer enforces this cap.
 const LEDGER_LINE_CAP = 500;
@@ -222,15 +224,17 @@ export function useGameSession(
           game.completedOrders = game.completedOrders ?? [];
           game.resourceCards = game.resourceCards ?? [];
           game.customerCards = game.customerCards ?? [];
+          const version = rules?.version ?? game.rulesVersion;
+          const restoreModule = (saved: Module) =>
+            voyageModule(
+              MODULES.find(({ id }) => id === saved.id) ?? saved,
+              version,
+            );
           game.equippedModules = (game.equippedModules ?? []).map(
-            (module) => MODULES.find(({ id }) => id === module.id) ?? module,
+            restoreModule,
           );
-          game._draftChoices = game._draftChoices?.map(
-            (module) => MODULES.find(({ id }) => id === module.id) ?? module,
-          );
-          game._newModule =
-            MODULES.find(({ id }) => id === game._newModule?.id) ??
-            game._newModule;
+          game._draftChoices = game._draftChoices?.map(restoreModule);
+          if (game._newModule) game._newModule = restoreModule(game._newModule);
           // Rebuild the artisan roster defensively: fills in any type this
           // save predates, and reads an older save that still carried
           // three separate weavers / masterWeavers / sachetMakers arrays.
@@ -249,8 +253,11 @@ export function useGameSession(
           // left by saves that predate the catalogue (stored as null by JSON).
           // This lets a damaged hold heal on load instead of staying broken.
           game.inventory = normalizeInventory(game.inventory);
-          game.boonChoices = (game.boonChoices ?? []).map(
-            (boon) => BOONS.find(({ id }) => id === boon.id) ?? boon,
+          game.boonChoices = (game.boonChoices ?? []).map((saved) =>
+            voyageBoon(
+              BOONS.find(({ id }) => id === saved.id) ?? saved,
+              version,
+            ),
           );
           game.lastBoonId ??=
             BOONS.find(({ modifiers }) => {
@@ -283,6 +290,8 @@ export function useGameSession(
           game.seatSeed = ctx.seedBase;
           game.rulesVersion = rules?.version ?? game.rulesVersion;
           game.forecasts = rules?.forecasts ?? game.forecasts;
+          game.arrivals = rules?.arrivals ?? game.arrivals;
+          game.specialties = rules?.specialties ?? game.specialties;
           restoreBrokerWhispers(game);
           // Refresh difficulty from the room (the authoritative source), the
           // same reason renownLevel is refreshed above; default an old save

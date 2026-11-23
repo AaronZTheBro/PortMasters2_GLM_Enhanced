@@ -17,10 +17,25 @@ import { Settlement } from "./phases/Settlement";
 import { Shipyard, ModuleDraft, ModuleSwap } from "./phases/Shipyard";
 import { Bankruptcy } from "./phases/Bankruptcy";
 import { CalendarDays, Compass, Telescope } from "lucide-react";
+import { BOONS } from "@/lib/game/constants";
+import { voyageBoon } from "@/lib/game/pools";
 import { MANDATE_TEMPLATES, mandateIndexFor } from "@/lib/game/difficulty";
-import { expanded, forecastFor } from "@/lib/game/expansion";
+import {
+  expanded,
+  forecastFor,
+  classicHarbor,
+  harborTrading,
+  rebalanced,
+  SPECIALTIES,
+  specialtyOpens,
+} from "@/lib/game/expansion";
 import { announcedMandateRound, describeForecast } from "@/lib/game/forecast";
-import { featuredDemand } from "@/lib/game/engine/market";
+import {
+  featuredDemand,
+  harborArrival,
+  upcomingBuyer,
+} from "@/lib/game/engine/market";
+import { quoteOrder } from "@/lib/game/engine/orders";
 import { hasModule } from "@/lib/game/engine";
 import { Endgame } from "./phases/Endgame";
 
@@ -29,6 +44,7 @@ import { Endgame } from "./phases/Endgame";
 type Props = {
   game: GameState;
   context: GameContext;
+  flush: () => Promise<void>;
   logs: string[];
   act: (fn: (g: GameState, logs: string[]) => void) => void;
   members: PublicUser[];
@@ -42,8 +58,6 @@ type Props = {
   myLegacy: CaptainLegacySummary | null;
   onRestart: () => void;
   onShowRumors: () => void;
-  onShowGuide: () => void;
-  onShowTips: () => void;
   onShowTutorial: () => void;
   // Item defaults apply when no custom color resolver is provided.
   colorFor?: (item: string) => string | undefined;
@@ -52,6 +66,7 @@ type Props = {
 export function GamePhasePanel({
   game,
   context,
+  flush,
   logs,
   act,
   members,
@@ -110,7 +125,6 @@ export function GamePhasePanel({
           isHost={isHost}
           onShowTutorial={onShowTutorial}
           difficulty={game.difficulty}
-          rulesVersion={game.rulesVersion}
         />
       );
     if (p === 5)
@@ -157,6 +171,7 @@ export function GamePhasePanel({
     if (p === 2)
       return (
         <Orders
+          flush={flush}
           game={game}
           act={act}
           phaseSync={phaseSync}
@@ -222,34 +237,127 @@ function VoyageBrief({
 }) {
   if (!expanded(game) || ![5, 1, "worker_mgmt", 2, 3].includes(game.phase))
     return null;
-  const forecast = forecastFor(game);
-  const briefing = forecast && describeForecast(forecast);
-  const announced = announcedMandateRound(game.difficulty, game.currentRound);
+  const updated = rebalanced(game);
+  const harbor = harborTrading(game);
+  const savedBoon =
+    game.phase === 5
+      ? undefined
+      : BOONS.find(({ id }) => id === game.lastBoonId);
+  const activeBoon = savedBoon && voyageBoon(savedBoon, game.rulesVersion);
+  const forecast =
+    forecastFor(game) ??
+    (updated ? forecastFor(game, game.currentRound + 1) : undefined);
+  const briefing = forecast && describeForecast(forecast, game);
+  const announced = announcedMandateRound(
+    game.difficulty,
+    game.currentRound,
+    updated ? 3 : 2,
+    game.rulesVersion,
+  );
+  const lantern = hasModule(game, "signal_lantern");
+  const includesPreview = game.phase === 1 || game.phase === "worker_mgmt";
+  const nextBuyers =
+    updated && includesPreview
+      ? [
+          upcomingBuyer(game, context, game.currentRound + 1),
+          lantern
+            ? upcomingBuyer(game, context, game.currentRound + 1, true)
+            : undefined,
+        ]
+      : [];
+  const specialties =
+    updated && game.phase === 5 ? game.specialties : undefined;
   const mandateIndex =
     announced === undefined
       ? undefined
-      : mandateIndexFor(game.difficulty, announced);
+      : mandateIndexFor(game.difficulty, announced, game.rulesVersion);
   const mandate =
     mandateIndex === undefined ? undefined : MANDATE_TEMPLATES[mandateIndex];
   const nextDemand =
-    game.phase === "worker_mgmt" && hasModule(game, "signal_lantern")
+    !updated && game.phase === "worker_mgmt" && lantern
       ? featuredDemand(game, context, game.currentRound + 1)
       : undefined;
-  const scout =
-    game.phase === 1 || game.phase === "worker_mgmt"
-      ? game.scoutedOrder
-      : undefined;
-  if (!briefing && !mandate && !nextDemand && !scout) return null;
+  const scout = includesPreview ? game.scoutedOrder : undefined;
+  const scouts = includesPreview ? game.scoutedOrders : undefined;
+  if (
+    !harbor &&
+    !briefing &&
+    !mandate &&
+    !nextDemand &&
+    !scout &&
+    !nextBuyers.some(Boolean) &&
+    !scouts?.length &&
+    !specialties?.length
+  )
+    return null;
   return (
     <aside
       aria-label="Voyage briefing"
       className="pm-brief mb-4 grid min-w-0 gap-2 rounded-xl border p-3 text-sm"
     >
+      {harbor && (
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <strong>{harborArrival(game)}</strong>
+          {game.arrivals?.[game.currentRound] &&
+            game.difficulty !== "monsoon" && (
+              <span className="text-xs text-muted-foreground">
+                Next port: {game.arrivals[game.currentRound]}
+              </span>
+            )}
+        </div>
+      )}
+      {harbor && (activeBoon || game.equippedModules.length > 0) && (
+        <details className="min-w-0">
+          <summary className="cursor-pointer">Active effects</summary>
+          <ul className="mt-1 grid gap-1">
+            {activeBoon && (
+              <li>
+                <strong>{activeBoon.name}</strong> · {activeBoon.desc}
+              </li>
+            )}
+            {game.equippedModules.map((module) => (
+              <li key={module.id}>
+                <strong>{module.name}</strong> · {module.desc}
+              </li>
+            ))}
+            {game.travelingCommissionRound === game.currentRound &&
+              !game.effectUses?.traveling_commission &&
+              game.equippedModules.some(
+                ({ id }) => id === "traveling_commission",
+              ) && <li>Traveling Commission is ready.</li>}
+            {game.directPassageRound === game.currentRound - 1 &&
+              !game.effectUses?.storm_dividend &&
+              game.equippedModules.some(
+                ({ id }) => id === "storm_dividend",
+              ) && <li>Storm Dividend is ready.</li>}
+            {game.effectUses?.momentum_ready &&
+            !game.effectUses?.market_momentum ? (
+              <li>Market Momentum is ready.</li>
+            ) : null}
+          </ul>
+        </details>
+      )}
+      {specialties?.length ? (
+        <p>
+          <strong>Voyage specialties</strong> ·{" "}
+          {specialties
+            .map(
+              (key, index) =>
+                `${SPECIALTIES[key].name} in round ${specialtyOpens(game.difficulty, index)}`,
+            )
+            .join(", ")}
+        </p>
+      ) : null}
       {briefing && (
         <div className="flex min-w-0 gap-2">
           <Compass className="mt-0.5 size-4 shrink-0" aria-hidden />
           <div>
-            <strong>{briefing.title}</strong>
+            <strong>
+              {briefing.title}
+              {forecast && forecast.round > game.currentRound
+                ? ` in round ${forecast.round}`
+                : ""}
+            </strong>
             <p>{briefing.detail}</p>
           </div>
         </div>
@@ -264,6 +372,21 @@ function VoyageBrief({
                 .map(({ type, required }) => `${required} ${type}`)
                 .join(", ")}{" "}
               for {mandate.reward} Gold at {mandate.port}.
+              {updated && (
+                <span className="block text-muted-foreground">
+                  Missing now{" "}
+                  {mandate.resources
+                    .filter(
+                      ({ type, required }) => game.inventory[type] < required,
+                    )
+                    .map(
+                      ({ type, required }) =>
+                        `${required - game.inventory[type]} ${type}`,
+                    )
+                    .join(", ") || "none"}
+                  .
+                </span>
+              )}
             </p>
           </div>
         </div>
@@ -277,6 +400,55 @@ function VoyageBrief({
           </p>
         </div>
       )}
+      {nextBuyers.map((buyer, index) => {
+        if (!buyer) return null;
+        const quote = quoteOrder(
+          {
+            ...game,
+            modifierFlags: {},
+            effectUses: {},
+            currentRound: game.currentRound + 1,
+          },
+          buyer,
+        );
+        const proceeds = quote.reward - quote.freight.final;
+        return (
+          <div key={buyer.id} className="flex min-w-0 gap-2">
+            <Telescope className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <p>
+              <strong>
+                {index === 0
+                  ? classicHarbor(game)
+                    ? "Next round commission"
+                    : "Next round featured buyer"
+                  : "Signal Lantern"}
+              </strong>{" "}
+              · {buyer.demandPort} requests{" "}
+              {buyer.resources
+                .map(({ type, required }) => `${required} ${type}`)
+                .join(", ")}{" "}
+              for {buyer.reward} Gold.{" "}
+              {proceeds < 0
+                ? `Estimated cost ${Math.abs(proceeds)}`
+                : `Estimated proceeds ${proceeds}`}{" "}
+              Gold after freight and VAT, before any new Boon.
+            </p>
+          </div>
+        );
+      })}
+      {scouts?.map((buyer) => (
+        <div key={buyer.id} className="flex min-w-0 gap-2">
+          <Telescope className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <p>
+            <strong>Scouted buyer this round</strong> · {buyer.demandPort}{" "}
+            requests{" "}
+            {buyer.resources
+              .map(({ type, required }) => `${required} ${type}`)
+              .join(", ")}{" "}
+            for {buyer.reward} Gold before costs.
+          </p>
+        </div>
+      ))}
       {scout && (
         <div className="flex min-w-0 gap-2">
           <Telescope className="mt-0.5 size-4 shrink-0" aria-hidden />

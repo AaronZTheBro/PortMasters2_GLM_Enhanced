@@ -76,8 +76,12 @@ function PirateAttack({
         </Button>
       </div>
       <p className="text-[11px] text-muted-foreground mt-3">
-        After bills, escort leaves {game.money - escortCost - bills} Gold. A
-        raid on the direct route leaves {game.money - raidLoss - bills} Gold.
+        {game.money >= escortCost + bills
+          ? `After bills, escort leaves ${game.money - escortCost - bills} Gold.`
+          : `After hiring an escort, you would be short by ${escortCost + bills - game.money} Gold for bills.`}{" "}
+        {game.money >= raidLoss + bills
+          ? `After a raid and bills, direct passage leaves ${game.money - raidLoss - bills} Gold.`
+          : `After a raid, you would be short by ${raidLoss + bills - game.money} Gold for bills.`}
       </p>
     </div>
   );
@@ -191,7 +195,9 @@ function SettlementBills({
                 : "text-rose-600 dark:text-rose-400",
             )}
           >
-            {balanceAfter} Gold
+            {balanceAfter < 0
+              ? `Short by ${Math.abs(balanceAfter)} Gold`
+              : `${balanceAfter} Gold`}
           </span>
         </div>
         <div className="flex justify-between text-[13px] py-0.5">

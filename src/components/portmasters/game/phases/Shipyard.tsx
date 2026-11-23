@@ -1,5 +1,8 @@
 "use client";
 
+import { incomeTaxDue, quoteShipUpgrade } from "@/lib/game/engine/pricing";
+import { harborTrading, rebalanced } from "@/lib/game/expansion";
+import { voyageBoon } from "@/lib/game/pools";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,9 +31,9 @@ import {
   ChevronRight,
 } from "lucide-react";
 import {
+  explainTransportCost,
   finalizeModuleSwap,
   handleModuleSelect,
-  shipUpgradeSurcharge,
   startModuleDrafting,
   swapModuleChoices,
   upgradeShip,
@@ -41,12 +44,10 @@ import {
   MODULES_TIER2,
   type Module,
   type Boon,
-  BOONS_TIER0,
-  BOONS_TIER1,
-  BOONS_TIER2,
+  BOONS,
 } from "@/lib/game/constants";
 import type { GameState } from "@/lib/game/types";
-import { NEW_BOONS, NEW_MODULES } from "@/lib/game/expansion";
+import { NEW_MODULES } from "@/lib/game/expansion";
 import { cn } from "@/lib/utils";
 import type { PublicUser } from "@/lib/api";
 import { Term } from "../../Term";
@@ -109,15 +110,14 @@ function moduleTierOf(mod: Module): "common" | "rare" | "legendary" {
 // Module ↔ Boon synergy map. Curated, decorative only: surfaces boons that
 // pair well with a given module so the player can plan across phases. Does
 // not touch game logic.
-const ALL_BOONS: Boon[] = [
-  ...BOONS_TIER0,
-  ...BOONS_TIER1,
-  ...BOONS_TIER2,
-  ...NEW_BOONS,
-];
-
 const MODULE_SYNERGIES: Record<string, string[]> = {
-  silk_monopoly: ["silk_wind"],
+  silk_monopoly: ["silk_wind", "buyers_festival"],
+  silk_market_charter: ["buyers_festival"],
+  open_hold: ["market_momentum"],
+  collectors_seal: ["ceramic_commission"],
+  traveling_commission: ["market_momentum"],
+  storm_dividend: ["safe_anchorage"],
+  wage_ledger: ["resourceful_crew"],
   tax_evasion: ["tax_shelter", "frontier_tariff_relief"],
   artisans_workshop: ["artisan_inspiration", "master_apprentice"],
   bulk_hauler: ["favorable_tides"],
@@ -134,7 +134,7 @@ const MODULE_SYNERGIES: Record<string, string[]> = {
 function synergisticBoons(mod: Module): Boon[] {
   const ids = MODULE_SYNERGIES[mod.id] ?? [];
   return ids
-    .map((id) => ALL_BOONS.find((b) => b.id === id))
+    .map((id) => BOONS.find((b) => b.id === id))
     .filter((b): b is Boon => Boolean(b));
 }
 
@@ -217,7 +217,8 @@ function StatChip({
 }
 
 function ShipStatsPanel({ game }: { game: GameState }) {
-  const canUpgrade = game.shipLevel < 3;
+  const finalRound = rebalanced(game) && game.currentRound >= game.maxRounds;
+  const canUpgrade = game.shipLevel < 3 && !finalRound;
   const cargoUnits = cargoUnitsOf(game);
   const crew = crewCountOf(game);
   const slotsUsed = game.equippedModules.length;
@@ -263,8 +264,7 @@ function ShipStatsPanel({ game }: { game: GameState }) {
             {slotsUsed} / {slotsMax}
             {canUpgrade && (
               <span className="ml-1 text-emerald-600 dark:text-emerald-400">
-                → {Math.min(slotsUsed + 1, slotsMax + 1)} / {slotsMax + 1} after
-                upgrade
+                → {slotsUsed} / {slotsMax + 1} after upgrade
               </span>
             )}
           </span>
@@ -353,7 +353,7 @@ function CostBreakdown({
           ) : (
             <TrendingDown className="h-3 w-3" />
           )}
-          Your balance
+          Gold available for upgrade
         </span>
         <span className="font-mono">{balance}💰</span>
       </div>
@@ -376,13 +376,33 @@ export function Shipyard({
   phaseSync: PhaseSync;
   members: PublicUser[];
 }) {
-  const canUpgrade = game.shipLevel < 3;
-  const surcharge = shipUpgradeSurcharge(game);
-  const upgCost = canUpgrade
-    ? game.shipUpgradeCost[game.shipLevel] + surcharge
-    : 0;
-  const affordable = game.money >= upgCost;
-  const canDraft = game.shipLevel > 0;
+  const finalRound = rebalanced(game) && game.currentRound >= game.maxRounds;
+  const canUpgrade = game.shipLevel < 3 && !finalRound;
+  const {
+    base,
+    surcharge,
+    cost: upgCost,
+    available,
+    taxReserved,
+  } = quoteShipUpgrade(game);
+  const incomeTax = incomeTaxDue(game);
+  const affordable = available >= upgCost;
+  const canDraft =
+    game.shipLevel > 0 &&
+    !finalRound &&
+    (!harborTrading(game) || game._draftChoices?.length !== 0);
+  const baseFreight = {
+    ...game,
+    modifierFlags: {},
+    effectUses: {},
+    currentRound: game.currentRound + 1,
+  };
+  const sample = { totalItems: 4, resources: [{ type: "Hemp", required: 4 }] };
+  const currentFreight = explainTransportCost(baseFreight, sample).final;
+  const upgradedFreight = explainTransportCost(
+    { ...baseFreight, shipLevel: game.shipLevel + 1 },
+    sample,
+  ).final;
   const slotsFull =
     game.equippedModules.length >= game.shipLevel && game.shipLevel > 0;
   const cargoUnits = cargoUnitsOf(game);
@@ -523,14 +543,34 @@ export function Shipyard({
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-xs">
                   <CostBreakdown
-                    base={game.shipUpgradeCost[game.shipLevel]}
+                    base={base}
                     penalty={surcharge}
                     total={upgCost}
                     affordable={affordable}
-                    balance={game.money}
+                    balance={available}
                   />
                 </TooltipContent>
               </Tooltip>
+            )}
+            {incomeTax > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Income Tax due at round end is {incomeTax} Gold.
+                {taxReserved > 0 &&
+                  ` ${taxReserved} Gold is set aside for that bill.`}
+              </p>
+            )}
+            {rebalanced(game) && canUpgrade && (
+              <p className="text-sm text-muted-foreground">
+                Upgrade for {upgCost} Gold to open one module slot. With your
+                current modules, four Hemp would cost {currentFreight} Gold to
+                ship now and {upgradedFreight} Gold at the next level, before
+                any new Boon.
+              </p>
+            )}
+            {finalRound && (
+              <p className="text-sm text-muted-foreground">
+                The voyage ends after this settlement.
+              </p>
             )}
             <Button
               size="lg"
@@ -729,7 +769,15 @@ function ModuleCard({
 }) {
   const tier = moduleTierOf(mod);
   const style = MODULE_TIER_STYLE[tier];
-  const synergies = synergisticBoons(mod);
+  const synergies = synergisticBoons(mod)
+    .filter(
+      ({ id }) =>
+        harborTrading(game) ||
+        !["buyers_festival", "market_momentum", "resourceful_crew"].includes(
+          id,
+        ),
+    )
+    .map((boon) => voyageBoon(boon, game.rulesVersion));
   const similar = game.equippedModules.filter(
     (eq) =>
       eq.id !== mod.id &&

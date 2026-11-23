@@ -30,12 +30,18 @@ import {
   type Boon,
 } from "@/lib/game/constants";
 import { swapBoonChoices } from "@/lib/game/engine";
+import {
+  needsStarterModule,
+  selectStarterModule,
+} from "@/lib/game/engine/boons";
 import type { GameState } from "@/lib/game/types";
 import type { PublicUser } from "@/lib/api";
-import { NEW_BOONS } from "@/lib/game/expansion";
+import { NEW_BOONS, harborTrading } from "@/lib/game/expansion";
+import { voyageBoon } from "@/lib/game/pools";
 import { cn } from "@/lib/utils";
 import { ReadyBar } from "../ReadyBar";
 import { Term } from "../../Term";
+import { TextWithShipIcons } from "../../ShipVisualizer";
 import type { PhaseSync } from "./PhaseShared";
 
 // Tier detection : boons are grouped into three tiers in constants.ts; we
@@ -306,7 +312,7 @@ function WaveDivider() {
 
 // Boon Synergy Guide tooltip trigger : explains how boons interact with
 // modules and the round's economy. Purely educational copy.
-function SynergyGuideBadge() {
+function SynergyGuideBadge({ game }: { game: GameState }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -334,9 +340,9 @@ function SynergyGuideBadge() {
             <span className="text-teal-600 dark:text-teal-400 font-medium">
               Modules
             </span>{" "}
-            are permanent ship upgrades that stack with boons, so a boon that
-            matches your modules can compound (e.g. <em>Silk Winds</em> +{" "}
-            <em>Silk Road Monopoly</em>).
+            {harborTrading(game)
+              ? "stay equipped across rounds. Silk Market Charter and Buyer's Festival both add to the same eligible reward and their percentages do not compound."
+              : "stay equipped across rounds until replaced. Silk Winds and Silk Road Monopoly can both reduce freight on an order."}
           </p>
           <p>
             <span className="text-amber-600 dark:text-amber-400 font-medium">
@@ -475,7 +481,8 @@ function BoonCard({
 }
 
 function BoonHistory({ game }: { game: GameState }) {
-  const last = BOONS.find((boon) => boon.id === game.lastBoonId);
+  const saved = BOONS.find((boon) => boon.id === game.lastBoonId);
+  const last = saved && voyageBoon(saved, game.rulesVersion);
   if (!last) {
     return (
       <div className="inline-flex items-center gap-2 rounded-lg border border-black/5 dark:border-white/10 bg-background/40 px-3 py-1.5 text-[11px] text-muted-foreground">
@@ -596,6 +603,44 @@ export function BoonDraft({
       </div>
     );
   }
+  if (needsStarterModule(game))
+    return (
+      <section className="grid min-w-0 gap-3">
+        <div>
+          <h2 className="text-xl font-semibold">Choose a starting module</h2>
+          <p className="text-sm text-muted-foreground">
+            Your ship has one open slot. You can change modules at the Shipyard
+            later.
+          </p>
+        </div>
+        <div className="pm-decision-grid">
+          {game._draftChoices?.map((module) => (
+            <article
+              key={module.id}
+              className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4"
+            >
+              <h3 className="font-semibold">
+                <span aria-hidden>
+                  <TextWithShipIcons>{module.icon}</TextWithShipIcons>
+                </span>{" "}
+                {module.name}
+              </h3>
+              <p className="grow text-sm text-muted-foreground">
+                {module.desc}
+              </p>
+              <Button
+                className="w-full"
+                onClick={() =>
+                  act((g, logs) => selectStarterModule(g, module.id, logs))
+                }
+              >
+                Install {module.name}
+              </Button>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
   const canSwap = !game.boonSwapUsed && game.money >= 10;
   return (
     <div className="max-w-4xl mx-auto text-center py-2 relative">
@@ -619,7 +664,7 @@ export function BoonDraft({
             members={members}
             className="justify-center"
           />
-          <SynergyGuideBadge />
+          <SynergyGuideBadge game={game} />
         </div>
 
         {/* Swap button with coin animation */}

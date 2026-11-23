@@ -1,5 +1,6 @@
 "use client";
 
+import { displayLedgerLine } from "@/lib/game/engine/lifecycle";
 import { TextWithShipIcons } from "./ShipVisualizer";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -75,7 +76,11 @@ export function NotificationToast({
             key={i}
             className="line-clamp-2 text-[13px] text-foreground/85 leading-snug break-words"
           >
-            {fromLedger ? <TextWithShipIcons>{line}</TextWithShipIcons> : line}
+            {fromLedger ? (
+              <TextWithShipIcons>{displayLedgerLine(line)}</TextWithShipIcons>
+            ) : (
+              line
+            )}
           </div>
         ))}
         {lines.length > 3 && (

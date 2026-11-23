@@ -2,6 +2,18 @@
 
 import { ShipIcon } from "../../ShipVisualizer";
 import { useState } from "react";
+import {
+  harborTrading,
+  rebalanced,
+  voyageBaseWage,
+} from "@/lib/game/expansion";
+import {
+  chooseWorkshopContract,
+  quoteOrder,
+  workshopBuyer,
+  workshopOptions,
+} from "@/lib/game/engine/orders";
+import { quoteDues } from "@/lib/game/engine/pricing";
 import { Button } from "@/components/ui/button";
 import { WAGES } from "@/lib/game/constants";
 import {
@@ -22,7 +34,7 @@ import {
 } from "@/lib/game/pools";
 import type { GameState, Worker } from "@/lib/game/types";
 import type { PublicUser } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatGoldProceeds } from "@/lib/utils";
 import { itemColorResolver } from "@/lib/use-color-preference";
 import {
   AlertTriangle,
@@ -89,6 +101,7 @@ function WorkerList({
   act,
   game,
   resolveColor,
+  locked,
 }: {
   type: string;
   icon: string;
@@ -97,6 +110,7 @@ function WorkerList({
   tasks: string[];
   act: (fn: (g: GameState, logs: string[]) => void) => void;
   game: GameState;
+  locked: boolean;
   resolveColor: (item: string) => string | undefined;
 }) {
   if (!list.length) return null;
@@ -186,9 +200,10 @@ function WorkerList({
                 size="sm"
                 variant="ghost"
                 className="h-6 px-2 text-[10px] rounded border border-rose-500/25 bg-rose-500/5 text-rose-600/90 hover:border-rose-500/40 hover:bg-rose-500/15 hover:text-rose-600 dark:text-rose-400/90 dark:hover:text-rose-300 shrink-0"
+                disabled={locked}
                 onClick={() => act((g, l) => fireWorker(g, type, i, l))}
               >
-                Dismiss ({WAGES[type]}💰)
+                Dismiss ({voyageBaseWage(WAGES[type], game.rulesVersion)}💰)
               </Button>
             )}
           </div>
@@ -216,9 +231,10 @@ function WorkerList({
                 short &&
                   "!bg-rose-500/10 !border-rose-500/40 !text-rose-600 dark:!text-rose-300",
               )}
+              disabled={locked}
               onClick={() => act((g, l) => assignTask(g, type, t, l))}
             >
-              <Hammer className="h-3 w-3" />
+              <ItemIcon item={t} className="size-4" />
               {t}
               <span className="opacity-70 inline-flex items-center gap-0.5">
                 {materials.map(([m, a]) => {
@@ -233,7 +249,8 @@ function WorkerList({
                       )}
                       style={enough ? { color: resolveColor(m) } : undefined}
                     >
-                      <ItemIcon item={m} className="h-2.5 w-2.5" />×{a}
+                      <ItemIcon item={m} className="h-2.5 w-2.5" />
+                      {rebalanced(game) ? `${m} ${have}/${a}` : `×${a}`}
                     </span>
                   );
                 })}
@@ -306,25 +323,72 @@ export function WorkerMgmt({
     game.difficulty,
     game.currentRound,
     game.rulesVersion,
+    game.specialties,
   );
-  const roster = unlockedWorkerTypes(game.difficulty, game.currentRound).map(
-    (w) => {
-      const list = game.workers[w.id] ?? [];
-      const cost = getHireCost(game, w.id);
-      return {
-        ...w,
-        list,
-        cost,
-        due: workerWagesFor(game, w.id),
-        tasks: openProducts.filter((product) => canProduce(w.id, product)),
-      };
-    },
-  );
+  const roster = unlockedWorkerTypes(
+    game.difficulty,
+    game.currentRound,
+    game.rulesVersion,
+  ).map((w) => {
+    const list = game.workers[w.id] ?? [];
+    const cost = getHireCost(game, w.id);
+    return {
+      ...w,
+      list,
+      cost,
+      due: workerWagesFor(game, w.id),
+      tasks: openProducts.filter((product) => canProduce(w.id, product)),
+    };
+  });
   const totalWages = quoteWages(game).due;
+  const due = quoteDues(game);
+  const updated = rebalanced(game);
+  const finalRound = updated && game.currentRound >= game.maxRounds;
+  const workshops =
+    updated && !finalRound && !harborTrading(game) ? workshopOptions(game) : [];
+  const [workshopItem, setWorkshopItem] = useState("");
+  const [quantityChoice, setWorkshopQuantity] = useState<number>();
+  const existing = workshopBuyer(game, game.currentRound + 1);
+  const bookedItem = existing?.resources[0]?.type;
+  const bookedQuantity = existing?.resources[0]?.required;
+  const selected =
+    [workshopItem, bookedItem].find(
+      (item) => item && workshops.includes(item),
+    ) ?? workshops[0];
+  const workshopQuantity =
+    quantityChoice ??
+    (selected === bookedItem ? bookedQuantity : undefined) ??
+    1;
+  const projectedContract = selected
+    ? workshopBuyer(
+        {
+          ...game,
+          workshopContracts: [
+            {
+              round: game.currentRound + 1,
+              item: selected,
+              quantity: workshopQuantity,
+            },
+          ],
+        },
+        game.currentRound + 1,
+      )
+    : undefined;
+  const projectedQuote = projectedContract
+    ? quoteOrder(
+        {
+          ...game,
+          modifierFlags: {},
+          effectUses: {},
+          currentRound: game.currentRound + 1,
+        },
+        projectedContract,
+      )
+    : undefined;
   const nW = roster.reduce((sum, r) => sum + r.list.length, 0);
 
   // Projected balance & bankruptcy warning
-  const projectedBalance = game.money - totalWages;
+  const projectedBalance = game.money - (updated ? due.total : totalWages);
   const bankrupt = projectedBalance < 0;
 
   // Production preview: items currently being crafted (one entry per
@@ -350,6 +414,7 @@ export function WorkerMgmt({
     game.difficulty,
     game.currentRound,
     game.rulesVersion,
+    game.specialties,
   );
 
   const [showPreview, setShowPreview] = useState(true);
@@ -459,6 +524,95 @@ export function WorkerMgmt({
           </span>
         </div>
       </div>
+
+      {updated && (
+        <section className="mb-4 grid gap-2 rounded-xl border bg-card p-4 text-sm">
+          <h3 className="font-semibold">
+            {harborTrading(game) ? "Workshop costs" : "Workshop contract"}
+          </h3>
+          <p className="text-muted-foreground">
+            This settlement includes {due.wages.due} Gold in wages and{" "}
+            {due.maintenance} Gold in maintenance.
+          </p>
+          {finalRound ? (
+            <p>
+              Buyers leave before the final settlement. Production is closed for
+              this voyage.
+            </p>
+          ) : harborTrading(game) ? (
+            <p>Check the announced buyers when planning production.</p>
+          ) : workshops.length ? (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="grid min-w-0 gap-1">
+                  Finished good
+                  <select
+                    className="min-w-0 rounded-md border bg-background p-2"
+                    value={selected}
+                    onChange={(event) => setWorkshopItem(event.target.value)}
+                  >
+                    {workshops.map((item) => (
+                      <option key={item}>{item}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  Contract quantity
+                  <select
+                    className="rounded-md border bg-background p-2"
+                    value={workshopQuantity}
+                    onChange={(event) =>
+                      setWorkshopQuantity(Number(event.target.value))
+                    }
+                  >
+                    <option value={1}>One unit</option>
+                    <option value={2}>Two units</option>
+                  </select>
+                </label>
+              </div>
+              {projectedQuote && (
+                <p>
+                  Estimated{" "}
+                  {formatGoldProceeds(
+                    projectedQuote.reward - projectedQuote.freight.final,
+                  )}{" "}
+                  next round at Quanzhou Port after VAT and freight, before any
+                  new Boon.
+                </p>
+              )}
+              {existing && (
+                <p role="status">
+                  Booked for round {game.currentRound + 1}. Deliver{" "}
+                  {existing.resources[0].required} {existing.resources[0].type}.
+                </p>
+              )}
+              <Button
+                size="sm"
+                className="justify-self-start"
+                disabled={
+                  phaseSync.waiting ||
+                  (selected === bookedItem &&
+                    workshopQuantity === bookedQuantity)
+                }
+                onClick={() =>
+                  act((g, logs) =>
+                    chooseWorkshopContract(g, selected, workshopQuantity, logs),
+                  )
+                }
+              >
+                {existing
+                  ? "Update workshop contract"
+                  : "Book workshop contract"}
+              </Button>
+            </>
+          ) : (
+            <p>
+              Hire an artisan to choose a buyer for one of their recipes next
+              round.
+            </p>
+          )}
+        </section>
+      )}
 
       {/* === Inventory grid with active production indicators ========= */}
       <div className="rounded-xl border border-teal-500/15 bg-teal-500/[0.03] p-4 mb-4">
@@ -646,7 +800,7 @@ export function WorkerMgmt({
           >
             <span className="flex items-center gap-1.5">
               <Coins className="h-3.5 w-3.5" />
-              Projected balance after wages
+              Projected balance after {updated ? "settlement bills" : "wages"}
             </span>
             <b
               className={cn(
@@ -656,7 +810,9 @@ export function WorkerMgmt({
                   : "text-emerald-700 dark:text-emerald-300",
               )}
             >
-              {projectedBalance} Gold
+              {projectedBalance < 0
+                ? `Short by ${Math.abs(projectedBalance)} Gold`
+                : `${projectedBalance} Gold`}
             </b>
           </div>
           {bankrupt && (
@@ -720,6 +876,11 @@ export function WorkerMgmt({
                 artisanTint(r.id),
                 "pm-artisan-chip rounded-lg border font-medium gap-1.5",
               )}
+              disabled={
+                phaseSync.waiting ||
+                finalRound ||
+                (updated && game.money < due.total + r.cost)
+              }
               onClick={() => act((g, l) => hireWorker(g, r.id, l))}
             >
               <span className="text-sm">{r.icon}</span>
@@ -738,7 +899,7 @@ export function WorkerMgmt({
         <div className="rounded-xl border border-teal-500/15 bg-teal-500/[0.03] p-4 mb-4">
           <h3 className="text-center font-semibold mb-2 flex items-center justify-center gap-1.5">
             <Hammer className="h-4 w-4 text-teal-600 dark:text-teal-400" />
-            Worker Status &amp; Tasks
+            Artisan Tasks
           </h3>
           {roster.map((r) => (
             <WorkerList
@@ -747,7 +908,8 @@ export function WorkerMgmt({
               icon={r.icon}
               list={r.list}
               name={r.label}
-              tasks={r.tasks}
+              tasks={finalRound ? [] : r.tasks}
+              locked={phaseSync.waiting}
               act={act}
               game={game}
               resolveColor={resolveColor}

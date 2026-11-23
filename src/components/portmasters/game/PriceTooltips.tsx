@@ -7,7 +7,7 @@ import {
 } from "@/lib/game/engine";
 import type { explainVAT } from "@/lib/game/engine/pricing";
 import type { GameState } from "@/lib/game/types";
-import { GLOSSARY } from "@/lib/game/glossary";
+import { glossaryEntry } from "@/lib/game/glossary";
 import { unlockedProducts, unlockedResources } from "@/lib/game/pools";
 
 /**
@@ -37,8 +37,8 @@ export function PriceBreakdownTooltip({
         <div key={i} className="flex justify-between gap-3">
           <span>{s.label}</span>
           <span>
-            {s.delta >= 0 ? "+" : ""}
-            {s.delta}g
+            {s.delta < 0 ? "Save " : "Add "}
+            {Math.abs(s.delta)} Gold
           </span>
         </div>
       ))}
@@ -113,15 +113,17 @@ export function priceAwareTermContent(game: GameState, itemType: string) {
     game.difficulty,
     game.currentRound,
     game.rulesVersion,
+    game.specialties,
   );
   const openProducts = unlockedProducts(
     game.difficulty,
     game.currentRound,
     game.rulesVersion,
+    game.specialties,
   );
   if (!openResources.includes(itemType) && !openProducts.includes(itemType))
     return undefined;
-  const description = GLOSSARY[itemType];
+  const description = glossaryEntry(itemType, game.rulesVersion);
   const price = explainExpectedPrice(game, itemType);
   return (
     <div className="space-y-1.5">

@@ -1,6 +1,7 @@
 // Applies local wallet and ledger changes for server approved loans.
 import { AID_REPUTATION_PER_GOLD, helperReputationCapFor } from "../constants";
 import type { GameState } from "../types";
+import { taxReserve } from "./pricing";
 
 // Credits borrowed Gold and records the debt.
 export function receiveLoan(
@@ -77,9 +78,11 @@ export function grantLoan(
 export function repayLoan(state: GameState, debtId: string, logs: string[]) {
   const debt = state.debts.find((d) => d.id === debtId);
   if (!debt) return;
-  if (state.money < debt.amount) {
+  const reserved = taxReserve(state);
+  const available = state.money - reserved;
+  if (available < debt.amount) {
     logs.push(
-      `❌ Need ${debt.amount} Gold to repay ${debt.counterpartyName}, have ${state.money}`,
+      `❌ Need ${debt.amount} Gold to repay ${debt.counterpartyName}. Available Gold: ${available}${reserved ? ` after reserving ${reserved} Gold for Income Tax` : ""}.`,
     );
     return;
   }

@@ -8,7 +8,16 @@ import {
   NEW_PRODUCTS,
 } from "./expansion";
 
-const newGoods = { ...NEW_MATERIALS, ...NEW_PRODUCTS };
+import {
+  HARBOR_BOONS,
+  HARBOR_MATERIALS,
+  HARBOR_MODULES,
+  HARBOR_PRODUCTS,
+} from "./harbor-catalog";
+
+const materialGoods = { ...NEW_MATERIALS, ...HARBOR_MATERIALS };
+const finishedGoods = { ...NEW_PRODUCTS, ...HARBOR_PRODUCTS };
+const newGoods = { ...materialGoods, ...finishedGoods };
 const addedIcons = Object.fromEntries(
   Object.entries(newGoods).map(([item, data]) => [item, data.icon]),
 );
@@ -32,6 +41,11 @@ export const ICONS: Record<string, string> = {
   "Porcelain Clay": "🧱",
   "Copper Ore": "⛏️",
   "Celadon Ware": "🫖",
+  "Inlaid Kettle": "⚗️",
+  "River Lacquer": "🟤",
+  "Lacquered Mirror": "🔍",
+  "Incense Oil": "💧",
+  "Pearl and Lapis Strand": "🔵",
   "Bronze Mirror": "🪞",
   Spices: "🌶️",
   Pearls: "🦪",
@@ -88,7 +102,7 @@ export const RESOURCES = [
   ...RESOURCES_TIER0,
   ...RESOURCES_TIER1,
   ...RESOURCES_TIER2,
-  ...(Object.keys(NEW_MATERIALS) as Array<keyof typeof NEW_MATERIALS>),
+  ...(Object.keys(materialGoods) as Array<keyof typeof materialGoods>),
 ] as const;
 
 export const PRODUCTS_TIER0 = [
@@ -103,7 +117,7 @@ export const PRODUCTS = [
   ...PRODUCTS_TIER0,
   ...PRODUCTS_TIER1,
   ...PRODUCTS_TIER2,
-  ...(Object.keys(NEW_PRODUCTS) as Array<keyof typeof NEW_PRODUCTS>),
+  ...(Object.keys(finishedGoods) as Array<keyof typeof finishedGoods>),
 ] as const;
 // The cargo hold includes every catalogued good from voyage creation.
 export const ITEMS = [...RESOURCES, ...PRODUCTS] as const;
@@ -132,7 +146,7 @@ export const RECIPES: Record<
   { materials: Record<string, number>; worker_type: string }
 > = {
   ...Object.fromEntries(
-    Object.entries(NEW_PRODUCTS).map(([name, recipe]) => [
+    Object.entries(finishedGoods).map(([name, recipe]) => [
       name,
       { materials: recipe.materials, worker_type: recipe.worker_type },
     ]),
@@ -170,7 +184,7 @@ export const COMMODITIES: Record<
   { ports: string[]; basePrice: [number, number] }
 > = {
   ...Object.fromEntries(
-    Object.entries(NEW_MATERIALS).map(([name, good]) => [
+    Object.entries(materialGoods).map(([name, good]) => [
       name,
       { ports: [...good.ports], basePrice: [...good.range] },
     ]),
@@ -195,7 +209,7 @@ export const COMMODITIES: Record<
 
 export const PRODUCT_PRICES: Record<string, [number, number]> = {
   ...Object.fromEntries(
-    Object.entries(NEW_PRODUCTS).map(([name, product]) => [
+    Object.entries(finishedGoods).map(([name, product]) => [
       name,
       [...product.price],
     ]),
@@ -213,7 +227,7 @@ export const PRODUCT_PRICES: Record<string, [number, number]> = {
 // The market normalizes these weights across currently unlocked resources.
 export const RESOURCE_WEIGHTS: Record<string, number> = {
   ...Object.fromEntries(
-    Object.entries(NEW_MATERIALS).map(([name, good]) => [name, good.weight]),
+    Object.entries(materialGoods).map(([name, good]) => [name, good.weight]),
   ),
   Hemp: 40,
   Silk: 35,
@@ -388,7 +402,7 @@ export const BOONS_TIER0: Boon[] = [
     id: "master_apprentice",
     name: "Master's Apprentice",
     icon: "🎓",
-    desc: "Workers hired this round earn half their base wage for their first settlement.",
+    desc: "Workers hired this round earn half their base wage for their first settlement, before the Artisan's Workshop adjustment.",
     modifiers: { hire_discount: 0.5 },
   },
 ];
@@ -447,6 +461,7 @@ export const BOONS: Boon[] = [
   ...BOONS_TIER1,
   ...BOONS_TIER2,
   ...NEW_BOONS,
+  ...HARBOR_BOONS,
 ];
 
 export type Module = { id: string; name: string; icon: string; desc: string };
@@ -456,7 +471,7 @@ export const MODULES_TIER0: Module[] = [
     id: "smugglers_hold",
     name: "Smuggler's Hold",
     icon: "🏴‍☠️",
-    desc: "Port cargo lots cost 15% less after other discounts. The calculated Income Tax increases by 20% before any Tax Evasion Ledger reduction.",
+    desc: "Port cargo lots cost 15% less after Merchant's Charm, Hemp Monopoly, Kiln Cellar, and Foreign Quarter Pass. The discounted price rounds down, then Bamboo Fair, Deep Market, and Merchant Scales can reduce it further. The calculated Income Tax increases by 20% before any Tax Evasion Ledger reduction.",
   },
   {
     id: "bulk_hauler",
@@ -541,7 +556,7 @@ export const MODULES_TIER2: Module[] = [
     id: "fleet_of_treasures",
     name: "Fleet of Treasures",
     icon: "⛵",
-    desc: "Reduces freight by 3 Gold for each unit of Foreign Balm or Pearl String after other freight reductions, to a minimum of zero.",
+    desc: "Reduces freight by 3 Gold per unit of Foreign Balm or Pearl String after the Silk reductions, to a minimum of zero. Cargo Net and Convoy Pennant can reduce the remaining freight.",
   },
 ];
 
@@ -550,6 +565,7 @@ export const MODULES: Module[] = [
   ...MODULES_TIER1,
   ...MODULES_TIER2,
   ...NEW_MODULES,
+  ...HARBOR_MODULES,
 ];
 
 // Ratings are ordered from highest threshold to the catch all floor.

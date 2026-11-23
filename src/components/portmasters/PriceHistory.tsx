@@ -51,6 +51,7 @@ type ItemSummary = {
   max: number;
   trend: "rising" | "falling" | "stable";
   points: PricePoint[];
+  percentChange: number;
 };
 
 // Constants
@@ -68,15 +69,21 @@ function summarize(points: PricePoint[]): ItemSummary | null {
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   let trend: ItemSummary["trend"] = "stable";
+  let percentChange = 0;
   if (prices.length >= 2) {
     const prev = prices[prices.length - 2];
     if (prev > 0) {
       const delta = (current - prev) / prev;
+      percentChange = Math.round(Math.abs(delta) * 100);
       if (delta > TREND_THRESHOLD) trend = "rising";
       else if (delta < -TREND_THRESHOLD) trend = "falling";
     }
   }
-  return { current, average, min, max, trend, points };
+  return { current, average, min, max, trend, points, percentChange };
+}
+
+function priceText(price: number, unit = "") {
+  return `${price < 0 ? "Cost " : ""}${Math.abs(price)}${unit}`;
 }
 
 function isResource(item: string): boolean {
@@ -162,7 +169,7 @@ function LineChart({
     return {
       minRound,
       maxRound,
-      minPrice: Math.max(0, minPrice - pad),
+      minPrice: minPrice < 0 ? minPrice - pad : Math.max(0, minPrice - pad),
       maxPrice: maxPrice + pad,
       rounds: [...roundSet].sort((a, b) => a - b),
     };
@@ -313,7 +320,7 @@ function LineChart({
               fill="currentColor"
               className="text-muted-foreground/70"
             >
-              {t.value}
+              {priceText(t.value)}
             </text>
           </g>
         ))}
@@ -491,7 +498,9 @@ function LineChart({
                       : "text-foreground",
                   )}
                 >
-                  {row.price == null ? "No price" : `${row.price}g`}
+                  {row.price == null
+                    ? "No price"
+                    : priceText(row.price, " Gold")}
                 </span>
               </div>
             ))}
@@ -590,18 +599,21 @@ function Sparkline({
 
 // Summary card
 
-function TrendChip({ trend }: { trend: ItemSummary["trend"] }) {
+function TrendChip({
+  trend,
+  percentChange,
+}: Pick<ItemSummary, "trend" | "percentChange">) {
   if (trend === "rising") {
     return (
       <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-        <TrendingUp className="h-2.5 w-2.5" /> Rising
+        <TrendingUp className="h-2.5 w-2.5" /> Up {percentChange} percent
       </span>
     );
   }
   if (trend === "falling") {
     return (
       <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300">
-        <TrendingDown className="h-2.5 w-2.5" /> Falling
+        <TrendingDown className="h-2.5 w-2.5" /> Down {percentChange} percent
       </span>
     );
   }
@@ -664,7 +676,10 @@ function SummaryCard({
             {item}
           </span>
         </button>
-        <TrendChip trend={summary.trend} />
+        <TrendChip
+          trend={summary.trend}
+          percentChange={summary.percentChange}
+        />
       </div>
       <div className="mb-2 flex items-end justify-between gap-2">
         <div>
@@ -672,7 +687,7 @@ function SummaryCard({
             Current
           </div>
           <div className="text-lg font-bold tabular-nums leading-none text-foreground">
-            {summary.current}
+            {priceText(summary.current)}
             <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">
               g
             </span>
@@ -684,19 +699,19 @@ function SummaryCard({
         <div className="rounded-md bg-black/[0.03] px-1.5 py-1 text-center dark:bg-white/[0.04]">
           <div className="text-muted-foreground/60">Avg</div>
           <div className="font-semibold tabular-nums text-foreground">
-            {summary.average}
+            {priceText(summary.average)}
           </div>
         </div>
         <div className="rounded-md bg-black/[0.03] px-1.5 py-1 text-center dark:bg-white/[0.04]">
           <div className="text-muted-foreground/60">Min</div>
           <div className="font-semibold tabular-nums text-foreground">
-            {summary.min}
+            {priceText(summary.min)}
           </div>
         </div>
         <div className="rounded-md bg-black/[0.03] px-1.5 py-1 text-center dark:bg-white/[0.04]">
           <div className="text-muted-foreground/60">Max</div>
           <div className="font-semibold tabular-nums text-foreground">
-            {summary.max}
+            {priceText(summary.max)}
           </div>
         </div>
       </div>
@@ -1050,7 +1065,7 @@ export function PriceHistory({
         <p className="text-xs text-muted-foreground">
           {side === "buy"
             ? "Average listed Gold per unit across the market ports. Lot discounts appear on the buying board."
-            : "Average quoted Gold per cargo unit after VAT and freight, before random audits or refunds. Includes ordinary buyer orders."}
+            : "Average quote per cargo unit when you first see the trade board each round. Includes VAT and freight before audits or refunds. Each offer is quoted separately. Exchange sales, mandates, Broker’s Favor, workshop contracts, and clearance sales are excluded."}
         </p>
         <AnimatePresence mode="wait" initial={false}>
           {hasAnyHistory ? (
@@ -1118,5 +1133,3 @@ export function PriceHistory({
     </section>
   );
 }
-
-export default PriceHistory;

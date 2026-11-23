@@ -48,12 +48,19 @@ export function useBarter(
 
   const send = useCallback(
     async (action: Record<string, unknown>) => {
-      if (!socket?.connected || !enabled || sending.current) return false;
+      if (
+        !socket?.connected ||
+        !enabled ||
+        sending.current ||
+        getGame().readyVote
+      )
+        return false;
       sending.current = true;
       setBusy(true);
       setError(null);
       try {
         await flush();
+        if (getGame().readyVote) return false;
         const result: { error: string | null } = await socket
           .timeout(5000)
           .emitWithAck("barter:action", { roomId, ...action });
@@ -70,7 +77,7 @@ export function useBarter(
         setBusy(false);
       }
     },
-    [enabled, flush, roomId, socket],
+    [enabled, flush, getGame, roomId, socket],
   );
 
   return {

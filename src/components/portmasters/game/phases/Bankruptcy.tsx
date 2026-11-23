@@ -1,5 +1,6 @@
 "use client";
 
+import { formatReputation } from "@/lib/utils";
 import { ShipIcon } from "../../ShipVisualizer";
 import type { GameState } from "@/lib/game/types";
 import type { PublicUser } from "@/lib/api";
@@ -65,7 +66,7 @@ export function Bankruptcy({
         </div>
         <div className="text-muted-foreground">🏆 Final Reputation:</div>
         <div>
-          <b>{game.score}</b>
+          <b>{formatReputation(game.score)}</b>
         </div>
         <div className="text-muted-foreground">
           <ShipIcon /> Ship Level:

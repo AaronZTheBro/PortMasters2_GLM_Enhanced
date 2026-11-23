@@ -1,5 +1,7 @@
 "use client";
 
+import { VoyageGlossary } from "./Term";
+
 import { ShipIcon } from "./ShipVisualizer";
 import { quoteDues } from "@/lib/game/engine";
 import {
@@ -25,6 +27,7 @@ import {
   WORD_ON_THE_DOCKS_REWARD,
   WORD_ON_THE_DOCKS_THRESHOLD,
 } from "@/lib/game/constants";
+import { CLASSIC_HARBOR_RULES } from "@/lib/game/expansion";
 import { meritById } from "@/lib/game/merits";
 import { useRealtime } from "@/lib/use-realtime";
 import type { GameState } from "@/lib/game/types";
@@ -48,11 +51,12 @@ import {
   type BackingResolved,
   type OutstandingLoan,
 } from "@/lib/use-backing";
+import { useConvoy } from "@/lib/use-convoy";
 import {
-  useConvoy,
+  ventureSettlementLine,
   type VentureOutcome,
   type VentureSettlement,
-} from "@/lib/use-convoy";
+} from "@/lib/game/convoy";
 import { useNotificationCenter } from "@/lib/use-notifications";
 import { useSound } from "@/lib/use-sound";
 import { PlayerDetailModal } from "./game/GameModals";
@@ -116,13 +120,12 @@ import {
   Settings,
   Ellipsis,
 } from "lucide-react";
-import { cn, normalizeRoomName } from "@/lib/utils";
+import { cn, formatReputation, normalizeRoomName } from "@/lib/utils";
 import { useColorPreference } from "@/lib/use-color-preference";
 import {
   applyTidewatchSurge,
   claimWordOnTheDocksReward,
   clearRedirectedLoan,
-  contributeToVenture,
   grantLoan,
   pledgeBacking,
   purchaseIntel,
@@ -130,7 +133,6 @@ import {
   receiveBackingOutcome,
   receiveLoan,
   receiveRepayment,
-  receiveVentureSettlement,
   repayLoan,
 } from "@/lib/game/engine";
 
@@ -227,6 +229,7 @@ export function GameRoom({
     act,
     flush,
   );
+  const convoySpending = useRef(false);
   const phaseSync = usePhaseSync(
     room.id,
     socket,
@@ -240,6 +243,14 @@ export function GameRoom({
     me.id,
     startingGoldBonus,
     retryLoad,
+    convoySpending,
+  );
+
+  const actInPhase: typeof act = useCallback(
+    (change) => {
+      if (!getGame().readyVote && !convoySpending.current) act(change);
+    },
+    [act, getGame],
   );
 
   // A loan involving me just resolved, on either side: as the helper
@@ -362,50 +373,22 @@ export function GameRoom({
     onBackingCovered,
   );
 
-  // The server already confirmed this
-  // contribution was accepted (see venture:contribute in
-  // src/server/realtime.ts); this is the one place it actually gets
-  // deducted from my own Gold, at exactly the accepted amount, which can be
-  // less than what I asked to give if the venture was topped up moments
-  // earlier by someone else.
-  const onVentureContributed = useCallback(
-    (_ventureId: string, accepted: number) => {
-      act((g, l) => contributeToVenture(g, accepted, l));
-    },
-    [act],
-  );
-  // Fires on every client the moment any venture in the room resolves, for
-  // any of the three outcomes; only apply the Gold effect if I actually
-  // contributed to this particular one.
+  // The harbor ledger applies the Gold even if a captain missed this toast.
   const onVentureSettled = useCallback(
-    (
-      _ventureId: string,
-      outcome: VentureOutcome,
-      settlements: VentureSettlement[],
-    ) => {
-      const mine = settlements.find((s) => s.userId === me.id);
-      if (!mine) return;
-      act((g, l) => receiveVentureSettlement(g, mine.amount, l, outcome));
-      if (outcome === "filled") {
-        toast.success("⚓ Convoy Venture filled!", {
-          description: `Your share: +${mine.amount} Gold.`,
-        });
-      } else if (outcome === "failed") {
-        toast("⚓ Convoy Venture missed its deadline", {
-          description: `Partial refund: +${mine.amount} Gold.`,
-        });
-      } else {
-        toast("⚓ Convoy Venture cancelled", {
-          description: `Another venture in the harbor already claimed this voyage's one chance. Full refund: +${mine.amount} Gold.`,
-        });
-      }
+    (outcome: VentureOutcome, settlements: VentureSettlement[]) => {
+      const mine = settlements.find(
+        (settlement) => settlement.userId === me.id,
+      );
+      if (mine) toast(ventureSettlementLine(outcome, mine.amount));
     },
-    [act, me.id],
+    [me.id],
   );
   const convoy = useConvoy(
     socket,
     room.id,
-    onVentureContributed,
+    getGame,
+    flush,
+    convoySpending,
     onVentureSettled,
   );
 
@@ -456,7 +439,7 @@ export function GameRoom({
         play("crown");
         setTimeout(() => play("voyage_complete"), 350);
         toast.success("Crowned Sea Master!", {
-          description: `Highest Reputation in the harbor this voyage: ${mine.reputation}.`,
+          description: `Highest Reputation in the harbor this voyage: ${formatReputation(mine.reputation)}.`,
         });
       } else {
         play("voyage_complete");
@@ -537,19 +520,34 @@ export function GameRoom({
     if (!docksPending || !state.loaded || !socket || !connected || !authed)
       return;
     let active = true;
-    void (async () => {
-      await flush();
-      if (!active) return;
-      const accepted: boolean = await socket
-        .timeout(4000)
-        .emitWithAck("docks:claim", { roomId: room.id, voyageEpoch });
-      if (!active || !accepted || getGame().voyageEpoch !== voyageEpoch) return;
-      act((game) => {
-        game._pendingDocksClaim = undefined;
-      });
-    })().catch(() => {});
+    let busy = false;
+    const claim = async () => {
+      if (!active || busy || !socket.connected) return;
+      const game = getGame();
+      if (!game._pendingDocksClaim || game.voyageEpoch !== voyageEpoch) return;
+      busy = true;
+      try {
+        await flush();
+        if (!active || getGame().voyageEpoch !== voyageEpoch) return;
+        const accepted: boolean = await socket
+          .timeout(4000)
+          .emitWithAck("docks:claim", { roomId: room.id, voyageEpoch });
+        if (active && accepted)
+          act((latest) => {
+            if (latest.voyageEpoch === voyageEpoch)
+              latest._pendingDocksClaim = undefined;
+          });
+      } catch {
+        // The saved claim stays pending until the server acknowledges it.
+      } finally {
+        busy = false;
+      }
+    };
+    void claim();
+    const retry = setInterval(() => void claim(), 4000);
     return () => {
       active = false;
+      clearInterval(retry);
     };
   }, [
     act,
@@ -611,9 +609,9 @@ export function GameRoom({
 
   const handleRepayLoan = useCallback(
     (debtId: string) => {
-      act((game, logs) => repayLoan(game, debtId, logs));
+      actInPhase((game, logs) => repayLoan(game, debtId, logs));
     },
-    [act],
+    [actInPhase],
   );
 
   const notifications = useNotificationCenter();
@@ -936,7 +934,7 @@ export function GameRoom({
 
   const handleNext = useCallback(() => {
     play("click");
-    if (!barter.busy) void phaseSync.markReady();
+    if (!barter.busy && !convoySpending.current) void phaseSync.markReady();
   }, [barter.busy, phaseSync, play]);
 
   const handleSetSail = useCallback(() => {
@@ -1284,6 +1282,7 @@ export function GameRoom({
             game={state.game}
             logs={state.logs}
             onRepayLoan={handleRepayLoan}
+            waiting={phaseSync.waiting}
             convoy={convoy}
             myUserId={me.id}
             colorFor={colorFor}
@@ -1405,7 +1404,11 @@ export function GameRoom({
             <VoyageMilestones game={state.game} />
           )}
           {moreWorkspaceTab === "advisor" && (
-            <StrategyAdvisor game={state.game} />
+            <StrategyAdvisor
+              game={state.game}
+              userId={me.id}
+              roomId={room.id}
+            />
           )}
           {moreWorkspaceTab === "prices" && (
             <PriceHistory
@@ -1426,7 +1429,11 @@ export function GameRoom({
     </Tabs>
   );
 
-  return (
+  const helpRules =
+    state.game.phase === 0 ? CLASSIC_HARBOR_RULES : state.game.rulesVersion;
+  const helpSpecialties = state.game.specialties;
+
+  const view = (
     <div className="pm-canvas flex h-dvh min-h-0 w-full flex-col overflow-hidden">
       <header className="z-30 shrink-0 px-2 py-2 sm:px-4 sm:py-3">
         <div className="pm-glass-strong mx-auto flex max-w-[1440px] items-center justify-between gap-2 rounded-2xl px-2.5 py-2 sm:px-4">
@@ -1552,10 +1559,11 @@ export function GameRoom({
             )}
           >
             <GamePhasePanel
+              flush={flush}
               logs={state.logs}
               game={state.game}
               context={ctx}
-              act={act}
+              act={actInPhase}
               members={members}
               myUserId={me.id}
               isHost={isHost}
@@ -1571,8 +1579,6 @@ export function GameRoom({
               myLegacy={myLegacy}
               onRestart={handleRestart}
               onShowRumors={() => setRumorOpen(true)}
-              onShowGuide={() => setGuideOpen(true)}
-              onShowTips={() => setTipsOpen(true)}
               onShowTutorial={() => setTutOpen(true)}
               colorFor={colorFor}
             />
@@ -1588,7 +1594,7 @@ export function GameRoom({
               <GameControlPanel
                 game={state.game}
                 saveStatus={state.saveStatus}
-                nextBusy={barter.busy}
+                nextBusy={barter.busy || convoy.busy}
                 isHost={isHost}
                 onSetSail={handleSetSail}
                 onNextPhase={handleNext}
@@ -1726,25 +1732,29 @@ export function GameRoom({
         open={guideOpen}
         onOpenChange={setGuideOpen}
         difficulty={state.game.difficulty}
-        rulesVersion={state.game.rulesVersion}
+        rulesVersion={helpRules}
+        specialties={helpSpecialties}
       />
       <TipsModal
         open={tipsOpen}
         onOpenChange={setTipsOpen}
         difficulty={state.game.difficulty}
-        rulesVersion={state.game.rulesVersion}
+        rulesVersion={helpRules}
+        specialties={helpSpecialties}
       />
       <RumorBoardModal
         open={rumorOpen}
         onOpenChange={setRumorOpen}
         game={state.game}
-        onBuy={() => act((g, l) => purchaseIntel(g, l))}
+        locked={phaseSync.waiting}
+        onBuy={(item) => actInPhase((g, l) => purchaseIntel(g, l, item))}
       />
       <TutorialModal
         open={tutOpen}
         onOpenChange={handleTutorialOpenChange}
         difficulty={state.game.difficulty}
-        rulesVersion={state.game.rulesVersion}
+        rulesVersion={helpRules}
+        specialties={helpSpecialties}
       />
       <RestartConfirmModal
         open={restartConfirmOpen}
@@ -1773,6 +1783,7 @@ export function GameRoom({
         isMe={selectedPlayerId === me.id}
         difficulty={state.game.difficulty}
         rulesVersion={state.game.rulesVersion}
+        specialties={state.game.specialties}
         colorFor={colorFor}
         detail={
           selectedPlayerId ? playerDetail.detail[selectedPlayerId] : undefined
@@ -1806,6 +1817,9 @@ export function GameRoom({
         </motion.button>
       )}
     </div>
+  );
+  return (
+    <VoyageGlossary value={state.game.rulesVersion}>{view}</VoyageGlossary>
   );
 }
 

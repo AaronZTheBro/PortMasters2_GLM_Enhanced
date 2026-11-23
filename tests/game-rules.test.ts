@@ -46,7 +46,11 @@ import { quoteOrder } from "../src/lib/game/engine/orders";
 import { quotePirateWaters } from "../src/lib/game/engine/pirates";
 import { createRng } from "../src/lib/game/rng";
 import { buildPriceSnapshot } from "../src/lib/use-price-history";
-import { computeHarborPulse, PULSE_CAP } from "../src/lib/game/harborPulse";
+import {
+  computeHarborPulse,
+  PULSE_CAP,
+  savedPurchaseTotals,
+} from "../src/lib/game/harborPulse";
 import { checkSave, plausibleCeiling } from "../src/lib/game/integrity";
 import { createInitialGameState, type OrderCard } from "../src/lib/game/types";
 import {
@@ -303,7 +307,7 @@ test("An audit spends available Gold and records the actual expense", (t) => {
   assert.equal(game.roundCosts, 20);
   assert.equal(game.totalCosts, 20);
   assert.equal(game.score, 0);
-  assert.ok(logs.some((line) => line.includes("Net Profit: 0 Gold")));
+  assert.ok(logs.some((line) => line.includes("Net Proceeds: 0 Gold")));
   game.money = -5;
   hireEscort(game, []);
   assert.equal(game.money, -5);
@@ -476,6 +480,49 @@ test("Broker bundles share one corruption roll and a finite pool of unique tips"
   }
 });
 
+test("Harbor Pulse uses saved receipts after the round clears its market", () => {
+  const game = createInitialGameState(0, 1, 7);
+  game.resourceCards = [
+    {
+      id: 1,
+      port: "Quanzhou Port",
+      resources: [{ type: "Hemp", quantity: 3 }],
+      totalCost: 9,
+      isProductCard: false,
+    },
+    {
+      id: 2,
+      port: "Quanzhou Port",
+      resources: [{ type: "Linen Clothes", quantity: 2 }],
+      totalCost: 45,
+      isProductCard: true,
+    },
+  ];
+  game.purchasedCards = [1, 1, 2];
+  const earlyExit = JSON.stringify({ ...game, purchasedCards: [1] });
+  endRound(game, []);
+  assert.deepEqual(game.resourceCards, []);
+  const tally = savedPurchaseTotals(
+    [
+      JSON.stringify(game),
+      earlyExit,
+      JSON.stringify({ ...game, voyageEpoch: 6 }),
+      JSON.stringify({
+        ...game,
+        lastPurchaseTally: { round: 4, quantities: { Hemp: 100 } },
+      }),
+    ],
+    7,
+    1,
+  );
+  assert.deepEqual(tally, { Hemp: 6 });
+  assert.deepEqual(computeHarborPulse(tally, ["Hemp", "Silk", "Tea"]), {
+    Hemp: PULSE_CAP,
+    Silk: -PULSE_CAP,
+    Tea: -PULSE_CAP,
+  });
+});
+
 test("Price history separates listed market prices and buyer quotes", () => {
   const game = createInitialGameState();
   game.resourceCards = [
@@ -513,11 +560,36 @@ test("Price history separates listed market prices and buyer quotes", () => {
       resources: [{ type: "Hemp", required: 1 }],
     },
   ];
+  game.resourceCards.push({
+    id: 100,
+    port: "Workshop Supplier",
+    workshopSupply: true,
+    totalCost: 99,
+    isProductCard: false,
+    resources: [{ type: "Hemp", quantity: 1, price: 99 }],
+  });
   assert.deepEqual(buildPriceSnapshot(game, "buy").Hemp, {
     round: 1,
     price: 4,
     port: "Ningbo, Quanzhou",
   });
+  const order = game.customerCards[0];
+  game.customerCards.push(
+    {
+      ...order,
+      id: 100,
+      demandPort: "Clearance Buyer",
+      clearance: true,
+      reward: 99,
+    },
+    {
+      ...order,
+      id: 50,
+      demandPort: "Quanzhou Port",
+      workshop: true,
+      reward: 99,
+    },
+  );
   assert.deepEqual(buildPriceSnapshot(game, "sell").Hemp, {
     round: 1,
     price: 15,
@@ -564,4 +636,75 @@ test("Replay of a committed barter ledger does not consume cargo twice", () => {
   assert.equal(game.inventory.Hemp, 10);
   assert.deepEqual(logs, ["Offer posted", "Cargo returned"]);
   assert.equal(game.barterCursor, 5);
+});
+
+test("Price breakdown renders savings without a minus sign", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { PriceBreakdownTooltip } =
+    await import("../src/components/portmasters/game/PriceTooltips");
+  const markup = renderToStaticMarkup(
+    createElement(PriceBreakdownTooltip, {
+      breakdown: {
+        base: 34,
+        final: 28,
+        steps: [{ label: "Merchant's Charm", delta: -6 }],
+      },
+    }),
+  );
+  assert.match(markup, /Save.*6.*Gold/);
+  assert.doesNotMatch(markup, /-6/);
+});
+
+test("Gold proceeds describe costs without a minus sign", async () => {
+  const { formatGoldProceeds } = await import("../src/lib/utils");
+  assert.equal(formatGoldProceeds(-6), "cost 6 Gold");
+  assert.equal(formatGoldProceeds(0), "proceeds 0 Gold");
+  assert.equal(formatGoldProceeds(15), "proceeds 15 Gold");
+});
+
+test("The advisor describes a costly Broker order without a minus sign", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { StrategyAdvisor } =
+    await import("../src/components/portmasters/StrategyAdvisor");
+  const { callBrokersFavor } = await import("../src/lib/game/engine/orders");
+  const { buildCurrentVoyageRules } = await import("../src/lib/game/forecast");
+  const game = createInitialGameState(
+    0,
+    5,
+    1,
+    "fair_winds",
+    buildCurrentVoyageRules("test", 1, "fair_winds"),
+  );
+  game.phase = 2;
+  game.seatSeed = "t";
+  game.money = 1000;
+  game.inventory.Hemp = 100;
+  callBrokersFavor(game, "Hemp", 100, []);
+  const quote = quoteOrder(game, game.customerCards[0]);
+  const cost = quote.freight.final - quote.reward;
+  assert.ok(cost > 0);
+  const markup = renderToStaticMarkup(
+    createElement(StrategyAdvisor, {
+      game,
+      userId: "captain",
+      roomId: "harbor",
+    }),
+  );
+  assert.match(markup, new RegExp(`quoted cost ${cost} Gold`));
+  assert.doesNotMatch(markup, new RegExp(`payout of -${cost}`));
+});
+
+test("Negative Reputation remains readable across score views", async () => {
+  const { formatReputation } = await import("../src/lib/utils");
+  const { displayLedgerLine } =
+    await import("../src/lib/game/engine/lifecycle");
+  assert.equal(formatReputation(-8), "8 below zero");
+  assert.equal(formatReputation(0), "0");
+  assert.equal(formatReputation(12), "12");
+  assert.equal(
+    displayLedgerLine("🏆 Final Reputation: -8"),
+    "🏆 Final Reputation: 8 below zero",
+  );
 });

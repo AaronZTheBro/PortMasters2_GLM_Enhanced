@@ -1,14 +1,24 @@
 "use client";
 
+import { describeWhisperCargo } from "@/lib/game/broker-whispers";
+import { classicHarbor, harborTrading, rebalanced } from "@/lib/game/expansion";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { QuantityInput } from "@/components/ui/quantity-input";
-import { BROKERS_FAVOR_UNLOCK_LEVEL } from "@/lib/game/constants";
+import { BROKERS_FAVOR_UNLOCK_LEVEL, ITEMS } from "@/lib/game/constants";
 import { callBrokersFavor, completeOrder } from "@/lib/game/engine";
 import { poolsFor } from "@/lib/game/engine/market";
-import { quoteOrder, whisperForOrder } from "@/lib/game/engine/orders";
+import {
+  CLEARANCE_ID,
+  quoteClearance,
+  quoteOrder,
+  quotePortExchange,
+  sellAtPortExchange,
+  sellClearance,
+  whisperForOrder,
+} from "@/lib/game/engine/orders";
 import type { GameState } from "@/lib/game/types";
-import { cn } from "@/lib/utils";
+import { cn, formatGoldProceeds } from "@/lib/utils";
 import { itemColorResolver } from "@/lib/use-color-preference";
 import { Coins } from "lucide-react";
 import type { PublicUser } from "@/lib/api";
@@ -19,12 +29,14 @@ import { ReadyFooter, type PhaseSync } from "./PhaseShared";
 
 export function Orders({
   game,
+  flush,
   act,
   phaseSync,
   members,
   colorFor,
 }: {
   game: GameState;
+  flush: () => Promise<void>;
   act: (fn: (g: GameState, logs: string[]) => void) => void;
   phaseSync: PhaseSync;
   members: PublicUser[];
@@ -41,6 +53,20 @@ export function Orders({
   const sellableGoods = [...pool.resources, ...pool.products].filter(
     (it) => (game.inventory[it] || 0) > 0,
   );
+  const [clearanceItem, setClearanceItem] = useState("");
+  const [clearanceQuantity, setClearanceQuantity] = useState(1);
+  const clearanceGoods = pool.products.filter(
+    (item) => game.inventory[item] > 0,
+  );
+  const clearanceGood = clearanceGoods.includes(clearanceItem)
+    ? clearanceItem
+    : clearanceGoods[0];
+  const clearanceAmount = Math.min(
+    clearanceQuantity,
+    game.inventory[clearanceGood] ?? 0,
+  );
+  const clearance = quoteClearance(game, clearanceGood, clearanceAmount);
+  const clearanceQuote = clearance ? quoteOrder(game, clearance) : undefined;
   const favorHeld = favorItem ? game.inventory[favorItem] || 0 : 0;
   const closeFavor = () => {
     setFavorOpen(false);
@@ -52,14 +78,23 @@ export function Orders({
         <Coins className="h-5 w-5 text-amber-600 dark:text-amber-400" />
         Trade Manifest
       </h2>
+      {harborTrading(game) && (
+        <PortExchange
+          game={game}
+          act={act}
+          flush={flush}
+          locked={phaseSync.waiting}
+          goods={ITEMS.filter((item) => game.inventory[item] > 0)}
+        />
+      )}
       {game.revealedIntel.length > 0 && (
         <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-2.5 mb-3.5 text-xs">
           <strong>🗣️ Broker's Whispers active this round:</strong>{" "}
           {game.revealedIntel.map((i, idx) => (
             <span key={idx}>
               {idx > 0 && ", "}
-              <ItemIcon item={i.item} className="h-3.5 w-3.5" /> {i.item} (
-              {i.port})
+              <ItemIcon item={i.item} className="h-3.5 w-3.5" />{" "}
+              {describeWhisperCargo(i)} ({i.port})
             </span>
           ))}
           <span className="text-muted-foreground">
@@ -89,6 +124,7 @@ export function Orders({
               <Button
                 size="sm"
                 className="pm-grad-violet text-white font-semibold rounded-lg shrink-0 hover:opacity-95"
+                disabled={phaseSync.waiting}
                 onClick={() => setFavorOpen(true)}
               >
                 Call in a Favor
@@ -150,13 +186,15 @@ export function Orders({
                 </span>
               </div>
               <p className="text-muted-foreground">
-                A bigger ask pays out more, but the Broker's cut grows with it
-                too, so a single favor can never swing the whole voyage.
+                The Broker's payout has a limit. Freight grows with the cargo
+                quantity and can exceed the payout. Check the buyer's quote
+                before trading.
               </p>
               <div className="flex gap-2">
                 <Button
                   size="sm"
                   className="pm-grad-violet text-white font-semibold rounded-lg hover:opacity-95"
+                  disabled={phaseSync.waiting || favorQty > favorHeld}
                   onClick={() => {
                     act((g, l) => callBrokersFavor(g, favorItem, favorQty, l));
                     closeFavor();
@@ -194,8 +232,8 @@ export function Orders({
             salvageChance,
             auditChance,
           } = quoteOrder(game, o);
-          const netProfit = reward - freight.final;
-          const canComplete = hasCargo && game.money + netProfit >= 0;
+          const netProceeds = reward - freight.final;
+          const canComplete = hasCargo && game.money + netProceeds >= 0;
           const brokerCommissionPct =
             commissionBase > 0
               ? Math.round((commission / commissionBase) * 100)
@@ -223,13 +261,19 @@ export function Orders({
                 <span>
                   📍 {intel?.port ?? o.demandPort}{" "}
                   <span className="text-muted-foreground">
-                    {o.isMandate
-                      ? "· Imperial Commission"
-                      : o.isProductOrder
-                        ? "· Finished Product Demand"
-                        : o.staple
-                          ? "· Staple contract"
-                          : "· Raw Material Demand"}
+                    {o.buyer
+                      ? `· ${BUYER_NAMES[o.buyer]}`
+                      : o.isMandate
+                        ? "· Imperial Mandate"
+                        : o.workshop
+                          ? "· Workshop contract"
+                          : o.clearance
+                            ? "· Clearance sale"
+                            : o.isProductOrder
+                              ? "· Finished Product Demand"
+                              : o.staple
+                                ? "· Staple contract"
+                                : "· Raw Material Demand"}
                   </span>
                 </span>
                 {o.isMandate ? (
@@ -243,7 +287,7 @@ export function Orders({
                 ) : (
                   intel && (
                     <span className="text-amber-600 dark:text-amber-400 shrink-0">
-                      🔮 Guaranteed
+                      🔮 {classicHarbor(game) ? "Revealed" : "Guaranteed"}
                     </span>
                   )
                 )}
@@ -252,8 +296,13 @@ export function Orders({
                 {o.resources.map((r, i) => {
                   const has = (game.inventory[r.type] || 0) >= r.required!;
                   return (
-                    <div key={i} className="flex items-center text-[12px]">
-                      <span className="mr-1.5">{has ? "✅" : "❌"}</span>
+                    <div
+                      key={i}
+                      className="flex min-w-0 flex-wrap items-center gap-y-1 text-[12px]"
+                    >
+                      <span className="mr-1.5">
+                        {completed || has ? "✅" : "❌"}
+                      </span>
                       <ItemIcon item={r.type} className="mr-1.5 h-4 w-4" />
                       <Term term={r.type}>
                         <span
@@ -265,57 +314,79 @@ export function Orders({
                       </Term>
                       <span className="mx-1.5">×{r.required}</span>
                       <span
-                        className="ml-auto text-[10px]"
-                        style={{ color: has ? "#10b981" : "#f43f5e" }}
+                        className={cn(
+                          "ml-auto text-[10px]",
+                          has
+                            ? "text-emerald-700 dark:text-emerald-300"
+                            : "text-rose-700 dark:text-rose-300",
+                        )}
                       >
-                        Inv: {game.inventory[r.type] || 0}
+                        Held: {game.inventory[r.type] || 0}
                       </span>
                     </div>
                   );
                 })}
-                <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-1.5">
-                  <Term content={<PriceBreakdownTooltip breakdown={freight} />}>
-                    ⚓ Freight: {freight.final} Gold
-                  </Term>
-                </div>
-                <div
-                  className={cn(
-                    "text-[13px] font-semibold mt-0.5",
-                    netProfit >= 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-rose-600 dark:text-rose-400",
-                  )}
-                >
-                  Gross {o.reward} Gold · Payout {reward} Gold · Net {netProfit}{" "}
-                  Gold
-                </div>
-                {(salvageChance > 0 || auditChance > 0) && (
-                  <p className="text-[11px] text-muted-foreground">
-                    {salvageChance > 0 &&
-                      `${salvageChance * 100}% chance to recover freight. `}
-                    {auditChance > 0 &&
-                      `${auditChance * 100}% chance of an audit.`}
+                {completed ? (
+                  <p className="text-sm text-muted-foreground">
+                    {o.settledGold === undefined
+                      ? "See the ledger for the amount settled."
+                      : o.settledGold < 0
+                        ? `Settled at a cost of ${Math.abs(o.settledGold)} Gold after any refund or audit.`
+                        : `Settled for ${o.settledGold} Gold after any refund or audit.`}
                   </p>
-                )}
-                {bonuses.map(({ name, gold }) => (
-                  <div
-                    key={name}
-                    className="text-[10px] text-teal-700 dark:text-teal-300"
-                  >
-                    {name} adds {gold} Gold
-                  </div>
-                ))}
-                {o.isBrokerFavor && (
-                  <div className="text-[10px] text-emerald-700 dark:text-emerald-300">
-                    🤝 Broker's cut ({brokerCommissionPct}%): {commission} Gold
-                  </div>
-                )}
-                {vat && (
-                  <div className="text-[10px] text-muted-foreground">
-                    <Term content={<VatBreakdownTooltip vat={vat} />}>
-                      🧾 VAT: {totalVat} Gold (select for unit details)
-                    </Term>
-                  </div>
+                ) : (
+                  <>
+                    <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-1.5">
+                      <Term
+                        content={<PriceBreakdownTooltip breakdown={freight} />}
+                      >
+                        ⚓ Freight: {freight.final} Gold
+                      </Term>
+                    </div>
+                    <div
+                      className={cn(
+                        "text-[13px] font-semibold mt-0.5",
+                        netProceeds >= 0
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-600 dark:text-rose-400",
+                      )}
+                    >
+                      Gross {o.reward} Gold · Payout {reward} Gold · Net{" "}
+                      {netProceeds < 0
+                        ? `Cost ${Math.abs(netProceeds)}`
+                        : netProceeds}{" "}
+                      Gold
+                    </div>
+                    {(salvageChance > 0 || auditChance > 0) && (
+                      <p className="text-[11px] text-muted-foreground">
+                        {salvageChance > 0 &&
+                          `${salvageChance * 100}% chance to recover freight. `}
+                        {auditChance > 0 &&
+                          `${auditChance * 100}% chance of an audit.`}
+                      </p>
+                    )}
+                    {bonuses.map(({ name, gold }) => (
+                      <div
+                        key={name}
+                        className="text-[10px] text-teal-700 dark:text-teal-300"
+                      >
+                        {name} adds {gold} Gold
+                      </div>
+                    ))}
+                    {o.isBrokerFavor && (
+                      <div className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                        🤝 Broker's cut ({brokerCommissionPct}%): {commission}{" "}
+                        Gold
+                      </div>
+                    )}
+                    {vat && (
+                      <div className="text-[10px] text-muted-foreground">
+                        <Term content={<VatBreakdownTooltip vat={vat} />}>
+                          🧾 VAT: {totalVat} Gold (select for unit details)
+                        </Term>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
               <div className="p-3 pt-0">
@@ -327,16 +398,89 @@ export function Orders({
                       : "",
                   )}
                   variant={canComplete && !completed ? "default" : "secondary"}
-                  disabled={!canComplete || completed}
+                  disabled={phaseSync.waiting || !canComplete || completed}
                   onClick={() => act((g, l) => completeOrder(g, o.id, l))}
                 >
-                  {completed ? "✅ Completed" : `🤝 Trade (Net ${netProfit}💰)`}
+                  {completed
+                    ? "✅ Completed"
+                    : netProceeds < 0
+                      ? `🤝 Trade (Cost ${Math.abs(netProceeds)} Gold)`
+                      : `🤝 Trade (Net ${netProceeds}💰)`}
                 </Button>
               </div>
             </div>
           );
         })}
       </div>
+      {rebalanced(game) && !harborTrading(game) && (
+        <section className="my-4 space-y-2 rounded-xl border bg-card p-3 text-sm">
+          <h3 className="font-semibold">Clearance Buyer</h3>
+          {game.completedOrders.includes(CLEARANCE_ID) ? (
+            <p>Clearance sale completed this round.</p>
+          ) : clearanceQuote ? (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="grid min-w-0 gap-1">
+                  Finished good
+                  <select
+                    className="min-w-0 rounded-md border bg-background p-2"
+                    value={clearanceGood}
+                    onChange={(event) => setClearanceItem(event.target.value)}
+                  >
+                    {clearanceGoods.map((item) => (
+                      <option key={item}>{item}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  Units to clear
+                  <select
+                    className="rounded-md border bg-background p-2"
+                    value={clearanceAmount}
+                    onChange={(event) =>
+                      setClearanceQuantity(Number(event.target.value))
+                    }
+                  >
+                    <option value={1}>One unit</option>
+                    {game.inventory[clearanceGood] >= 2 && (
+                      <option value={2}>Two units</option>
+                    )}
+                  </select>
+                </label>
+              </div>
+              <p>
+                Quoted{" "}
+                {formatGoldProceeds(
+                  clearanceQuote.reward - clearanceQuote.freight.final,
+                )}{" "}
+                after {clearanceQuote.totalVat} Gold VAT and{" "}
+                {clearanceQuote.freight.final} Gold freight.
+                {clearanceQuote.salvageChance > 0 &&
+                  ` ${clearanceQuote.salvageChance * 100}% chance to recover freight.`}
+                {clearanceQuote.auditChance > 0 &&
+                  ` ${clearanceQuote.auditChance * 100}% chance of an audit.`}
+                Clearance sales grant no Reputation.
+              </p>
+              <Button
+                size="sm"
+                disabled={phaseSync.waiting}
+                onClick={() =>
+                  act((g, logs) =>
+                    sellClearance(g, clearanceGood, clearanceAmount, logs),
+                  )
+                }
+              >
+                Sell surplus goods
+              </Button>
+            </>
+          ) : (
+            <p>
+              Bring up to two finished goods of one kind to sell here once each
+              round.
+            </p>
+          )}
+        </section>
+      )}
       <ReadyFooter
         phaseSync={phaseSync}
         members={members}
@@ -344,5 +488,146 @@ export function Orders({
         onConfirm={() => void phaseSync.markReady()}
       />
     </div>
+  );
+}
+
+const BUYER_NAMES = {
+  merchant: "Merchant",
+  commission: "Commission",
+  mixed: "Mixed cargo",
+  speculative: "Speculative buyer",
+  standing: "Standing contract",
+  rival: "Rival merchant",
+};
+
+function PortExchange({
+  game,
+  act,
+  flush,
+  locked,
+  goods,
+}: {
+  game: GameState;
+  act: (fn: (g: GameState, logs: string[]) => void) => void;
+  flush: () => Promise<void>;
+  locked: boolean;
+  goods: string[];
+}) {
+  const [selected, setSelected] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const item = goods.includes(selected) ? selected : goods[0];
+  const held = game.inventory[item] ?? 0;
+  const quote = quotePortExchange(game, item, Number(quantity));
+  const save = async () => {
+    setSaving(true);
+    try {
+      await flush();
+      setSaveError(false);
+    } catch {
+      setSaveError(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <details className="mb-4 min-w-0 rounded-xl border bg-card p-3 text-sm">
+      <summary className="cursor-pointer font-semibold">Port Exchange</summary>
+      <p className="my-2 text-muted-foreground">
+        Sell any cargo for Gold. The first three units of each good use a higher
+        rate each round, subject to rounding. Exchange sales earn no Reputation.
+      </p>
+      {!item ? (
+        <p>Your hold is empty.</p>
+      ) : (
+        <div className="grid min-w-0 gap-2">
+          <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+            <label className="grid min-w-0 gap-1">
+              Cargo
+              <select
+                className="min-w-0 rounded-md border bg-background p-2"
+                aria-label="Exchange cargo"
+                value={item}
+                disabled={locked || saving}
+                onChange={(event) => {
+                  setSelected(event.target.value);
+                  setQuantity("1");
+                }}
+              >
+                {goods.map((good) => (
+                  <option key={good} value={good}>
+                    {good} ({game.inventory[good]} held)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1">
+              Quantity
+              <span className="flex gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded-md border bg-background p-2"
+                  aria-label="Exchange quantity"
+                  type="number"
+                  min={1}
+                  max={held}
+                  step={1}
+                  value={quantity}
+                  disabled={locked || saving}
+                  onChange={(event) => setQuantity(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setQuantity(String(held))}
+                  disabled={locked || saving}
+                >
+                  All
+                </Button>
+              </span>
+            </label>
+          </div>
+          <p aria-live="polite">
+            {quote ? (
+              <>
+                <strong>Receive {quote.net} Gold</strong>
+                <span className="block text-muted-foreground">
+                  {quote.tiers
+                    .filter((tier) => tier.quantity > 0)
+                    .map(
+                      ({ quantity, unitPrice }) =>
+                        `${quantity} at ${unitPrice} Gold`,
+                    )
+                    .join(" + ")}{" "}
+                  · Freight {quote.freight} · VAT {quote.vat}
+                </span>
+              </>
+            ) : (
+              `Enter a whole quantity from 1 to ${held}.`
+            )}
+          </p>
+          <Button
+            className="w-fit max-w-full"
+            disabled={!quote || locked || saving || saveError}
+            onClick={() => {
+              if (!quote) return;
+              act((g, logs) => sellAtPortExchange(g, quote, logs));
+              setQuantity("1");
+              void save();
+            }}
+          >
+            {saving ? "Saving sale" : "Sell at the Port Exchange"}
+          </Button>
+        </div>
+      )}
+      {saveError && (
+        <p role="alert">
+          The sale has not synced.{" "}
+          <Button variant="link" onClick={() => void save()} disabled={saving}>
+            Retry saving
+          </Button>
+        </p>
+      )}
+    </details>
   );
 }

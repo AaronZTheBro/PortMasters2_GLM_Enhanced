@@ -27,7 +27,14 @@ import {
   type Difficulty,
 } from "@/lib/game/difficulty";
 import { motion } from "framer-motion";
-import { expanded, RAID_TERMS } from "@/lib/game/expansion";
+import {
+  expanded,
+  raidTerms,
+  voyageMaintenance,
+  voyageStartingGold,
+  voyageRaidAdjustment,
+  CLASSIC_HARBOR_RULES,
+} from "@/lib/game/expansion";
 import { ShipMark, ShipIcon } from "../../ShipVisualizer";
 
 // === Wave Divider ========================================================
@@ -297,19 +304,20 @@ export function Welcome({
   isHost,
   onShowTutorial,
   difficulty,
-  rulesVersion,
 }: {
   phaseSync: PhaseSync;
   members: PublicUser[];
   isHost: boolean;
   onShowTutorial: () => void;
   difficulty?: Difficulty;
-  rulesVersion?: number;
 }) {
+  const rulesVersion = CLASSIC_HARBOR_RULES;
   const harborIds = phaseSync.ready?.requiredUserIds ?? [];
   const canStart = harborIds.length >= 2;
   const cfg = difficultyConfig(difficulty);
-  const [earlyRaid, lateRaid = earlyRaid] = cfg.pirateChance;
+  const [earlyRaid, lateRaid = earlyRaid] = cfg.pirateChance.map(
+    (chance) => chance + voyageRaidAdjustment(rulesVersion, cfg.key),
+  );
   const raidCopy =
     lateRaid === earlyRaid
       ? `${Math.round(earlyRaid * 100)}% raid chance each round`
@@ -404,7 +412,7 @@ export function Welcome({
               iconClassName: "text-teal-700 dark:text-teal-300",
             },
             {
-              text: `${cfg.startingGold} Gold before the Renown bonus`,
+              text: `${voyageStartingGold(difficulty, rulesVersion)} Gold before the Renown bonus`,
               icon: Coins,
               iconClassName: "text-amber-700 dark:text-amber-300",
             },
@@ -424,7 +432,7 @@ export function Welcome({
           tone="sea"
           title="Round end costs"
           rows={[
-            `Base maintenance is ${cfg.maintenance} Gold every round`,
+            `Base maintenance is ${voyageMaintenance(difficulty, rulesVersion)} Gold every round`,
             "Wages settle at Phase 3, not on hire",
           ]}
           icon={Coins}
@@ -444,7 +452,7 @@ export function Welcome({
           rows={[
             raidCopy,
             expanded({ rulesVersion })
-              ? `A raid can take ${Math.round(RAID_TERMS[cfg.key].lossRate * 100)}% of exposed Gold`
+              ? `A raid can take ${Math.round(raidTerms(cfg.key, { rulesVersion }).lossRate * 100)}% of exposed Gold`
               : "A raid takes all Gold on hand",
             "Hire an escort for safe passage. Request Financial Aid if bills are due.",
           ]}
@@ -460,8 +468,8 @@ export function Welcome({
       {/* == Tips == */}
       <div className="max-w-2xl mx-auto mt-3 space-y-2">
         <div className="rounded-lg bg-teal-500/[0.06] border border-teal-500/15 px-3.5 py-2.5 text-xs">
-          <strong>Four phases per voyage:</strong> buy at ports, fill trade
-          orders, settle risks and costs, then upgrade the ship.
+          Choose a Boon each round. Upgrade your ship in the Shipyard to open
+          module slots.
         </div>
         <div className="rounded-lg bg-amber-500/[0.06] border border-amber-500/15 px-3.5 py-2.5 text-xs">
           <strong>New player tip:</strong> Rely on raw material orders early.

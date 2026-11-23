@@ -1,13 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { voyageMaintenance, voyageStartingGold } from "./game/expansion";
+
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import type { Socket } from "socket.io-client";
 import type { GameContext, GameState } from "@/lib/game/types";
-import {
-  restartGame,
-  startBoonDrafting,
-  tallyPurchasesByResource,
-} from "@/lib/game/engine";
+import { restartGame, startBoonDrafting } from "@/lib/game/engine";
+import { needsStarterModule } from "./game/engine/boons";
 import { canAdvancePhase, nextPhase } from "@/lib/game/engine/lifecycle";
 import { renownStartingGoldBonus } from "@/lib/game/legacy";
 import { normalizeDifficulty } from "@/lib/game/difficulty";
@@ -45,6 +50,7 @@ export function usePhaseSync(
   myUserId: string,
   startingGoldBonus: number,
   reloadGame: () => void,
+  walletBusy: RefObject<boolean>,
 ) {
   const [ready, setReady] = useState<ReadyState | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -82,39 +88,46 @@ export function usePhaseSync(
       if (currentRank >= target) return;
       if (current.phase !== 0 && !canAdvancePhase(current)) return;
 
-      if (current.phase === 1 && currentRank < target) {
-        socket?.emit("harbor:pulse:report", {
-          roomId,
-          round: current.currentRound,
-          tally: tallyPurchasesByResource(current),
-        });
-      }
       act((state, logs) => {
         while (rank(state.currentRound, String(state.phase)) < target) {
           if (state.phase === 0) {
             if (data.rules) {
+              state.money +=
+                voyageStartingGold(state.difficulty, data.rules.version) -
+                voyageStartingGold(state.difficulty, state.rulesVersion);
               state.rulesVersion = data.rules.version;
               state.forecasts = data.rules.forecasts;
+              state.arrivals = data.rules.arrivals;
+              state.specialties = data.rules.specialties;
+              state.fixedCost = voyageMaintenance(
+                state.difficulty,
+                data.rules.version,
+              );
             }
             state.seatSeed = ctx.seedBase;
             startBoonDrafting(state, logs);
             continue;
           }
           if (!canAdvancePhase(state)) break;
-          if (state.phase === 5 && data.harborPulse)
-            state.harborPulse = data.harborPulse;
+          if (state.phase === 5 && state.currentRound === data.round)
+            state.harborPulse = data.harborPulse ?? {};
           nextPhase(state, ctx, logs);
         }
       });
       void flush().catch(() => {});
     },
-    [act, ctx, flush, getGame, reloadGame, roomId, socket],
+    [act, ctx, flush, getGame, reloadGame],
   );
 
   useEffect(() => {
     if (!socket || !loaded) return;
     const onReady = (data: ReadyState & { roomId: string }) => {
-      if (data.roomId !== roomId) return;
+      if (
+        data.roomId !== roomId ||
+        (data.voyageEpoch !== undefined &&
+          data.voyageEpoch < getGame().voyageEpoch)
+      )
+        return;
       setReady(data);
       advance(data, data.advancing);
       const current = getGame();
@@ -204,10 +217,21 @@ export function usePhaseSync(
 
   const markReady = useCallback(
     async (boonId?: string) => {
-      if (!socket?.connected || !authed || voteInFlight.current) return;
+      if (
+        !socket?.connected ||
+        !authed ||
+        voteInFlight.current ||
+        walletBusy.current
+      )
+        return;
       const current = getGame();
+      if (current.readyVote) return;
       if (current.phase === 5) {
-        if (!boonId || !current.boonChoices.some((boon) => boon.id === boonId))
+        if (
+          needsStarterModule(current) ||
+          !boonId ||
+          !current.boonChoices.some((boon) => boon.id === boonId)
+        )
           return;
       } else if (!canAdvancePhase(current)) return;
 
@@ -238,7 +262,7 @@ export function usePhaseSync(
         setSubmitting(false);
       }
     },
-    [act, authed, flush, getGame, roomId, socket],
+    [act, authed, flush, getGame, roomId, socket, walletBusy],
   );
 
   const cancelReady = useCallback(async () => {
@@ -285,7 +309,9 @@ export function usePhaseSync(
   }, [roomId, socket]);
 
   const atCheckpoint =
-    ready?.round === game.currentRound && ready.phase === String(game.phase);
+    ready?.round === game.currentRound &&
+    ready.phase === String(game.phase) &&
+    (ready.voyageEpoch === undefined || ready.voyageEpoch === game.voyageEpoch);
   const waiting =
     submitting ||
     Boolean(game.readyVote) ||

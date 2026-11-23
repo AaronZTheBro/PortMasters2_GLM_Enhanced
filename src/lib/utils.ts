@@ -14,3 +14,11 @@ export function cn(...inputs: ClassValue[]) {
 export function normalizeRoomName(name: string): string {
   return name.replace(/\s+/g, " ").trim();
 }
+
+export function formatGoldProceeds(amount: number): string {
+  return `${amount < 0 ? "cost" : "proceeds"} ${Math.abs(amount)} Gold`;
+}
+
+export function formatReputation(amount: number): string {
+  return amount < 0 ? `${Math.abs(amount)} below zero` : String(amount);
+}

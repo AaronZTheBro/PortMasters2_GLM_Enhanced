@@ -7,7 +7,7 @@ import type { Socket } from "socket.io-client";
 import type { PublicUser } from "@/lib/api";
 import { useRoomRoster } from "@/lib/use-room-roster";
 import { Avatar, OnlineDot, Pill } from "./shared";
-import { cn } from "@/lib/utils";
+import { cn, formatReputation } from "@/lib/utils";
 import {
   Coins,
   Trophy,
@@ -162,7 +162,8 @@ export function MembersPanel({
                       <Coins className="h-3 w-3" /> {st ? st.gold : "…"}
                     </Pill>
                     <Pill tone="gold">
-                      <Trophy className="h-3 w-3" /> {st ? st.reputation : "…"}
+                      <Trophy className="h-3 w-3" />{" "}
+                      {st ? formatReputation(st.reputation) : "…"}
                     </Pill>
                   </>
                 )}

@@ -12,11 +12,11 @@ P1 means progress, cargo, Gold, or a core action can be lost or materially misre
 
 ### PM01 P1 Continue can forfeit unmatched barter cargo
 
-**Evidence status.** Reproduced in Chromium with two captains. One posted an offer for one Hemp and both used the main Continue control. Both reached Artisan Management. The offer was never accepted and the poster’s inventory remained at nine Hemp from a starting ten. Ctrl+N takes the same transition. The common control runs `nextPhase`, which hands Barter an empty refund list. The phase specific button supplies open escrow from the barter hook. Once the room moves on, the server clears the board. Every path that advances from Barter should return each unmatched offer once. [Common action](src/components/portmasters/GameRoom.tsx#L895) [Generic transition](src/lib/game/engine/lifecycle.ts#L164) [Barter footer](src/components/portmasters/game/phases/BarterPhase.tsx#L998) [Board cleanup](src/server/realtime.ts#L1361)
+**Evidence status.** Reproduced in Chromium with two captains. One posted an offer for one Hemp and both used the main Continue control. Both reached Artisan Management. The offer was never accepted and the poster’s inventory remained at nine Hemp from a starting ten. Ctrl+N takes the same transition. The common control runs `nextPhase`, which hands Barter an empty refund list. The phase specific button supplies open escrow from the barter hook. Once the room moves on, the server clears the board. Every path that advances from Barter should return each unmatched offer once. [Common action](src/components/portmasters/GameRoom.tsx#L895) [Generic transition](src/lib/game/engine/lifecycle.ts#L164) [Barter footer](src/components/portmasters/game/phases/BarterPhase.tsx) [Board cleanup](src/server/realtime.ts#L1361)
 
 ### PM02 P1 Barter changes cargo before the server confirms the outcome
 
-**Evidence status.** Source verified. A post immediately removes cargo and a cancel immediately returns it. If the target leaves before a direct offer reaches the server, the server rejects the post and the client only displays its error. If acceptance races with cancellation, the client can refund a canceled offer even if the server has already awarded it. If the accepter’s inventory changes before the fulfillment event arrives, their client can reject the exchange after the seller has been credited. Verify normal actions with two captains and delayed responses. Each completed exchange must settle both sides once, and a rejected exchange must preserve ownership. [Barter actions](src/components/portmasters/game/phases/BarterPhase.tsx#L286) [Client event handling](src/lib/use%2Dbarter.ts#L48) [Local acceptance](src/lib/game/engine/barter.ts#L50) [Server fulfillment](src/server/realtime.ts#L1776)
+**Evidence status.** Source verified. A post immediately removes cargo and a cancel immediately returns it. If the target leaves before a direct offer reaches the server, the server rejects the post and the client only displays its error. If acceptance races with cancellation, the client can refund a canceled offer even if the server has already awarded it. If the accepter’s inventory changes before the fulfillment event arrives, their client can reject the exchange after the seller has been credited. Verify normal actions with two captains and delayed responses. Each completed exchange must settle both sides once, and a rejected exchange must preserve ownership. [Barter actions](src/components/portmasters/game/phases/BarterPhase.tsx#L286) [Client event handling](src/lib/use%2Dbarter.ts#L48) [Current acceptance](src/server/barter.ts) [Server fulfillment](src/server/realtime.ts#L1776)
 
 ### PM03 P1 Reload while ready can strand a captain at an old phase
 
@@ -58,7 +58,7 @@ P1 means progress, cargo, Gold, or a core action can be lost or materially misre
 
 ### PM11 P2 Silk Road Monopoly also raises product mandate rewards
 
-**Evidence status.** Engine reproduced for the reward branch. Quote a medium Imperial Mandate with Silk Road Monopoly. Brocade and Sachet qualify because the bonus checks cargo types. The mandate remains exempt from VAT but the payout increases from 260 to 312 Gold. The guide describes a fixed reward and the engine labels the mandate a fixed order. Decide whether fixed means the posted amount stays fixed or only that everyone starts with the same base. Then align the guide and quote. Raw Silk freight on the mixed small mandate is a separate effect. [Mandate templates](src/lib/game/difficulty.ts#L132) [Mandate creation](src/lib/game/engine/orders.ts#L337) [Bonus scope](src/lib/game/engine/orders.ts#L74) [Tutorial contract](src/lib/game/constants.ts#L656)
+**Evidence status.** Engine reproduced for the reward branch. Quote a medium Imperial Mandate with Silk Road Monopoly. Brocade and Sachet qualify because the bonus checks cargo types. The mandate remains exempt from VAT but the payout increases from 260 to 312 Gold. The guide describes a fixed reward and the engine labels the mandate a fixed order. Decide whether fixed means the posted amount stays fixed or only that everyone starts with the same base. Then align the guide and quote. Raw Silk freight on the mixed small mandate is a separate effect. [Mandate templates](src/lib/game/difficulty.ts#L132) [Mandate creation](src/lib/game/engine/orders.ts#L337) [Bonus scope](src/lib/game/engine/orders.ts#L74) [Tutorial contract](src/lib/game/guide.ts)
 
 ### PM12 P2 Broker guide and saved module descriptions disagree with current prices and scope
 
@@ -134,7 +134,7 @@ P1 means progress, cargo, Gold, or a core action can be lost or materially misre
 
 ### PM30 P2 Dark tutorial text and headings have very low contrast
 
-**Evidence status.** Reproduced in Chromium using the in app dark theme. In the Bartering, Artisan, and Settlement steps, body copy uses RGB 51, 51, 51 over RGB 3, 18, 24, about 1.5 to 1 contrast. Round flow and bill cards instead inherit nearly white headings on pale backgrounds. The Artisan Wages heading is close to 1 to 1. The surrounding dialog theme cannot correct inline colors in the tutorial markup. Use readable contrast for both card headings and plain paragraphs in both themes. [Tutorial markup](src/lib/game/constants.ts#L625) [Artisan and bill markup](src/lib/game/constants.ts#L665) [Tutorial renderer](src/components/portmasters/game/GameModals.tsx#L497)
+**Evidence status.** Reproduced in Chromium using the in app dark theme. In the Bartering, Artisan, and Settlement steps, body copy uses RGB 51, 51, 51 over RGB 3, 18, 24, about 1.5 to 1 contrast. Round flow and bill cards instead inherit nearly white headings on pale backgrounds. The Artisan Wages heading is close to 1 to 1. The surrounding dialog theme cannot correct inline colors in the tutorial markup. Use readable contrast for both card headings and plain paragraphs in both themes. [Tutorial markup](src/lib/game/guide.ts) [Artisan and bill markup](src/lib/game/guide.ts) [Tutorial renderer](src/components/portmasters/game/GameModals.tsx#L497)
 
 ### PM31 P2 Landscape authentication opens with the submit action more than two screens down
 
@@ -258,3 +258,71 @@ The repository verification passed lint, type checking, 21 game rules tests, the
 The audit passed 35 unit tests, the realtime integration test, lint, type checking, and a production build. The effect run covered 23 Boons, 23 modules, and 267,744 installation sequences. The balance run repeated 5,000 simulations per difficulty. The earlier SQLite fixture retained its room and both saves after applying the current schema.
 
 Chrome checks used nine viewport sizes. The production run checked the harbor and captain dialogs, guide, tutorial, old ledger entries, the Broker badge, and a live two captain round that awarded Word on the Docks and reloaded the winner without another credit. The deployment settings were read against the provider references. [Render Blueprint reference](https://render.com/docs/blueprint-spec) [Railway volume reference](https://docs.railway.com/volumes)
+
+## Core rules audit after the rebalance
+
+- Saved module cards used older descriptions after reload. Equipped modules, drafts, and pending swaps now use the saved voyage version. Market tooltips also use the versioned recipe.
+- Shipyard spending could leave a captain without funds for Income Tax. Version 3 now reserves the tax calculated on arrival at the Shipyard. An install or swap affects the following round. Collection is limited to available Gold.
+- Stacked discounts and Wage Ledger could misstate the amount paid. The ledger now records realized savings and charges.
+- Workshop forms now reopen with the booked quantity. The Strategy Advisor uses the actual bills and order quotes. Completed voyages display the correct round count.
+- Story entries keep their original round. Removed the unused Story amount fields and speculative round summaries, plus unused engine exports and duplicate glossary construction.
+- A pending Word on the Docks claim now retries until acknowledged while the captain remains connected.
+- The source graph found no unreachable application modules or empty source directories. The original Hemp, Silk, and Tea PNG assets have no runtime references after the SVG conversion. They remain in the repository as original artwork.
+
+Verification passed 46 unit tests, one multiplayer integration test, and the production build. The effect sweep covered all 23 Boons and 23 modules across 267,744 installation sequences. The 15,000 voyage simulation reproduced the prior solvency rates on all three difficulties. Chrome checked nine viewport sizes, restored module descriptions and workshop quantities, settled a live barter once, and recovered the booking after a server restart.
+
+## Follow up on readiness and price accuracy
+
+1. Captains could buy goods, pay the Broker, assign work, or trade after submitting a ready vote. The controls now lock until the vote is cancelled or the harbor advances. Trades accepted by another captain still settle from the shared ledger.
+2. Harbor Pulse added reports held in server memory. The next round now reads one saved purchase total per captain for the previous round. Restarting the server preserves the resulting price adjustment. A saved captain who already finished or went bankrupt is restored as inactive, so an offline terminal captain no longer blocks the room.
+3. Completed purchases and sales could start displaying a different quote after a limited discount or bonus was spent. The cards now show the settled Gold, including refunds and audits on sales. Older receipts without a stored amount refer to the ledger. Price history uses opening quotes and excludes personal workshop lots, workshop contracts, and clearance sales.
+4. The barter board called any vanished offer settled, including withdrawals. It now reports recently closed offers. The verdict and amounts for a particular exchange remain in the ledger.
+5. The guide and effect descriptions now distinguish Market Day adjustments from Harbor Pulse, explain the order of the relevant freight and purchase discounts, and describe when the Workshop Supplier closes. Removed unused engine exports, the obsolete Harbor Pulse socket reports, and a redundant module that only advanced the barter phase.
+6. The source graph found no unreachable application modules or empty source directories. The original PNG artwork in the public icons directory remains archived. The game uses the SVG icons.
+
+Verification passed 48 unit tests, one multiplayer integration test, lint, type checking, and the production build. The effect sweep exercised 23 Boons and 23 modules across 267,744 installation sequences. The 15,000 voyage run reproduced the previous solvency rates on all three difficulties. Chrome checked nine viewport sizes and verified locked controls, a cancelled barter and its returned cargo, finished trades and their receipts, and Harbor Pulse after a restart. A separate restart check advanced the host with a saved bankrupt captain offline.
+
+## Harbor recovery and settlement audit
+
+1. Harbor Pulse disappeared from the room checkpoint as soon as one captain left the Boon draft. This allowed a captain who missed the release to open the same round with stale prices. The server now retains the adjustment in memory and in storage through the rest of the round, then clears it for the next draft.
+2. Voluntary repayment and Convoy Venture funding could consume the Gold that version 3 reserves for Income Tax. The Shipyard, repayment form, and server now use the same reserve calculation. Repayment and funding wait until a captain cancels their ready vote.
+3. Convoy stakes and payouts previously depended on live messages to change Gold. Funding, terminal outcomes, and their receipts now commit together. The existing harbor ledger restores missed entries once, and the transaction prevents a second filled venture in the same voyage. Joining the harbor restores the board even if the first request arrived too early. Restarting the voyage clears the previous board and its lock. Removed the superseded client wallet functions.
+4. Corrected Workshop Supplier discount descriptions, clearance reward exclusions, the roster order for bonus production, and the loan default and Convoy Venture instructions. Settlement now processes artisan output in one pass. The briefing no longer draws an empty panel for an expired buyer preview.
+5. The import audit reached all 148 source modules. It found no empty project source or asset directories. The three archived commodity PNG files are original artwork with no runtime references. The punctuation scan found technical syntax and paths, with no dash punctuation in project prose or comments.
+
+The full verification suite passed 49 unit tests, one multiplayer integration test, lint, type checking, and the production build. The effect sweep checked 23 Boons, 23 modules, and 267,744 module installation sequences. The 15,000 voyage simulation matched the previous results on all three difficulties.
+
+Desktop and mobile Chrome verified the tax reserve, the restored Convoy Venture board, and an offline captain receiving a payout exactly once after reconnecting. The same run checked nine viewport sizes and recovered Harbor Pulse and a saved workshop booking after restarting the server.
+
+## Rules version 4 follow up audit
+
+November 22, 2026. The earlier findings remain a record of the snapshots named above. The live rules, setup instructions, and player guidance are in [README.md](README.md) and the Navigation Guide.
+
+1. Collector's Seal now treats the first ordinary ceramic sale as the trigger even if it pays no bonus. A resumed trade board preserves that timing. Open Hold counts distinct raw materials, and Traveling Commission no longer promises another turn in the final round.
+2. Advisor dismissals belong to the captain, harbor, voyage, and round. The Prices view keeps the first observed buyer quote. The Story distinguishes ledger notes from round markers.
+3. The Broker board explains when the paid bundle has already been used. Effect descriptions and the Guide clarify ordinary order eligibility, wage rounding, Signal Lantern timing, and what a redraw can return.
+4. The source reference check found no orphaned application modules. Three unused dialog wrappers and two unused phase callbacks were removed. The three PNG files in the icons folder are intentional archives, as described in the README.
+
+## Current rules and source audit
+
+November 22, 2026. Reviewed the current checkout and compared the version 5 Boon and module descriptions with their engine triggers, quote calculations, settlement, and ledger handling. All 26 Boons, 28 modules, and 27 Boon modifier keys have corresponding engine references. The existing rules tests cover Broker order identity, quote and settlement amounts, effect caps, effect timing across saves, Port Exchange exclusions, and version 5 combinations. No dangling effect identifier or description mismatch was found in this review.
+
+The import scan found no orphan application modules. `src/server/prepareDatabase.ts` is an explicit target of the database preparation command. No empty folders were found in the source, public, or test trees. The three PNG files in `public/icons` have no runtime references. The README identifies them as original archived artwork.
+
+The balance command guide now states that the default run uses rules version 2 and that adding `rebalanced` after the seed count runs rules version 3. Language scans found no mixed Chinese and English content, no en dash or em dash characters, and no dash marks in project prose or source comments. Remaining ASCII dash characters are part of technical syntax such as URLs, imports, CSS names, HTTP headers, and command options.
+
+`npm run verify` passed lint, 71 unit tests, one multiplayer integration test, TypeScript checking, and the production build.
+
+## Broker payout and price display review
+
+November 22, 2026. A large Broker favor can cost Gold when freight exceeds the capped payout. The favor explanation and Navigation Guide now describe that outcome. The Strategy Advisor, clearance quote, staple quote, and workshop quote display a cost in words when their net amount is negative. The Exchange guidance now accounts for price rounding.
+
+The source import audit found no orphan application modules or empty source, public, or test folders. The three original commodity PNG files remain archived as described in the README. Existing captain authored text and technical syntax retain their original characters.
+
+## Effect timing and Reputation display audit
+
+November 22, 2026. Traveling Commission, Storm Dividend, and Market Momentum now consume their first eligible order when the percentage bonus rounds to zero. Reloading the saved state keeps each effect consumed. A costly Broker favor can reduce Reputation below zero. The roster, captain details, voyage results, copied summary, and ledger now express that value in words. Existing saved ledger entries use the same display wording.
+
+Market Day guidance now identifies the price adjustment and its rounding without promising a lot at the arrival port. The source reference audit reached all 143 application modules and found no empty source, public, or test folders. The three unreferenced commodity PNG files are archived original artwork identified in the README.
+
+The effect sweep checked 21,978 Boon and module configurations across rules versions 4 and 5, including 87,912 order quotes and settlements. The full verification command passed 76 unit tests, one multiplayer integration test, lint, TypeScript checking, and the production build. Chrome verified a negative Reputation produced by a Broker order in the room and endgame, plus the freight tooltip and player guide.

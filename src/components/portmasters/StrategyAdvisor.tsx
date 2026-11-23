@@ -17,13 +17,15 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, formatGoldProceeds } from "@/lib/utils";
 import type { GameState } from "@/lib/game/types";
+import { quoteDues, quoteShipUpgrade } from "@/lib/game/engine/pricing";
+import { quoteOrder } from "@/lib/game/engine/orders";
 import {
-  maintenanceSurcharge,
-  shipUpgradeSurcharge,
-  quoteWages,
-} from "@/lib/game/engine";
+  harborTrading,
+  rebalanced,
+  voyageRaidAdjustment,
+} from "@/lib/game/expansion";
 import { pirateChanceFor } from "@/lib/game/difficulty";
 import { quotePirateWaters } from "@/lib/game/engine/pirates";
 import { WORKER_TYPES } from "@/lib/game/constants";
@@ -32,6 +34,8 @@ import { WORKER_TYPES } from "@/lib/game/constants";
 
 type Props = {
   game: GameState;
+  userId: string;
+  roomId: string;
   className?: string;
 };
 
@@ -138,7 +142,11 @@ function completableOrders(game: GameState) {
         break;
       }
     }
-    if (can) out.push({ id: order.id, reward: order.reward });
+    if (can) {
+      const { reward, freight } = quoteOrder(game, order);
+      const net = reward - freight.final;
+      if (game.money + net >= 0) out.push({ id: order.id, reward: net });
+    }
   }
   return out;
 }
@@ -163,33 +171,30 @@ function findExcessGoods(game: GameState, threshold = 10) {
 function computeAdvice(game: GameState): Advice[] {
   const advice: Advice[] = [];
 
-  // Financial health
-  const maintenanceDue = game.fixedCost + maintenanceSurcharge(game);
-  if (game.money < maintenanceDue) {
+  const beforeBills = [5, 1, "barter", "worker_mgmt", 2, 3].includes(
+    game.phase,
+  );
+  const due = quoteDues(game);
+  if (beforeBills && game.money < due.total) {
     advice.push({
       id: "bankruptcy",
       priority: "critical",
-      title: "Bankruptcy risk!",
-      description: `You need ${maintenanceDue} Gold for maintenance, but only have ${game.money} Gold on hand. Without more funds, the next settlement ends the voyage.`,
+      title: "Settlement funds are short",
+      description: `Wages and maintenance require ${due.total} Gold. You have ${game.money} Gold.`,
       action:
-        "Sell goods, fulfill orders, request aid, or post a barter offer.",
-    });
-  }
-
-  const wagesDue = quoteWages(game).due;
-  if (wagesDue > 0 && game.money < wagesDue) {
-    advice.push({
-      id: "wages",
-      priority: "critical",
-      title: "Can't afford wages!",
-      description: `Next settlement charges ${wagesDue} Gold in wages, but you have ${game.money} Gold. Defaulting on payroll ends the voyage.`,
-      action: "Consider firing unnecessary workers or requesting aid.",
+        game.phase === 3
+          ? "Request Financial Aid if you need help covering the bills."
+          : "Reserve Gold and look for a trade you can complete this round.",
     });
   }
 
   // Worker efficiency
   const idle = countIdleWorkers(game);
-  if (idle > 0) {
+  if (
+    idle > 0 &&
+    game.phase === "worker_mgmt" &&
+    (!rebalanced(game) || game.currentRound < game.maxRounds)
+  ) {
     advice.push({
       id: "idle_workers",
       priority: "warning",
@@ -200,9 +205,16 @@ function computeAdvice(game: GameState): Advice[] {
     });
   }
 
-  const firstRoundRisk = pirateChanceFor(game.difficulty, 1, game.maxRounds);
+  const firstRoundRisk =
+    pirateChanceFor(game.difficulty, 1, game.maxRounds) +
+    voyageRaidAdjustment(game.rulesVersion, game.difficulty);
   const { chance, raidLoss } = quotePirateWaters(game);
-  if (chance > firstRoundRisk && !game.pirateAttackResolved && !game.gameOver) {
+  if (
+    beforeBills &&
+    chance > firstRoundRisk &&
+    !game.pirateAttackResolved &&
+    !game.gameOver
+  ) {
     advice.push({
       id: "pirate_risk",
       priority: "warning",
@@ -215,14 +227,18 @@ function computeAdvice(game: GameState): Advice[] {
 
   // Ship upgrade readiness
   const nextLevel = game.shipLevel;
-  const baseCost = game.shipUpgradeCost[nextLevel];
-  const upgradeCost = baseCost + shipUpgradeSurcharge(game);
-  if (baseCost !== undefined && game.money >= upgradeCost && !game.gameOver) {
+  const { cost: upgradeCost, available } = quoteShipUpgrade(game);
+  if (
+    game.phase === 4 &&
+    nextLevel < 3 &&
+    (!rebalanced(game) || game.currentRound < game.maxRounds) &&
+    available >= upgradeCost
+  ) {
     advice.push({
       id: "ship_upgrade",
       priority: "tip",
       title: "Ship upgrade ready",
-      description: `You can afford the ${upgradeCost} Gold upgrade to ship level ${nextLevel + 1}. An upgrade adds one module slot and cuts base freight by 5 Gold.`,
+      description: `You can afford the ${upgradeCost} Gold upgrade to ship level ${nextLevel + 1}. An upgrade adds one module slot and can reduce freight by up to 5 Gold.`,
       action: "Visit the Shipyard during Phase 4 to upgrade.",
     });
   }
@@ -239,31 +255,39 @@ function computeAdvice(game: GameState): Advice[] {
       priority: "tip",
       title: `Excess ${worst.item} (${worst.qty})`,
       description: `Your hold is overflowing with ${worst.item}${others > 0 ? `, plus ${others} more good${others === 1 ? "" : "s"} past 10 units` : ""}. Excess stock ties up capital that could be working for you.`,
-      action:
-        "Post a barter offer or fulfill an order to convert stock into Gold.",
+      action: harborTrading(game)
+        ? "Offer the cargo in barter, fill a buyer order, or sell it at the Port Exchange."
+        : "Post a barter offer or fulfill an order to convert stock into Gold.",
     });
   }
 
   // Order fulfillment
-  const completable = completableOrders(game);
+  const completable = game.phase === 2 ? completableOrders(game) : [];
   if (completable.length > 0) {
-    const total = completable.reduce((s, o) => s + o.reward, 0);
+    const best = Math.max(...completable.map(({ reward }) => reward));
     advice.push({
       id: "orders_ready",
       priority: "tip",
       title: `${completable.length} order${completable.length === 1 ? "" : "s"} ready to fulfill`,
-      description: `You already hold everything needed to settle ${completable.length === 1 ? "one open order" : `${completable.length} open orders`}, worth ~${total} Gold in rewards.`,
-      action: "Prioritize the best reward first during Phase 2.",
+      description: `You already hold everything needed to settle ${completable.length === 1 ? "one open order" : `${completable.length} open orders`}, with a best quoted ${formatGoldProceeds(best)} after freight and VAT. Orders may need the same cargo.`,
+      action:
+        best < 0
+          ? "Compare the cost with other buyers before trading."
+          : "Prioritize the best reward first during Phase 2.",
     });
   }
 
   // No orders completed yet
-  if (game.completedOrders.length === 0 && game.currentRound > 2) {
+  if (
+    game.phase === 2 &&
+    game.totalOrdersCompleted === 0 &&
+    game.currentRound > 2
+  ) {
     advice.push({
       id: "no_orders",
       priority: "warning",
       title: "No orders completed yet",
-      description: `You're on round ${game.currentRound} and haven't settled a single trade order. Reputation and revenue both come from orders. Falling behind here is hard to recover from.`,
+      description: `You haven't completed a buyer order by round ${game.currentRound}. Buyer orders award Reputation.${harborTrading(game) ? " Exchange sales can still raise Gold for your bills." : ""}`,
       action: "Focus on fulfilling trade orders this round, even a small one.",
     });
   }
@@ -286,43 +310,17 @@ function computeAdvice(game: GameState): Advice[] {
 
 // Helpers
 
-function dismissKey(round: number, adviceId: string): string {
-  return `pm2_advisor_dismissed_r${round}_${adviceId}`;
-}
-
-function readDismissed(round: number): Set<string> {
-  const out = new Set<string>();
+function readDismissed(key: string): Set<string> {
   try {
-    const prefix = `pm2_advisor_dismissed_r${round}_`;
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(prefix)) {
-        out.add(key.slice(prefix.length));
-      }
-    }
+    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return new Set(
+      Array.isArray(stored)
+        ? stored.filter((id): id is string => typeof id === "string")
+        : [],
+    );
   } catch {
-    // localStorage unavailable (private mode, SSR, etc.).
+    return new Set();
   }
-  return out;
-}
-
-function clearDismissedForRound(round: number): number {
-  let cleared = 0;
-  try {
-    const prefix = `pm2_advisor_dismissed_r${round}_`;
-    const toRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(prefix)) toRemove.push(key);
-    }
-    for (const key of toRemove) {
-      localStorage.removeItem(key);
-      cleared += 1;
-    }
-  } catch {
-    // ignore
-  }
-  return cleared;
 }
 
 function countByPriority(list: Advice[]): Record<AdvicePriority, number> {
@@ -479,30 +477,21 @@ function EmptyState() {
   );
 }
 
-// Main component
-
-export function StrategyAdvisor({ game, className }: Props) {
+export function StrategyAdvisor({ game, userId, roomId, className }: Props) {
+  const dismissalKey = `pm2_advisor_${userId}_${roomId}_${game.voyageEpoch}_${game.currentRound}`;
   const [collapsed, setCollapsed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  // Tracks which advice ids the captain has dismissed for the current round.
-  // Loaded from localStorage whenever the round changes or the captain
-  // hits the Refresh button.
-  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() =>
-    readDismissed(game.currentRound),
+  const [dismissal, setDismissal] = useState<{
+    key: string;
+    ids: Set<string>;
+  }>();
+  const storedDismissals = useMemo(
+    () => readDismissed(dismissalKey),
+    [dismissalKey],
   );
-  // Bumped by the Refresh button to run the dismissed set effect again
-  // even when the round hasn't changed.
-  const [refreshNonce, setRefreshNonce] = useState(0);
+  const dismissedIds =
+    dismissal?.key === dismissalKey ? dismissal.ids : storedDismissals;
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Recompute the dismissed set when the round changes or the captain asks
-  // for a refresh. Defer the update so the effect body stays synchronous.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setDismissedIds(readDismissed(game.currentRound));
-    }, 0);
-    return () => clearTimeout(t);
-  }, [game.currentRound, refreshNonce]);
 
   // Cleanup the refresh spin timer on unmount.
   useEffect(() => {
@@ -528,38 +517,37 @@ export function StrategyAdvisor({ game, className }: Props) {
   const counts = useMemo(() => countByPriority(visibleAdvice), [visibleAdvice]);
   const dismissedCount = allAdvice.length - visibleAdvice.length;
 
-  // Handlers
   const handleDismiss = useCallback(
     (id: string) => {
+      const ids = new Set([...dismissedIds, id]);
       try {
-        localStorage.setItem(dismissKey(game.currentRound, id), "1");
+        localStorage.setItem(dismissalKey, JSON.stringify([...ids]));
       } catch {
-        // ignore : dismissal just won't persist
+        // Keep the dismissal in the open view if storage is unavailable.
       }
-      setDismissedIds((prev) => {
-        const next = new Set(prev);
-        next.add(id);
-        return next;
-      });
+      setDismissal({ key: dismissalKey, ids });
     },
-    [game.currentRound],
+    [dismissalKey, dismissedIds],
   );
 
   const handleRefresh = useCallback(() => {
-    const cleared = clearDismissedForRound(game.currentRound);
+    try {
+      localStorage.removeItem(dismissalKey);
+    } catch {
+      // The open view can still reset.
+    }
+    setDismissal({ key: dismissalKey, ids: new Set<string>() });
     setRefreshing(true);
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = setTimeout(() => setRefreshing(false), 600);
-    // Bumping the nonce reloads the dismissed set after localStorage clears.
-    setRefreshNonce((n) => n + 1);
-    if (cleared > 0) {
+    if (dismissedCount > 0) {
       toast.success(
-        `Restored ${cleared} dismissed tip${cleared === 1 ? "" : "s"}`,
+        `Restored ${dismissedCount} dismissed tip${dismissedCount === 1 ? "" : "s"}`,
       );
     } else {
       toast.info("Analysis refreshed");
     }
-  }, [game.currentRound]);
+  }, [dismissalKey, dismissedCount]);
 
   // Render
   return (
@@ -665,36 +653,38 @@ export function StrategyAdvisor({ game, className }: Props) {
             className="relative z-10 overflow-hidden"
           >
             <div className="px-3.5 pb-3.5">
-              {visibleAdvice.length === 0 ? (
-                <EmptyState />
+              {visibleAdvice.length > 0 ? (
+                <div className="pm-scroll flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
+                  <AnimatePresence initial={false}>
+                    {visibleAdvice.map((a, i) => (
+                      <AdviceCard
+                        key={a.id}
+                        advice={a}
+                        index={i}
+                        onDismiss={handleDismiss}
+                      />
+                    ))}
+                  </AnimatePresence>
+                </div>
+              ) : dismissedCount > 0 ? (
+                <p className="text-center text-xs text-muted-foreground">
+                  All current tips are dismissed.
+                </p>
               ) : (
-                <>
-                  <div className="pm-scroll flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
-                    <AnimatePresence initial={false}>
-                      {visibleAdvice.map((a, i) => (
-                        <AdviceCard
-                          key={a.id}
-                          advice={a}
-                          index={i}
-                          onDismiss={handleDismiss}
-                        />
-                      ))}
-                    </AnimatePresence>
-                  </div>
-                  {dismissedCount > 0 && (
-                    <div className="mt-2 flex items-center justify-center">
-                      <button
-                        type="button"
-                        onClick={handleRefresh}
-                        className="inline-flex items-center gap-1 rounded-full border border-amber-700/15 bg-amber-50/60 px-2.5 py-1 text-[10px] font-medium text-amber-700/80 transition-colors hover:border-amber-700/30 hover:bg-amber-100/70 hover:text-amber-800 dark:border-amber-300/15 dark:bg-amber-400/10 dark:text-amber-200/70 dark:hover:bg-amber-400/15 dark:hover:text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40"
-                      >
-                        <RefreshCw className="h-2.5 w-2.5" aria-hidden />
-                        Restore {dismissedCount} dismissed tip
-                        {dismissedCount === 1 ? "" : "s"}
-                      </button>
-                    </div>
-                  )}
-                </>
+                <EmptyState />
+              )}
+              {dismissedCount > 0 && (
+                <div className="mt-2 flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={handleRefresh}
+                    className="inline-flex items-center gap-1 rounded-full border border-amber-700/15 bg-amber-50/60 px-2.5 py-1 text-[10px] font-medium text-amber-700/80 transition-colors hover:border-amber-700/30 hover:bg-amber-100/70 hover:text-amber-800 dark:border-amber-300/15 dark:bg-amber-400/10 dark:text-amber-200/70 dark:hover:bg-amber-400/15 dark:hover:text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40"
+                  >
+                    <RefreshCw className="h-2.5 w-2.5" aria-hidden />
+                    Restore {dismissedCount} dismissed tip
+                    {dismissedCount === 1 ? "" : "s"}
+                  </button>
+                </div>
               )}
             </div>
           </motion.div>
@@ -714,11 +704,13 @@ export function StrategyAdvisor({ game, className }: Props) {
       {collapsed && visibleAdvice.length === 0 && (
         <div className="relative z-10 flex items-center gap-1.5 px-3.5 pb-2.5 text-[10px] text-amber-700/70 dark:text-amber-200/55">
           <ShipIcon className="h-3 w-3" aria-hidden />
-          <span>Smooth sailing</span>
+          <span>
+            {dismissedCount > 0
+              ? "All current tips are dismissed"
+              : "Smooth sailing"}
+          </span>
         </div>
       )}
     </motion.section>
   );
 }
-
-export default StrategyAdvisor;

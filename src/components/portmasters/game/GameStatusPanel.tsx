@@ -14,6 +14,7 @@ import {
   quoteWages,
   workerWagesFor,
 } from "@/lib/game/engine";
+import { taxReserve } from "@/lib/game/engine/pricing";
 import type { GameState } from "@/lib/game/types";
 import { difficultyConfig } from "@/lib/game/difficulty";
 import {
@@ -22,7 +23,7 @@ import {
   unlockedWorkerTypes,
 } from "@/lib/game/pools";
 import type { ConvoyVenture } from "@/lib/use-convoy";
-import { cn } from "@/lib/utils";
+import { cn, formatReputation } from "@/lib/utils";
 import { itemColorResolver } from "@/lib/use-color-preference";
 import { Term } from "../Term";
 import { priceAwareTermContent } from "./PriceTooltips";
@@ -44,32 +45,49 @@ import {
   ScrollText,
 } from "lucide-react";
 
-/** Derive chronicle events from the game log strings. */
-function deriveChronicleEvents(
+const roundHeader = /=== (Preparing for )?Round (\d+)(?: ·| Settlement| ===)/i;
+
+export function deriveChronicleEvents(
   logs: string[],
   currentRound: number,
 ): ChronicleEvent[] {
-  return logs.map((entry) => {
-    const roundMatch = entry.match(/Round\s+(\d+)/i);
-    const round = roundMatch ? parseInt(roundMatch[1], 10) : currentRound;
-    let type: ChronicleEvent["type"] = "round_start";
-    let description = entry;
-    if (/purchas|bought|bought/i.test(entry)) type = "purchase";
-    else if (/order|complet|fulfill|trad/i.test(entry)) type = "order";
-    else if (/wage|salary/i.test(entry)) type = "wages";
-    else if (/maint|upkeep/i.test(entry)) type = "maintenance";
-    else if (/pirat|raid|escort/i.test(entry)) type = "pirate";
-    else if (/upgrade|ship.*level|improv/i.test(entry)) type = "upgrade";
-    else if (/module|equip|draft/i.test(entry)) type = "module";
-    else if (/boon|bless/i.test(entry)) type = "boon";
-    else if (/loan|borrow|lend|aid|grant/i.test(entry)) type = "loan";
-    else if (/barter|swap|trade.*offer/i.test(entry)) type = "barter";
-    else if (/bankrupt|default/i.test(entry)) type = "bankruptcy";
-    else if (/round/i.test(entry)) type = "round_start";
-    // Truncate very long entries for the compact view
-    if (description.length > 80) description = description.slice(0, 77) + "…";
-    return { round, phase: "", type, description };
-  });
+  const first = logs.map((entry) => entry.match(roundHeader)).find(Boolean);
+  let round = first
+    ? Math.max(1, Number(first[2]) - Number(Boolean(first[1])))
+    : currentRound;
+  return logs
+    .filter((entry) => entry.trim() && !/^=+$/.test(entry.trim()))
+    .map((description) => {
+      const header = description.match(roundHeader);
+      if (header) round = Number(header[2]);
+      if (header) return { round, type: "round_start", description };
+      let type: ChronicleEvent["type"] = "note";
+      if (/bankrupt|defaulted|cannot cover/i.test(description))
+        type = "bankruptcy";
+      else if (/barter|🤝 (?:Traded|Offered)/i.test(description))
+        type = "barter";
+      else if (/loan|borrow|lend|repaid|debt|bequest/i.test(description))
+        type = "loan";
+      else if (/pirate|raid|escort|clear seas/i.test(description))
+        type = "pirate";
+      else if (
+        /^\s*(?:👥|💰)?\s*(?:wages|paid wages|paying worker wages)|payroll/i.test(
+          description,
+        )
+      )
+        type = "wages";
+      else if (/maintenance|upkeep/i.test(description)) type = "maintenance";
+      else if (/upgraded|upgrade the ship/i.test(description)) type = "upgrade";
+      else if (/installed |swapped |module draft/i.test(description))
+        type = "module";
+      else if (/boon|navigator's compass/i.test(description)) type = "boon";
+      else if (/purchase|bought/i.test(description)) type = "purchase";
+      else if (
+        /order|trad(?:e|ing)|net (?:profit|proceeds)|freight/i.test(description)
+      )
+        type = "order";
+      return { round, type, description };
+    });
 }
 
 /**
@@ -80,6 +98,7 @@ export function GameStatusPanel({
   game,
   logs,
   onRepayLoan,
+  waiting,
   convoy,
   myUserId,
   colorFor,
@@ -87,9 +106,11 @@ export function GameStatusPanel({
   game: GameState;
   logs: string[];
   onRepayLoan?: (debtId: string) => void;
+  waiting?: boolean;
   // Optional room venture data.
   convoy?: {
     ventures: ConvoyVenture[];
+    busy: boolean;
     // One completed venture locks posting until the next voyage.
     locked: boolean;
     error: string | null;
@@ -103,6 +124,7 @@ export function GameStatusPanel({
 }) {
   const resolveColor = itemColorResolver(colorFor);
   const discount = game.shipLevel * 5;
+  const available = game.money - taxReserve(game);
   const billsPaid = [4, "module_draft", "module_swap"].includes(game.phase);
   const showObligations = [1, "barter", "worker_mgmt", 2, 3].includes(
     game.phase,
@@ -112,12 +134,14 @@ export function GameStatusPanel({
   // Hardcoding those three meant a captain who hired a charter artisan was
   // shown a wages figure that omitted them, understating the round end bill
   // and therefore the bankruptcy risk this panel exists to warn about.
-  const roster = unlockedWorkerTypes(game.difficulty, game.currentRound).map(
-    (w) => {
-      const list = game.workers[w.id] ?? [];
-      return { ...w, list, due: workerWagesFor(game, w.id) };
-    },
-  );
+  const roster = unlockedWorkerTypes(
+    game.difficulty,
+    game.currentRound,
+    game.rulesVersion,
+  ).map((w) => {
+    const list = game.workers[w.id] ?? [];
+    return { ...w, list, due: workerWagesFor(game, w.id) };
+  });
   const { due: pendWages, discount: wageSavings } = quoteWages(game);
   const pendMaint = game.fixedCost + maintenanceSurcharge(game);
   const pendTotal = pendWages + pendMaint;
@@ -130,6 +154,7 @@ export function GameStatusPanel({
   const safe = game.money >= pendTotal;
   const nW = roster.reduce((sum, r) => sum + r.list.length, 0);
   const cfg = difficultyConfig(game.difficulty);
+  const shownRound = Math.min(game.currentRound, game.maxRounds);
   const hasLoans = game.debts.length > 0 || game.loansGiven.length > 0;
   const duesAlert = (showObligations && !safe) || game.debts.length > 0;
 
@@ -143,7 +168,7 @@ export function GameStatusPanel({
             <Anchor className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
             Voyage{" "}
             <b className="text-foreground">
-              {game.currentRound}/{game.maxRounds}
+              {shownRound}/{game.maxRounds}
             </b>
           </span>
           {/* Round progress bar */}
@@ -151,7 +176,7 @@ export function GameStatusPanel({
             <div
               className="h-full rounded-full bg-teal-500/70 transition-all duration-500"
               style={{
-                width: `${Math.max(2, (game.currentRound / game.maxRounds) * 100)}%`,
+                width: `${Math.max(2, (shownRound / game.maxRounds) * 100)}%`,
               }}
             />
           </div>
@@ -171,7 +196,7 @@ export function GameStatusPanel({
           />
           <Stat
             label="Reputation"
-            value={`${game.score}`}
+            value={formatReputation(game.score)}
             icon={<Star className="h-3.5 w-3.5" />}
             className="text-amber-600 dark:text-amber-400"
           />
@@ -242,6 +267,7 @@ export function GameStatusPanel({
             game.difficulty,
             game.currentRound,
             game.rulesVersion,
+            game.specialties,
           ).map((r) => (
             <InvItem
               key={r}
@@ -261,6 +287,7 @@ export function GameStatusPanel({
             game.difficulty,
             game.currentRound,
             game.rulesVersion,
+            game.specialties,
           ).map((r) => (
             <InvItem
               key={r}
@@ -453,7 +480,9 @@ export function GameStatusPanel({
                         size="sm"
                         variant="secondary"
                         className="h-6 rounded px-2 text-[10px]"
-                        disabled={game.money < d.amount}
+                        disabled={
+                          waiting || convoy?.busy || available < d.amount
+                        }
                         onClick={() => onRepayLoan(d.id)}
                       >
                         Repay
@@ -488,6 +517,7 @@ export function GameStatusPanel({
               game={game}
               convoy={convoy}
               myUserId={myUserId}
+              waiting={waiting}
             />
           )}
         </TabsContent>
@@ -500,9 +530,8 @@ export function GameStatusPanel({
           className="pm-scroll lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
         >
           <VoyageChronicle
-            events={deriveChronicleEvents(logs, game.currentRound)}
-            currentRound={game.currentRound}
-            gameState={game}
+            events={deriveChronicleEvents(logs, shownRound)}
+            currentRound={shownRound}
           />
         </TabsContent>
       </Tabs>
@@ -574,10 +603,13 @@ function ConvoyVenturesSection({
   game,
   convoy,
   myUserId,
+  waiting,
 }: {
   game: GameState;
+  waiting?: boolean;
   convoy: {
     ventures: ConvoyVenture[];
+    busy: boolean;
     locked: boolean;
     error: string | null;
     clearError: () => void;
@@ -605,6 +637,9 @@ function ConvoyVenturesSection({
     game.maxRounds - 1 - game.currentRound,
   );
   const tooLateToPost = maxRoundsAhead < CONVOY_VENTURE_MIN_ROUNDS_AHEAD;
+  const available = game.money - taxReserve(game);
+  const active = game.phase !== 0 && !game.gameOver;
+  const canContribute = !waiting && !convoy.busy && active;
 
   function submitPost() {
     const t = Math.floor(Number(target));
@@ -618,7 +653,7 @@ function ConvoyVenturesSection({
   function submitContribute(ventureId: string) {
     const raw = contributions[ventureId];
     const amount = Math.floor(Number(raw));
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!canContribute || !Number.isFinite(amount) || amount <= 0) return;
     convoy.contribute(ventureId, amount);
     setContributions((c) => ({ ...c, [ventureId]: "" }));
   }
@@ -637,7 +672,11 @@ function ConvoyVenturesSection({
         </div>
       )}
 
-      {convoy.locked ? (
+      {!active ? (
+        <p className="text-xs text-muted-foreground">
+          Convoy Ventures are available during an active voyage.
+        </p>
+      ) : convoy.locked ? (
         // This harbor's one Convoy Venture chance for
         // this voyage is already spent (a venture somewhere in this room
         // has already filled). Explaining why, rather than just hiding the
@@ -728,6 +767,16 @@ function ConvoyVenturesSection({
             );
             const myRemainingShare = myShareCap - (mine?.amount ?? 0);
             const atMyShareCap = myRemainingShare <= 0;
+            const maximum = Math.max(
+              0,
+              Math.min(myRemainingShare, v.targetGold - v.total, available),
+            );
+            const requested = Number(contributions[v.id] ?? "");
+            const canSubmit =
+              canContribute &&
+              Number.isSafeInteger(requested) &&
+              requested > 0 &&
+              requested <= maximum;
             return (
               <div
                 key={v.id}
@@ -761,7 +810,8 @@ function ConvoyVenturesSection({
                     <Input
                       type="number"
                       min={1}
-                      max={myRemainingShare}
+                      max={maximum}
+                      aria-label="Gold to back this Convoy Venture"
                       value={contributions[v.id] ?? ""}
                       onChange={(e) =>
                         setContributions((c) => ({
@@ -776,9 +826,10 @@ function ConvoyVenturesSection({
                       size="sm"
                       variant="secondary"
                       className="h-6 shrink-0 rounded px-2 text-[10px]"
+                      disabled={!canSubmit}
                       onClick={() => submitContribute(v.id)}
                     >
-                      Back it
+                      {convoy.busy ? "Confirming…" : "Back it"}
                     </Button>
                   </div>
                 )}

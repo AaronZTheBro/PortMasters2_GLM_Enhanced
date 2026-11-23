@@ -528,5 +528,3 @@ export function CaptainLogbook({
     </motion.div>
   );
 }
-
-export default CaptainLogbook;

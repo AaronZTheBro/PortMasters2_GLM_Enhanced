@@ -11,8 +11,6 @@ export {
 
 // Pricing, taxes, and wages.
 export {
-  brokersFavorCommission,
-  calcIncomeTax,
   explainCardPrice,
   explainExpectedPrice,
   explainTransportCost,
@@ -28,14 +26,9 @@ export {
 
 // Port market.
 export {
-  applyHarborPulse,
   applyTidewatchSurge,
-  completePhase1,
-  poolsFor,
   purchaseCard,
   startPhase1,
-  tallyPurchasesByResource,
-  type MarketPools,
 } from "./engine/market";
 
 // Trade orders.
@@ -44,10 +37,7 @@ export {
   claimWordOnTheDocksReward,
   completeOrder,
   purchaseIntel,
-  startPhase2,
 } from "./engine/orders";
-
-export { completeBarterPhase } from "./engine/barter";
 
 // Artisans.
 export {
@@ -56,12 +46,10 @@ export {
   hireWorker,
   payMaintenance,
   payWages,
-  processProduction,
 } from "./engine/workers";
 
 // Boons and ship modules.
 export {
-  applyBoon,
   draftBoons,
   finalizeModuleSwap,
   handleModuleSelect,
@@ -83,31 +71,17 @@ export {
   receiveLoan,
   receiveRepayment,
   repayLoan,
-  settleOutstandingDebts,
 } from "./engine/aid";
 export {
   pledgeBacking,
   receiveBackedCoverage,
   receiveBackingOutcome,
 } from "./engine/backingState";
-export {
-  contributeToVenture,
-  receiveVentureSettlement,
-} from "./engine/convoyState";
-
 // Voyage lifecycle and phase orchestration.
 export {
-  completePhase2,
-  endGame,
-  endRound,
-  finishSettlement,
   merchantRatingForScore,
-  nextPhase,
   phaseLabel,
   restartGame,
   showWelcome,
-  skipUpgrade,
   snapToCheckpoint,
-  startPhase3,
-  startPhase4,
 } from "./engine/lifecycle";

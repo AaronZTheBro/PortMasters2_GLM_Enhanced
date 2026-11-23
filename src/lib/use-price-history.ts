@@ -24,14 +24,23 @@ export function buildPriceSnapshot(game: GameState, side: PriceSide) {
 
   if (side === "buy") {
     for (const card of game.resourceCards) {
+      if (card.workshopSupply) continue;
       for (const item of card.resources) {
         if (item.price !== undefined) add(item.type, item.price, card.port);
       }
     }
   } else {
+    const opening = { ...game, effectUses: {}, completedOrders: [] };
     for (const order of game.customerCards) {
-      if (!order.totalItems || order.isBrokerFavor || order.isMandate) continue;
-      const quote = quoteOrder(game, order);
+      if (
+        !order.totalItems ||
+        order.isBrokerFavor ||
+        order.isMandate ||
+        order.clearance ||
+        order.workshop
+      )
+        continue;
+      const quote = quoteOrder(opening, order);
       const price = (quote.reward - quote.freight.final) / order.totalItems;
       const port = whisperForOrder(game, order)?.port ?? order.demandPort;
       for (const item of order.resources) add(item.type, price, port);
@@ -91,7 +100,11 @@ export function usePriceHistory(
           const existing = observations.find(
             ({ round }) => round === point.round,
           );
-          if (existing?.price === point.price && existing.port === point.port)
+          if (
+            existing &&
+            (side === "sell" ||
+              (existing.price === point.price && existing.port === point.port))
+          )
             continue;
           const series = observations.filter(
             (old) => old.round !== point.round,

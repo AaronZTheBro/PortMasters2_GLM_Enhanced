@@ -1,8 +1,140 @@
 import type { Boon } from "./constants";
+import { difficultyConfig, normalizeDifficulty } from "./difficulty";
 import type { Difficulty } from "./difficulty";
 
-export const CLASSIC_RULES = 1;
-export const EXPANDED_RULES = 2;
+import {
+  EXPANDED_RULES,
+  REBALANCED_RULES,
+  OPEN_HARBOR_RULES,
+  CLASSIC_HARBOR_RULES,
+} from "./rules-version";
+export {
+  CLASSIC_RULES,
+  EXPANDED_RULES,
+  REBALANCED_RULES,
+  OPEN_HARBOR_RULES,
+  CLASSIC_HARBOR_RULES,
+} from "./rules-version";
+
+export function openHarbor(state: { rulesVersion?: number }) {
+  return state.rulesVersion === OPEN_HARBOR_RULES;
+}
+
+export function classicHarbor(state: { rulesVersion?: number }) {
+  return state.rulesVersion === CLASSIC_HARBOR_RULES;
+}
+
+export function harborTrading(state: { rulesVersion?: number }) {
+  return openHarbor(state) || classicHarbor(state);
+}
+
+export function harborArrival(state: {
+  arrivals?: string[];
+  currentRound: number;
+}) {
+  return state.arrivals?.[state.currentRound - 1] ?? "Quanzhou Port";
+}
+
+export const SPECIALTIES = {
+  bamboo: { name: "Bamboo Weaving", goods: ["Bamboo", "Bamboo Mat"] },
+  wax: {
+    name: "Wax Workshop",
+    goods: ["Beeswax", "Waxed Canvas", "Scented Candle"],
+  },
+  iron: { name: "Iron Foundry", goods: ["Iron Sand", "Inlaid Kettle"] },
+  lacquer: {
+    name: "Lacquer Guild",
+    goods: ["Iron Sand", "River Lacquer", "Lacquered Jar", "Lacquered Mirror"],
+  },
+  incense: {
+    name: "Incense Route",
+    goods: ["Beeswax", "Frankincense", "Incense Oil"],
+  },
+  lapis: {
+    name: "Lapis Route",
+    goods: ["Lapis Lazuli", "Lapis Pendant", "Pearl and Lapis Strand"],
+  },
+} as const;
+export type Specialty = keyof typeof SPECIALTIES;
+
+export function specialtyChoices(
+  difficulty: unknown,
+): readonly (readonly Specialty[])[] {
+  const waters = normalizeDifficulty(difficulty);
+  const groups: Specialty[][] = [["bamboo", "wax"]];
+  if (waters !== "fair_winds") groups.push(["iron", "lacquer"]);
+  if (waters === "monsoon") groups.push(["incense", "lapis"]);
+  return groups;
+}
+
+export function voyageSpecialties(
+  difficulty: unknown,
+  choices?: unknown,
+): Specialty[] {
+  return specialtyChoices(difficulty).map(
+    (group, index) =>
+      group.find((key) => Array.isArray(choices) && choices[index] === key) ??
+      group[0],
+  );
+}
+
+export function specialtyOpens(difficulty: unknown, index: number) {
+  return index === 0
+    ? 4
+    : normalizeDifficulty(difficulty) === "open_waters"
+      ? 5
+      : index === 1
+        ? 7
+        : 11;
+}
+
+export function specialtyGoods(
+  difficulty: unknown,
+  round: number,
+  choices?: readonly Specialty[],
+) {
+  return new Set<string>(
+    voyageSpecialties(difficulty, choices).flatMap((key, index) =>
+      round >= specialtyOpens(difficulty, index)
+        ? [...SPECIALTIES[key].goods]
+        : [],
+    ),
+  );
+}
+
+export const REBALANCE = {
+  bambooUnit: 3,
+  bambooCap: 15,
+  reliableBuyer: 12,
+  safeAnchorage: 25,
+  anchorageEscort: 5,
+  ceramicRate: 0.2,
+  ceramicCap: 30,
+  guildUses: 2,
+  deepUnit: 3,
+  deepCap: 24,
+  rareRate: 0.2,
+  rareCap: 35,
+  cargoNet: 3,
+  wageLedger: 6,
+  scalesUnit: 2,
+  scalesCap: 12,
+  warehouse: 25,
+  convoyFreight: 4,
+  convoyReward: 6,
+  shrouds: 0.2,
+  oceanRate: 0.15,
+  oceanCap: 20,
+  lantern: 8,
+  overdriveUpkeep: 4,
+  marketDay: 0.15,
+  heavySeas: 0.06,
+  clearanceRate: 0.7,
+} as const;
+
+export function rebalanced(state: { rulesVersion?: number }) {
+  return state.rulesVersion === REBALANCED_RULES || harborTrading(state);
+}
 
 export const NEW_MATERIALS = {
   Bamboo: {
@@ -290,10 +422,16 @@ export const NEW_MODULES = [
 
 export type HarborForecast = {
   round: number;
-  kind: "market" | "guild" | "seas";
+  kind:
+    "market" | "guild" | "seas" | "fleet" | "shortfall" | "festival" | "rival";
   item?: string;
 };
-export type VoyageRules = { version: number; forecasts: HarborForecast[] };
+export type VoyageRules = {
+  version: number;
+  forecasts: HarborForecast[];
+  specialties?: Specialty[];
+  arrivals?: string[];
+};
 
 export const FORECAST_WINDOWS: Record<Difficulty, readonly number[]> = {
   fair_winds: [3, 6],
@@ -311,7 +449,7 @@ export const RAID_TERMS: Record<
 };
 
 export function expanded(state: { rulesVersion?: number }): boolean {
-  return state.rulesVersion === EXPANDED_RULES;
+  return state.rulesVersion === EXPANDED_RULES || rebalanced(state);
 }
 
 export function forecastFor(
@@ -337,11 +475,74 @@ export function effectUses(
 export function spendEffect(
   state: { effectUses?: Record<string, number> },
   key: string,
+  amount = 1,
 ) {
   state.effectUses ??= {};
-  state.effectUses[key] = effectUses(state, key) + 1;
+  state.effectUses[key] = effectUses(state, key) + amount;
 }
 
 export function isOceanMaterial(item: string) {
   return item === "Frankincense" || item === "Lapis Lazuli";
+}
+
+export function voyageMaintenance(difficulty: unknown, rulesVersion?: number) {
+  const cfg = difficultyConfig(difficulty);
+  const adjustment =
+    rulesVersion === REBALANCED_RULES
+      ? { fair_winds: 0, open_waters: 2, monsoon: 7 }[cfg.key]
+      : 0;
+  return (
+    cfg.maintenance +
+    (rulesVersion === OPEN_HARBOR_RULES
+      ? { fair_winds: -2, open_waters: -2, monsoon: -2 }[cfg.key]
+      : adjustment)
+  );
+}
+
+export function voyageBaseWage(wage: number, rulesVersion?: number) {
+  return rulesVersion === OPEN_HARBOR_RULES
+    ? Math.max(3, Math.floor(wage * 0.85))
+    : wage;
+}
+
+export function voyageRaidAdjustment(
+  rulesVersion: number | undefined,
+  difficulty: Difficulty,
+) {
+  return rulesVersion === OPEN_HARBOR_RULES && difficulty === "fair_winds"
+    ? -0.04
+    : 0;
+}
+
+export function voyageStartingGold(difficulty: unknown, rulesVersion?: number) {
+  const cfg = difficultyConfig(difficulty);
+  return rulesVersion === OPEN_HARBOR_RULES
+    ? { fair_winds: 110, open_waters: 105, monsoon: 100 }[cfg.key]
+    : cfg.startingGold;
+}
+
+export function raidTerms(
+  difficulty: Difficulty,
+  state: { rulesVersion?: number },
+) {
+  const terms = RAID_TERMS[difficulty];
+  if (classicHarbor(state))
+    return {
+      reserveRate: 1,
+      lossRate: { fair_winds: 0.35, open_waters: 0.43, monsoon: 0.55 }[
+        difficulty
+      ],
+    };
+  if (openHarbor(state))
+    return {
+      reserveRate: { fair_winds: 1, open_waters: 0.75, monsoon: 0.7 }[
+        difficulty
+      ],
+      lossRate: { fair_winds: 0.3, open_waters: 0.42, monsoon: 0.52 }[
+        difficulty
+      ],
+    };
+  return rebalanced(state) && difficulty === "monsoon"
+    ? { ...terms, reserveRate: 0.35 }
+    : terms;
 }

@@ -1,5 +1,18 @@
 "use client";
 
+import { useState } from "react";
+import { describeWhisperCargo } from "@/lib/game/broker-whispers";
+import { classicHarbor, harborTrading, rebalanced } from "@/lib/game/expansion";
+import {
+  buyWorkshopSupply,
+  chooseStaple,
+  poolsFor,
+  quoteWorkshopSupply,
+  STAPLE_CHOICES,
+  stapleOrder,
+} from "@/lib/game/engine/market";
+import { quoteOrder } from "@/lib/game/engine/orders";
+import { quoteDues } from "@/lib/game/engine/pricing";
 import { Button } from "@/components/ui/button";
 import { unlockedProducts, unlockedResources } from "@/lib/game/pools";
 import {
@@ -9,7 +22,7 @@ import {
   purchaseCard,
 } from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
-import { cn } from "@/lib/utils";
+import { cn, formatGoldProceeds } from "@/lib/utils";
 import { itemColorResolver } from "@/lib/use-color-preference";
 import { Anchor, Check, Wallet, Star } from "lucide-react";
 import { motion } from "framer-motion";
@@ -133,6 +146,7 @@ function MarketPriceReference({
               game.difficulty,
               game.currentRound,
               game.rulesVersion,
+              game.specialties,
             ).map((item) => (
               <PricePill
                 key={item}
@@ -152,6 +166,7 @@ function MarketPriceReference({
               game.difficulty,
               game.currentRound,
               game.rulesVersion,
+              game.specialties,
             ).map((item) => (
               <PricePill
                 key={item}
@@ -264,6 +279,16 @@ export function Purchase({
   colorFor?: (item: string) => string | undefined;
 }) {
   const resolveColor = itemColorResolver(colorFor);
+  const [recipe, setRecipe] = useState("Linen Clothes");
+  const supply = quoteWorkshopSupply(game, recipe);
+  const supplyCost = supply ? getCardFinalCost(game, supply) : 0;
+  const staple = game.resourceCards.find((card) => card.staple);
+  const stapleItem = staple?.resources[0]?.type;
+  const stapleQuote =
+    rebalanced(game) && staple
+      ? quoteOrder(game, stapleOrder(game))
+      : undefined;
+  const due = quoteDues(game).total;
 
   // Aggregate stats for the budget bar and best deal highlight. These are
   // derived from existing game state without changing game logic.
@@ -286,7 +311,7 @@ export function Purchase({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Anchor className="h-5 w-5 text-teal-600 dark:text-teal-400" />
           Port Merchant Exchange
@@ -306,13 +331,15 @@ export function Purchase({
           {game.revealedIntel.map((i, idx) => (
             <span key={idx}>
               {idx > 0 && ", "}
-              <ItemIcon item={i.item} className="h-3.5 w-3.5" /> {i.item} (
-              {i.port})
+              <ItemIcon item={i.item} className="h-3.5 w-3.5" />{" "}
+              {describeWhisperCargo(i)} ({i.port})
             </span>
           ))}
           <span className="text-muted-foreground">
             {" "}
-            (each rumor guarantees one order in Phase 2).
+            {classicHarbor(game)
+              ? "These buyers appear in Phase 2."
+              : "(each rumor guarantees one order in Phase 2)."}
           </span>
         </div>
       )}
@@ -321,6 +348,80 @@ export function Purchase({
         totalCardCosts={totalCardCosts}
         dealsAvailable={dealsAvailable}
       />
+      {rebalanced(game) && (
+        <div className="mb-4 grid gap-3 lg:grid-cols-2">
+          {stapleItem && stapleQuote && (
+            <section className="min-w-0 space-y-2 rounded-xl border bg-card p-3 text-sm">
+              <label className="grid gap-1 font-semibold">
+                Staple cargo
+                <select
+                  className="rounded-md border bg-background p-2"
+                  disabled={
+                    phaseSync.waiting ||
+                    game.purchasedCards.includes(staple!.id)
+                  }
+                  value={stapleItem}
+                  onChange={(event) =>
+                    act((g, logs) => chooseStaple(g, event.target.value, logs))
+                  }
+                >
+                  {STAPLE_CHOICES.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-muted-foreground">
+                Deliver {staple!.resources[0].quantity} {stapleItem} at Quanzhou
+                Port this round. Quoted{" "}
+                {formatGoldProceeds(
+                  stapleQuote.reward - stapleQuote.freight.final,
+                )}{" "}
+                after quoted freight.
+              </p>
+            </section>
+          )}
+          {game.currentRound < game.maxRounds && (
+            <section className="min-w-0 space-y-2 rounded-xl border bg-card p-3 text-sm">
+              <label className="grid gap-1 font-semibold">
+                Workshop Supplier
+                <select
+                  className="min-w-0 rounded-md border bg-background p-2"
+                  value={recipe}
+                  onChange={(event) => setRecipe(event.target.value)}
+                >
+                  {poolsFor(game).products.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-muted-foreground">
+                {supply
+                  ? supply.resources
+                      .map(({ type, quantity }) => `${quantity} ${type}`)
+                      .join(", ")
+                  : game.resourceCards.some((card) => card.workshopSupply)
+                    ? "This round's supply lot was purchased."
+                    : "You have the ingredients for one assignment."}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {harborTrading(game) && "Missing ingredients cost a premium. "}
+                Wages and maintenance due this round total {due} Gold.
+              </p>
+              {supply && (
+                <Button
+                  size="sm"
+                  disabled={phaseSync.waiting || game.money < supplyCost}
+                  onClick={() =>
+                    act((g, logs) => buyWorkshopSupply(g, recipe, logs))
+                  }
+                >
+                  Buy workshop supplies for {supplyCost} Gold
+                </Button>
+              )}
+            </section>
+          )}
+        </div>
+      )}
       <MarketPriceReference game={game} colorFor={resolveColor} />
       <div className="pm-decision-grid">
         {game.resourceCards.map((c, index) => {
@@ -381,11 +482,13 @@ export function Purchase({
                   <span className="text-muted-foreground">
                     {c.staple
                       ? "Staple lot"
-                      : c.featured
-                        ? "Forecast lot"
-                        : c.isProductCard
-                          ? "Product"
-                          : "Raw material"}
+                      : c.workshopSupply
+                        ? "Workshop supply"
+                        : c.featured
+                          ? "Forecast lot"
+                          : c.isProductCard
+                            ? "Finished good"
+                            : "Raw material"}
                   </span>
                 </div>
               </div>
@@ -415,34 +518,42 @@ export function Purchase({
                 ))}
                 {c.isProductCard && c.resources[0].materialCost ? (
                   <div className="text-[10px] text-muted-foreground pl-6">
-                    📦 Mat Cost: {c.resources[0].materialCost} Gold (
+                    📦 Recipe materials: {c.resources[0].materialCost} Gold (
                     {c.resources[0].materialDetails})
                   </div>
                 ) : null}
-                <div className="pt-2 mt-1 border-t border-dashed border-black/10 dark:border-white/10 flex flex-wrap items-center justify-between gap-2">
-                  <Term
-                    content={<PriceBreakdownTooltip breakdown={breakdown} />}
-                  >
-                    <span className="text-rose-600 dark:text-rose-400 font-bold text-sm cursor-help">
-                      💰 Total: {finalCost} Gold
-                    </span>
-                  </Term>
-                  <div className="flex items-center gap-1.5">
-                    {finalCost < c.totalCost && (
-                      <span className="text-muted-foreground text-[10px]">
-                        (Was {c.totalCost})
-                      </span>
-                    )}
-                    <span
-                      className={cn(
-                        "text-[9px] font-semibold px-1.5 py-0.5 rounded-full",
-                        DEAL_BADGE[quality].className,
-                      )}
+                {purchased ? (
+                  <p className="text-sm text-muted-foreground">
+                    {c.paidGold === undefined
+                      ? "See the ledger for the amount paid."
+                      : `Paid ${c.paidGold} Gold`}
+                  </p>
+                ) : (
+                  <div className="pt-2 mt-1 border-t border-dashed border-black/10 dark:border-white/10 flex flex-wrap items-center justify-between gap-2">
+                    <Term
+                      content={<PriceBreakdownTooltip breakdown={breakdown} />}
                     >
-                      {DEAL_BADGE[quality].label}
-                    </span>
+                      <span className="text-rose-600 dark:text-rose-400 font-bold text-sm cursor-help">
+                        💰 Total: {finalCost} Gold
+                      </span>
+                    </Term>
+                    <div className="flex items-center gap-1.5">
+                      {finalCost < c.totalCost && (
+                        <span className="text-muted-foreground text-[10px]">
+                          (Was {c.totalCost})
+                        </span>
+                      )}
+                      <span
+                        className={cn(
+                          "text-[9px] font-semibold px-1.5 py-0.5 rounded-full",
+                          DEAL_BADGE[quality].className,
+                        )}
+                      >
+                        {DEAL_BADGE[quality].label}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
               <div className="p-3 pt-0">
                 {!purchased && (
@@ -458,7 +569,7 @@ export function Purchase({
                     canAfford ? "pm-grad-emerald text-white" : "",
                   )}
                   variant={canAfford ? "default" : "secondary"}
-                  disabled={!canAfford}
+                  disabled={phaseSync.waiting || !canAfford}
                   onClick={() => act((g, l) => purchaseCard(g, c.id, l))}
                 >
                   {purchased ? "✅ Purchased" : `🛒 Buy (${finalCost}💰)`}

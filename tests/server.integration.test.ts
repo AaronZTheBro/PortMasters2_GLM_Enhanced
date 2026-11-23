@@ -6,8 +6,21 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { io, type Socket } from "socket.io-client";
-import { EXPANDED_RULES, type VoyageRules } from "../src/lib/game/expansion";
+import {
+  CLASSIC_HARBOR_RULES,
+  type VoyageRules,
+} from "../src/lib/game/expansion";
+import { computeHarborPulse } from "../src/lib/game/harborPulse";
+import { unlockedResources } from "../src/lib/game/pools";
+import {
+  quotePortExchange,
+  sellAtPortExchange,
+} from "../src/lib/game/engine/orders";
 import { WORD_ON_THE_DOCKS_THRESHOLD } from "../src/lib/game/constants";
+import {
+  applyBarterEntries,
+  type BarterUpdate,
+} from "../src/lib/game/barter-ledger";
 import { createInitialGameState } from "../src/lib/game/types";
 import type { VoyageCompleteEvent } from "../src/lib/realtime";
 
@@ -252,7 +265,11 @@ test(
 
       const created = await request("/api/rooms", {
         cookie: alphaCookie,
-        body: { name: "Integration harbor", isPublic: true },
+        body: {
+          name: "Integration harbor",
+          isPublic: true,
+          difficulty: "open_waters",
+        },
       });
       const room = created.data.room as { id: string; code: string };
 
@@ -321,15 +338,20 @@ test(
         "room:started",
         ({ roomId }) => roomId === room.id,
       );
-      alphaSocket.emit("room:start", { roomId: room.id });
+      alphaSocket.emit("room:start", {
+        roomId: room.id,
+        specialties: ["wax", "lacquer"],
+      });
       const [start, otherStart] = await Promise.all([
         alphaStarted,
         betaStarted,
       ]);
       assert.deepEqual(start, otherStart);
-      assert.equal(start.rules.version, EXPANDED_RULES);
+      assert.equal(start.rules.version, CLASSIC_HARBOR_RULES);
       assert.ok(start.rules.forecasts.length > 0);
-      const recoverySocket = await connectCaptain(betaRegistration.data.token);
+      assert.equal(start.rules.specialties, undefined);
+      assert.equal(start.rules.arrivals?.length, 12);
+      let recoverySocket = await connectCaptain(betaRegistration.data.token);
       sockets.push(recoverySocket);
       const checkpoint = waitForEvent<Started & { phase: string }>(
         recoverySocket,
@@ -396,6 +418,41 @@ test(
         socket.timeout(4000).emitWithAck("docks:claim", claim);
       assert.equal(await claimDocks(alphaSocket), false);
       const statePath = `/api/game/state?roomId=${room.id}`;
+      const exchange = createInitialGameState(
+        0,
+        1,
+        start.voyageEpoch,
+        "open_waters",
+        start.rules,
+      );
+      exchange.phase = 2;
+      const quoted = quotePortExchange(exchange, "Hemp", 4)!;
+      const logs: string[] = [];
+      assert.equal(sellAtPortExchange(exchange, quoted, logs), true);
+      const sale = {
+        roomId: room.id,
+        data: { ...exchange, voyageLog: logs },
+        revision: null,
+      };
+      const savedSale = await request("/api/game/state", {
+        cookie: betaCookie,
+        method: "PUT",
+        body: sale,
+      });
+      assert.equal(typeof savedSale.data.revision, "number");
+      const retry = await fetch(`${baseUrl}/api/game/state`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Cookie: betaCookie },
+        body: JSON.stringify(sale),
+      });
+      assert.equal(retry.status, 409);
+      const settled = JSON.parse(
+        (await request(statePath, { cookie: betaCookie })).data.state,
+      );
+      assert.equal(settled.inventory.Hemp, 4);
+      assert.equal(settled.exchangeSales.Hemp, 4);
+      assert.equal(settled.money, 100 + quoted.net);
+      assert.deepEqual(settled.voyageLog, logs);
       for (const cookie of [alphaCookie, betaCookie]) {
         const game = createInitialGameState(0, 1, start.voyageEpoch);
         game.totalOrdersCompleted = WORD_ON_THE_DOCKS_THRESHOLD;
@@ -442,6 +499,171 @@ test(
         (await request(statePath, { cookie: betaCookie })).data.tidewatchSurge,
         true,
       );
+
+      for (const [cookie, quantities] of [
+        [alphaCookie, { Hemp: 3 }],
+        [betaCookie, { Silk: 2 }],
+      ] as const) {
+        const game = createInitialGameState(0, 1, start.voyageEpoch);
+        game.currentRound = 2;
+        game.phase = 5;
+        game.lastPurchaseTally = { round: 1, quantities };
+        await request("/api/game/state", {
+          cookie,
+          method: "PUT",
+          body: { roomId: room.id, data: game },
+        });
+      }
+      const roundTwo = waitForEvent<Started & { round: number; phase: string }>(
+        alphaSocket,
+        "phase:ready_update",
+        ({ round, phase }) => round === 2 && phase === "5",
+      );
+      alphaSocket.emit("game:status", { ...claim, round: 2, phase: 5 });
+      await roundTwo;
+      const pulseRelease = waitForEvent<{
+        round: number;
+        harborPulse: Record<string, number>;
+      }>(alphaSocket, "phase:advance", ({ round }) => round === 2);
+      for (const socket of [alphaSocket, recoverySocket])
+        socket.emit("phase:ready", { ...claim, round: 2, phase: 5 });
+      const pulse = (await pulseRelease).harborPulse;
+      const totals = { Hemp: 3, Silk: 2 };
+      assert.deepEqual(
+        pulse,
+        computeHarborPulse(
+          totals,
+          unlockedResources("open_waters", 1, CLASSIC_HARBOR_RULES),
+        ),
+      );
+
+      for (const phase of [1, "barter"] as const) {
+        const checkpoint = waitForEvent<{
+          round: number;
+          phase: string;
+          harborPulse?: Record<string, number>;
+        }>(
+          recoverySocket,
+          "phase:ready_update",
+          (entry) => entry.round === 2 && entry.phase === String(phase),
+        );
+        alphaSocket.emit("game:status", { ...claim, round: 2, phase });
+        assert.deepEqual((await checkpoint).harborPulse, pulse);
+      }
+
+      const alphaId = alphaRegistration.data.user.id;
+      const betaId = betaRegistration.data.user.id;
+      const setupConvoyFunds = async (
+        cookie: string,
+        gold: number,
+        tax: number,
+      ) => {
+        const game = createInitialGameState(
+          0,
+          1,
+          start.voyageEpoch,
+          "open_waters",
+          start.rules,
+        );
+        game.currentRound = 2;
+        game.phase = 4;
+        game.money = gold;
+        game.roundIncomeTaxDue = tax;
+        await request("/api/game/state", {
+          cookie,
+          method: "PUT",
+          body: { roomId: room.id, data: game },
+        });
+        return game;
+      };
+
+      const posted = waitForEvent<{
+        ventures: { id: string; total: number }[];
+      }>(
+        alphaSocket,
+        "venture:update",
+        ({ ventures }) => ventures.length === 1,
+      );
+      alphaSocket.emit("venture:post", {
+        roomId: room.id,
+        targetGold: 150,
+        deadlineRound: 4,
+      });
+      const venture = (await posted).ventures[0];
+      const contribute = (socket: Socket, amount: number) =>
+        socket.timeout(4000).emitWithAck("venture:contribute", {
+          roomId: room.id,
+          ventureId: venture.id,
+          amount,
+        }) as Promise<{ error: string | null }>;
+      await setupConvoyFunds(alphaCookie, 100, 30);
+      assert.match((await contribute(alphaSocket, 75)).error ?? "", /70/);
+      const alphaGame = await setupConvoyFunds(alphaCookie, 125, 30);
+      const betaGame = await setupConvoyFunds(betaCookie, 100, 0);
+      const stake = waitForEvent<BarterUpdate>(
+        recoverySocket,
+        "barter:update",
+        ({ entries }) =>
+          entries.some(
+            (entry) =>
+              entry.userId === betaId && entry.changes[0]?.amount === -75,
+          ),
+      );
+      assert.deepEqual(await contribute(recoverySocket, 75), { error: null });
+      const betaStake = (await stake).entries;
+      const betSave = structuredClone(betaGame);
+      applyBarterEntries(betSave, betaStake, []);
+      assert.equal(betSave.money, 25);
+      await request("/api/game/state", {
+        cookie: betaCookie,
+        method: "PUT",
+        body: { roomId: room.id, data: betSave },
+      });
+      recoverySocket.disconnect();
+
+      const alphaPayout = waitForEvent<BarterUpdate>(
+        alphaSocket,
+        "barter:update",
+        ({ entries }) =>
+          entries.some(
+            (entry) =>
+              entry.userId === alphaId && entry.changes[0]?.amount === 113,
+          ),
+      );
+      assert.deepEqual(await contribute(alphaSocket, 75), { error: null });
+      assert.match(
+        (await contribute(alphaSocket, 75)).error ?? "",
+        /no longer open/,
+      );
+      const alphaEntries = (await alphaPayout).entries;
+      applyBarterEntries(alphaGame, alphaEntries, []);
+      applyBarterEntries(alphaGame, alphaEntries, []);
+      assert.equal(alphaGame.money, 163);
+      assert.equal(alphaGame.roundIncomeTaxDue, 30);
+
+      recoverySocket = await connectCaptain(betaRegistration.data.token);
+      sockets.push(recoverySocket);
+      const betaPayout = waitForEvent<BarterUpdate>(
+        recoverySocket,
+        "barter:update",
+        ({ entries }) =>
+          entries.some(
+            (entry) =>
+              entry.userId === betaId && entry.changes[0]?.amount === 113,
+          ),
+      );
+      const resumedVentureBoard = waitForEvent<{
+        locked: boolean;
+        ventures: unknown[];
+      }>(recoverySocket, "venture:update");
+      recoverySocket.emit("room:join", { roomId: room.id });
+      const betaEntries = (await betaPayout).entries;
+      const board = await resumedVentureBoard;
+      assert.equal(board.locked, true);
+      assert.deepEqual(board.ventures, []);
+      applyBarterEntries(betSave, betaEntries, []);
+      applyBarterEntries(betSave, betaEntries, []);
+      assert.equal(betSave.money, 138);
 
       const completed = waitForEvent<VoyageCompleteEvent>(
         alphaSocket,
@@ -497,6 +719,13 @@ test(
       const legacy = await request("/api/legacy", { cookie: alphaCookie });
       assert.equal(legacy.data.legacy.voyagesCompleted, 1);
       assert.equal(legacy.data.legacy.seaMasterCrowns, 1);
+
+      const resetVentures = waitForEvent<{
+        locked: boolean;
+        ventures: unknown[];
+      }>(reconnected, "venture:update", ({ locked }) => !locked);
+      reconnected.emit("room:restart", { roomId: room.id });
+      assert.deepEqual((await resetVentures).ventures, []);
     } finally {
       for (const socket of sockets) socket.disconnect();
       let forced = false;

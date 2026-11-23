@@ -1,5 +1,6 @@
 "use client";
 
+import { displayLedgerLine } from "@/lib/game/engine/lifecycle";
 import { TextWithShipIcons } from "../ShipVisualizer";
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
@@ -54,7 +55,7 @@ export function GameLogPanel({
               key={i}
               className="px-1 py-0.5 border-b border-black/[0.04] dark:border-white/[0.04] whitespace-pre-wrap break-words"
             >
-              <TextWithShipIcons>{m}</TextWithShipIcons>
+              <TextWithShipIcons>{displayLedgerLine(m)}</TextWithShipIcons>
             </div>
           ))
         )}

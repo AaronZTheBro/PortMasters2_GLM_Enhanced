@@ -3,17 +3,28 @@ import {
   BOONS,
   BROKERS_FAVOR_PAYOUT_CAP,
   COMMODITIES,
-  PRODUCT_PRICES,
-  RECIPES,
   RESOURCES,
   WAGES,
   WORKER_TYPES,
 } from "../constants";
-import { isSilkProduct, unlockedPorts } from "../pools";
+import {
+  isSilkProduct,
+  unlockedPorts,
+  voyageRecipe,
+  productPriceRange,
+} from "../pools";
 import type { GameState, OrderCard, ResourceCard, Worker } from "../types";
-import { hasModule, maintenanceSurcharge } from "./core";
+import { hasModule, maintenanceSurcharge, shipUpgradeSurcharge } from "./core";
 import {
   EFFECT,
+  REBALANCE,
+  rebalanced,
+  openHarbor,
+  classicHarbor,
+  harborTrading,
+  harborArrival,
+  type VoyageRules,
+  voyageBaseWage,
   expanded,
   effectUses,
   forecastFor,
@@ -44,8 +55,9 @@ export function explainTransportCost(
   state: GameState,
   cargo: Pick<
     OrderCard,
-    "totalItems" | "resources" | "isMandate" | "isBrokerFavor"
-  >,
+    "totalItems" | "resources" | "isMandate" | "isBrokerFavor" | "clearance"
+  > &
+    Partial<Pick<OrderCard, "buyer" | "demandPort">>,
 ): PriceBreakdown {
   const { totalItems } = cargo;
   const base = totalItems * 2;
@@ -65,17 +77,21 @@ export function explainTransportCost(
       Math.max(5, cost - shipDiscount),
     );
   }
-  if (boonDiscount > 0) {
+  const ordinary = !cargo.isMandate && !cargo.isBrokerFavor && !cargo.clearance;
+  if (boonDiscount > 0 && (!rebalanced(state) || ordinary)) {
     setCost(
       boonNameForModifierKey("transport_flat_discount"),
-      Math.max(5, cost - boonDiscount),
+      Math.max(rebalanced(state) ? 0 : 5, cost - boonDiscount),
     );
   }
   if (hasModule(state, "bulk_hauler")) {
     setCost("Bulk Hauler Rigging module", Math.max(0, cost - totalItems));
   }
   if (hasModule(state, "overdrive_engine")) {
-    setCost("Overdrive Engine module", Math.max(0, cost - 5));
+    setCost(
+      "Overdrive Engine module",
+      Math.max(0, cost - (harborTrading(state) ? 7 : 5)),
+    );
   }
 
   const count = (predicate: (item: string) => boolean) =>
@@ -112,7 +128,21 @@ export function explainTransportCost(
       setCost("Fleet of Treasures module", Math.max(0, cost - eligible * 3));
     }
   }
-  if (expanded(state) && !cargo.isMandate && !cargo.isBrokerFavor) {
+  if (rebalanced(state) && ordinary) {
+    if (hasModule(state, "cargo_net"))
+      setCost("Cargo Net", Math.max(0, cost - REBALANCE.cargoNet));
+    if (
+      hasModule(state, "convoy_pennant") &&
+      !effectUses(state, "convoy_pennant")
+    )
+      cost = applyDiscount(
+        steps,
+        cost,
+        "Convoy Pennant",
+        REBALANCE.convoyFreight,
+        "convoy_pennant",
+      );
+  } else if (!rebalanced(state) && expanded(state) && ordinary) {
     const rawCount = new Set(
       cargo.resources
         .filter(({ type }) => type in COMMODITIES)
@@ -145,11 +175,23 @@ export function explainTransportCost(
       );
     }
   }
+  if (
+    classicHarbor(state) &&
+    ordinary &&
+    state.currentRound > 1 &&
+    (cargo.buyer === "merchant" || cargo.buyer === "mixed") &&
+    cargo.demandPort === harborArrival(state) &&
+    cost > 0
+  )
+    setCost("Local delivery", Math.max(0, cost - 3));
   return { base, steps, final: cost };
 }
 
-export function recipeMaterialCost(product: string): number {
-  return Object.entries(RECIPES[product].materials).reduce(
+export function recipeMaterialCost(
+  product: string,
+  version?: VoyageRules["version"],
+): number {
+  return Object.entries(voyageRecipe(product, version).materials).reduce(
     (total, [item, amount]) => {
       const [min, max] = COMMODITIES[item].basePrice;
       return total + ((min + max) / 2) * amount;
@@ -162,10 +204,14 @@ export function productPurchasePrice(
   product: string,
   materialCost: number,
   roll: number,
+  state: { rulesVersion?: number } = {},
 ) {
-  const [min, max] = PRODUCT_PRICES[product];
+  const [min, max] = productPriceRange(product, state.rulesVersion);
   const price = Math.floor(materialCost * (1.4 + roll * 0.4));
-  return Math.max(min, Math.min(price, max));
+  if (openHarbor(state)) return Math.round((min + max) * (0.43 + roll * 0.12));
+  return rebalanced(state) && !classicHarbor(state)
+    ? Math.max(price, Math.ceil((min + max) * 0.6))
+    : Math.max(min, Math.min(price, max));
 }
 
 export function explainVAT(
@@ -173,9 +219,12 @@ export function explainVAT(
   product: string,
   sellingPrice: number,
 ) {
-  const recipe = RECIPES[product];
-  const matCost = recipeMaterialCost(product);
-  const workerCost = WAGES[recipe.worker_type];
+  const recipe = voyageRecipe(product, state.rulesVersion);
+  const matCost = recipeMaterialCost(product, state.rulesVersion);
+  const workerCost = voyageBaseWage(
+    WAGES[recipe.worker_type],
+    state.rulesVersion,
+  );
   const margin = sellingPrice - matCost - workerCost;
   const base = Math.floor(Math.max(0, margin) * 0.05);
   let vat = base;
@@ -207,13 +256,45 @@ export function explainVAT(
   };
 }
 
-export function calcIncomeTax(state: GameState, preTax: number): number {
+function calcIncomeTax(state: GameState, preTax: number): number {
   if (preTax <= 0) return 0;
-  const rate = state.modifierFlags.income_tax_override || 0.1;
+  const rate = harborTrading(state)
+    ? (state.modifierFlags.income_tax_override ?? 0.1)
+    : state.modifierFlags.income_tax_override || 0.1;
   let tax = Math.floor(preTax * rate);
   if (hasModule(state, "smugglers_hold")) tax = Math.floor(tax * 1.2);
   if (hasModule(state, "tax_evasion")) tax = Math.floor(tax * 0.5);
   return tax;
+}
+
+export function incomeTaxDue(state: GameState) {
+  return (
+    state.roundIncomeTaxDue ??
+    calcIncomeTax(state, state.roundRevenue - state.roundCosts)
+  );
+}
+
+export function taxReserve(state: GameState) {
+  return rebalanced(state) &&
+    (state.phase === 4 ||
+      state.phase === "module_draft" ||
+      state.phase === "module_swap")
+    ? Math.min(Math.max(0, state.money), incomeTaxDue(state))
+    : 0;
+}
+
+export function quoteShipUpgrade(state: GameState) {
+  const base = state.shipUpgradeCost[state.shipLevel] ?? 0;
+  const surcharge = shipUpgradeSurcharge(state);
+  const cost = base + surcharge;
+  const taxReserved = taxReserve(state);
+  return {
+    base,
+    surcharge,
+    cost,
+    taxReserved,
+    available: state.money - taxReserved,
+  };
 }
 
 function applyDiscount(
@@ -221,10 +302,11 @@ function applyDiscount(
   cost: number,
   label: string,
   amount: number,
-  effect: string,
+  effect?: string,
 ) {
   const savings = Math.min(cost, amount);
-  steps.push({ label, delta: -savings, effect });
+  if (savings > 0 || effect)
+    steps.push({ label, delta: -savings, ...(effect ? { effect } : {}) });
   return cost - savings;
 }
 
@@ -253,47 +335,50 @@ export function explainCardPrice(
           : sum,
       0,
     );
-    if (reduction > 0) {
-      steps.push({
-        label: `${boonNameForModifierKey("hemp_price_reduction")} (${state.modifierFlags.hemp_price_reduction} Gold less per Hemp)`,
-        delta: -reduction,
-      });
-      cost -= reduction;
-    }
+    cost = applyDiscount(
+      steps,
+      cost,
+      `${boonNameForModifierKey("hemp_price_reduction")} (${state.modifierFlags.hemp_price_reduction} Gold less per Hemp)`,
+      reduction,
+    );
   }
   if (hasModule(state, "kiln_cellar")) {
     const reduction = card.resources.reduce(
-      (sum, r) =>
-        r.type === "Porcelain Clay" || r.type === "Copper Ore"
-          ? sum + (r.quantity ?? 0) * 2
-          : sum,
+      (sum, { type, quantity }) =>
+        sum +
+        (type === "Porcelain Clay" ||
+        type === "Copper Ore" ||
+        (harborTrading(state) && type === "Tin")
+          ? (quantity ?? 0) * 2
+          : 0),
       0,
     );
-    if (reduction > 0) {
-      steps.push({
-        label: "Kiln Cellar module, 2 Gold less per unit",
-        delta: -reduction,
-      });
-      cost -= reduction;
-    }
+    cost = applyDiscount(
+      steps,
+      cost,
+      "Kiln Cellar module, 2 Gold less per unit",
+      reduction,
+    );
   }
   if (hasModule(state, "foreign_quarter_pass")) {
     const reduction = card.resources.reduce(
-      (sum, r) =>
-        r.type === "Spices" || r.type === "Pearls"
-          ? sum + (r.quantity ?? 0) * 3
-          : sum,
+      (sum, { type, quantity }) =>
+        sum +
+        (type === "Spices" ||
+        type === "Pearls" ||
+        (harborTrading(state) && type === "Sandalwood")
+          ? (quantity ?? 0) * 3
+          : 0),
       0,
     );
-    if (reduction > 0) {
-      steps.push({
-        label: "Foreign Quarter Pass module, 3 Gold less per unit",
-        delta: -reduction,
-      });
-      cost -= reduction;
-    }
+    cost = applyDiscount(
+      steps,
+      cost,
+      "Foreign Quarter Pass module, 3 Gold less per unit",
+      reduction,
+    );
   }
-  if (hasModule(state, "smugglers_hold")) {
+  if (hasModule(state, "smugglers_hold") && cost > 0) {
     const next = Math.floor(cost * 0.85);
     steps.push({
       label: "Smuggler's Hold module, 15% reduction",
@@ -302,11 +387,47 @@ export function explainCardPrice(
     cost = next;
   }
 
-  if (cost < 0) {
-    steps.push({ label: "Floor at 0 Gold", delta: -cost });
-    cost = 0;
-  }
-  if (expanded(state)) {
+  if (rebalanced(state)) {
+    const units = (matches: (item: string) => boolean) =>
+      card.resources.reduce(
+        (sum, { type, quantity }) =>
+          sum + (matches(type) ? (quantity ?? 0) : 0),
+        0,
+      );
+    const capped = (
+      key: string,
+      label: string,
+      discount: number,
+      limit: number,
+    ) => {
+      const available = Math.min(discount, limit - effectUses(state, key));
+      if (available > 0)
+        cost = applyDiscount(steps, cost, label, available, key);
+    };
+    if (state.modifierFlags.bamboo_fair)
+      capped(
+        "bamboo_fair",
+        "Bamboo Fair",
+        units((item) => item === "Bamboo") * REBALANCE.bambooUnit,
+        REBALANCE.bambooCap,
+      );
+    if (state.modifierFlags.deep_market)
+      capped(
+        "deep_market",
+        "Deep Market",
+        units(isOceanMaterial) * REBALANCE.deepUnit,
+        REBALANCE.deepCap,
+      );
+    if (hasModule(state, "merchant_scales") && card.port)
+      capped(
+        "merchant_scales",
+        "Merchant Scales",
+        units(
+          (item) => COMMODITIES[item]?.ports.includes(card.port!) ?? false,
+        ) * REBALANCE.scalesUnit,
+        REBALANCE.scalesCap,
+      );
+  } else if (expanded(state)) {
     if (
       state.modifierFlags.bamboo_fair &&
       !effectUses(state, "bamboo_fair") &&
@@ -371,9 +492,15 @@ export function marketResourceAdjustment(state: GameState, item: string) {
   const pulse = state.harborPulse?.[item] ?? 0;
   if (!expanded(state)) return pulse;
   const forecast = forecastFor(state);
+  if (harborTrading(state) && forecast?.item === item) {
+    const delta = { market: -0.15, shortfall: 0.22, fleet: -0.08 };
+    const change =
+      forecast.kind in delta ? delta[forecast.kind as keyof typeof delta] : 0;
+    return Math.max(-0.22, Math.min(0.25, pulse + change));
+  }
   const change =
     forecast?.kind === "market" && forecast.item === item
-      ? -EFFECT.marketDay
+      ? -(rebalanced(state) ? REBALANCE.marketDay : EFFECT.marketDay)
       : 0;
   return Math.max(-0.15, Math.min(0.15, pulse + change));
 }
@@ -390,7 +517,11 @@ export function explainExpectedPrice(
   if (isResource) {
     const [min, max] = COMMODITIES[itemType].basePrice;
     const pulse = marketResourceAdjustment(state, itemType);
-    const ports = unlockedPorts(state.difficulty, state.currentRound);
+    const ports = unlockedPorts(
+      state.difficulty,
+      state.currentRound,
+      state.rulesVersion,
+    );
     lows = ports.map((port) =>
       explainCardPrice(state, {
         totalCost: portResourcePrice(itemType, min, port, pulse),
@@ -406,10 +537,10 @@ export function explainExpectedPrice(
       }),
     );
   } else {
-    const materialCost = recipeMaterialCost(itemType);
+    const materialCost = recipeMaterialCost(itemType, state.rulesVersion);
     lows = [
       explainCardPrice(state, {
-        totalCost: productPurchasePrice(itemType, materialCost, 0),
+        totalCost: productPurchasePrice(itemType, materialCost, 0, state),
         resources,
       }),
     ];
@@ -419,6 +550,7 @@ export function explainExpectedPrice(
           itemType,
           materialCost,
           1 - Number.EPSILON,
+          state,
         ),
         resources,
       }),
@@ -439,7 +571,7 @@ export function getWorkerWage(
   type: string,
   worker?: Pick<Worker, "hiredRound">,
 ): number {
-  let wage = WAGES[type];
+  let wage = voyageBaseWage(WAGES[type], state.rulesVersion);
   if (
     worker?.hiredRound === state.currentRound &&
     state.modifierFlags.hire_discount
@@ -474,8 +606,13 @@ export function quoteWages(state: GameState) {
     for (const worker of crew) if (worker.task) recipes.add(worker.task);
   }
   const discount =
-    expanded(state) && hasModule(state, "wage_ledger") && recipes.size >= 2
-      ? Math.min(base, EFFECT.wageLedger)
+    expanded(state) &&
+    hasModule(state, "wage_ledger") &&
+    recipes.size >= (rebalanced(state) ? 1 : 2)
+      ? Math.min(
+          base,
+          rebalanced(state) ? REBALANCE.wageLedger : EFFECT.wageLedger,
+        )
       : 0;
   return { base, discount, due: base - discount };
 }

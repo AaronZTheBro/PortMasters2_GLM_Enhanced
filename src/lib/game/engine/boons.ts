@@ -1,13 +1,30 @@
 // Drafts round boons and voyage modules from the current content pool.
 import { RECIPES, type Boon, type Module } from "../constants";
-import { expanded, forecastFor } from "../expansion";
+import {
+  expanded,
+  openHarbor,
+  harborTrading,
+  forecastFor,
+  rebalanced,
+  SPECIALTIES,
+  specialtyOpens,
+} from "../expansion";
+import { CERAMICS } from "../harbor-catalog";
 import { describeForecast } from "../forecast";
 import { voyageRandom } from "../voyage-rng";
-import { quoteDues } from "./pricing";
-import { unlockedBoons, unlockedModules } from "../pools";
+import { incomeTaxDue, quoteDues, quoteShipUpgrade } from "./pricing";
+import {
+  canProduce,
+  isOceanCargo,
+  unlockedBoons,
+  unlockedModules,
+  unlockedProducts,
+  voyageRecipe,
+} from "../pools";
 import { weightedPick } from "../rng";
 import type { GameContext, GameState } from "../types";
-import { hasModule, shipUpgradeSurcharge } from "./core";
+import { hasModule } from "./core";
+import { quoteRecipe } from "./workers";
 import { startPhase1 } from "./market";
 
 export function draftBoons(state: GameState, reroll = false): Boon[] {
@@ -24,6 +41,15 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
         ? 2.5
         : 0.8,
     favorable_tides: () => 1.5,
+    resourceful_crew: () =>
+      Object.values(state.workers).some((crew) => crew.length) ? 3 : 1.3,
+    buyers_festival: () => (gs.inventory.Silk >= 2 ? 3 : 1),
+    market_momentum: () =>
+      Object.entries(state.inventory).some(
+        ([item, amount]) => RECIPES[item] && amount > 0,
+      )
+        ? 3
+        : 0.8,
     merchant_charm: () => (gs.money > 40 ? 2.0 : 0.5),
     artisan_inspiration: () =>
       Object.values(state.workers).some((crew) => crew.length > 0) ? 3.0 : 0.0,
@@ -50,16 +76,74 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
     merchants_converge: () => 1.6,
   };
   const usesExpandedRules = expanded(state);
+  const updated = rebalanced(state);
+  const harbor = harborTrading(state);
+  const crewProducts = updated
+    ? unlockedProducts(
+        state.difficulty,
+        state.currentRound,
+        state.rulesVersion,
+        state.specialties,
+      ).filter((item) =>
+        Object.entries(state.workers).some(
+          ([type, crew]) => crew.length && canProduce(type, item),
+        ),
+      )
+    : [];
+  const affordableInputs = (inputs: Record<string, number>) =>
+    Object.entries(inputs).every(([good, qty]) => state.inventory[good] >= qty);
+  const hasCeramicCargo = () =>
+    [...(harbor ? CERAMICS : ["Celadon Ware", "Lacquered Jar"])].some(
+      (item) => state.inventory[item] > 0,
+    );
+  const compatible = (boon: Boon) => {
+    if (!updated) return true;
+    if (harbor && boon.id === "resourceful_crew")
+      return state.currentRound < state.maxRounds;
+    if (harbor && boon.id === "guild_turnover")
+      return (
+        state.currentRound < state.maxRounds &&
+        state.money >= quoteDues(state).total + 6
+      );
+    if (boon.id === "artisan_inspiration")
+      return (
+        state.currentRound < state.maxRounds &&
+        crewProducts.some((item) =>
+          affordableInputs(voyageRecipe(item, state.rulesVersion).materials),
+        )
+      );
+    if (boon.id === "guild_turnover")
+      return (
+        state.currentRound < state.maxRounds &&
+        crewProducts.some((item) => {
+          const quote = quoteRecipe(
+            { ...state, modifierFlags: boon.modifiers, effectUses: {} },
+            item,
+          );
+          return quote.saved && affordableInputs(quote.inputs);
+        })
+      );
+    if (boon.id === "ceramic_commission") return hasCeramicCargo();
+    if (boon.id === "master_apprentice")
+      return (
+        state.currentRound < state.maxRounds &&
+        state.money >= quoteDues(state).total + 8
+      );
+    return true;
+  };
   const canRescue =
-    !state.emergencyLoanUsed && state.money < quoteDues(state).total;
+    !state.emergencyLoanUsed &&
+    state.money < quoteDues(state).total + (harbor ? 8 : 0);
   const available: Array<[Boon, number]> = unlockedBoons(
     state.difficulty,
     state.currentRound,
     state.rulesVersion,
+    state.specialties,
   )
     .filter(
       (boon) => !usesExpandedRules || boon.id !== "emergency_loan" || canRescue,
     )
+    .filter(compatible)
     .map((boon) => [boon, weightFuncs[boon.id]?.() ?? 1])
     .filter(
       (entry): entry is [Boon, number] =>
@@ -82,7 +166,7 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
             "reliable_buyer",
             "merchant_charm",
             "safe_anchorage",
-            "favorable_tides",
+            ...(!updated || harbor ? ["favorable_tides"] : []),
           ].includes(boon.id),
     );
     if (safe.length) take(weightedPick(random, safe));
@@ -90,6 +174,13 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
       (crew) => crew.length > 0,
     );
     const focused = available.filter(([boon]) => {
+      if (
+        harbor &&
+        ["resourceful_crew", "buyers_festival", "market_momentum"].includes(
+          boon.id,
+        )
+      )
+        return (weightFuncs[boon.id]?.() ?? 0) >= 3;
       if (
         hasRecipe &&
         [
@@ -99,9 +190,10 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
         ].includes(boon.id)
       )
         return true;
-      if (boon.id === "ceramic_commission")
-        return ["Celadon Ware", "Lacquered Jar"].some(
-          (item) => state.inventory[item] > 0,
+      if (boon.id === "ceramic_commission") return hasCeramicCargo();
+      if (boon.id === "rare_cargo_charter" && updated)
+        return Object.entries(state.inventory).some(
+          ([item, qty]) => qty > 0 && isOceanCargo(item, state.rulesVersion),
         );
       if (boon.id === "rare_cargo_charter")
         return ["Frankincense", "Lapis Lazuli"].some(
@@ -136,11 +228,18 @@ export function applyBoon(state: GameState, boon: Boon, logs: string[]) {
 }
 
 export function upgradeShip(state: GameState, logs: string[]) {
-  if (state.shipLevel >= 3) return;
-  const cost =
-    state.shipUpgradeCost[state.shipLevel] + shipUpgradeSurcharge(state);
-  if (state.money < cost) {
-    logs.push(`❌ Need ${cost} Gold to upgrade the ship`);
+  if (
+    state.shipLevel >= 3 ||
+    (rebalanced(state) && state.currentRound >= state.maxRounds)
+  )
+    return;
+  const { cost, available, taxReserved } = quoteShipUpgrade(state);
+  if (available < cost) {
+    logs.push(
+      taxReserved
+        ? `❌ Need ${cost} Gold to upgrade after reserving ${taxReserved} Gold for Income Tax`
+        : `❌ Need ${cost} Gold to upgrade the ship`,
+    );
     return;
   }
   state.money -= cost;
@@ -156,9 +255,24 @@ export function startBoonDrafting(state: GameState, logs: string[]) {
   state.effectUses = {};
   state.producedRecipes = [];
   state.scoutedOrder = undefined;
+  state.scoutedOrders = undefined;
+  state.plannedOrders = undefined;
   state.moduleSwapUsed = false;
   state._draftChoices = undefined;
   state._newModule = undefined;
+  if (harborTrading(state)) {
+    state.exchangeSales = {};
+    state.finishedSales = [];
+    state.resourcefulRecipes = [];
+    if (
+      openHarbor(state) &&
+      state.currentRound === 1 &&
+      !state.equippedModules.length
+    ) {
+      state.shipLevel = Math.max(1, state.shipLevel);
+      state._draftChoices = rollModuleChoices(state);
+    }
+  }
   state.boonChoices = draftBoons(state);
   state.pirateAttackResolved = false;
   state.escortHired = false;
@@ -166,9 +280,16 @@ export function startBoonDrafting(state: GameState, logs: string[]) {
   logs.push("\n🧭=== The Navigator's Compass ===");
   const forecast = forecastFor(state);
   if (forecast) {
-    const { title, detail } = describeForecast(forecast);
+    const { title, detail } = describeForecast(forecast, state);
     logs.push(`${title}: ${detail}`);
   }
+  if (rebalanced(state))
+    state.specialties?.forEach((key, index) => {
+      if (specialtyOpens(state.difficulty, index) === state.currentRound)
+        logs.push(
+          `${SPECIALTIES[key].name} opens this round. Available cargo includes ${SPECIALTIES[key].goods.join(", ")}.`,
+        );
+    });
   logs.push("Choose a Boon for this round.");
 }
 
@@ -195,11 +316,35 @@ export function selectBoon(
   logs: string[],
 ) {
   const boon = state.boonChoices.find((b) => b.id === boonId);
-  if (state.phase !== 5 || !boon) return;
+  if (state.phase !== 5 || !boon || needsStarterModule(state)) return;
+  if (openHarbor(state) && state.currentRound === 1)
+    state._draftChoices = undefined;
   logs.push(`🧭 Boon Locked In: ${boon.icon} ${boon.name}`);
   applyBoon(state, boon, logs);
   state.boonChoices = [];
   startPhase1(state, ctx, logs);
+}
+
+export function needsStarterModule(state: GameState) {
+  return (
+    openHarbor(state) &&
+    state.phase === 5 &&
+    state.currentRound === 1 &&
+    !state.equippedModules.length
+  );
+}
+
+export function selectStarterModule(
+  state: GameState,
+  moduleId: string,
+  logs: string[],
+) {
+  if (!needsStarterModule(state)) return;
+  const choice = state._draftChoices?.find(({ id }) => id === moduleId);
+  if (!choice) return;
+  state.equippedModules.push(choice);
+  state._draftChoices = undefined;
+  logs.push(`Installed starting module ${choice.name}.`);
 }
 
 function rollModuleChoices(state: GameState, reroll = false): Module[] {
@@ -207,9 +352,51 @@ function rollModuleChoices(state: GameState, reroll = false): Module[] {
     state.difficulty,
     state.currentRound,
     state.rulesVersion,
+    state.specialties,
   ).filter((m) => !hasModule(state, m.id));
   const picks: Module[] = [];
   const random = voyageRandom(state, reroll ? "moduleReroll" : "moduleDraft");
+  if (harborTrading(state)) {
+    const relevant = available.filter(
+      ({ id }) =>
+        (state.inventory.Silk >= 3 &&
+          ["silk_monopoly", "silk_market_charter"].includes(id)) ||
+        (state.inventory.Hemp >= 3 &&
+          ["artisans_workshop", "wage_ledger", "open_hold"].includes(id)) ||
+        (state.difficulty === "monsoon" &&
+          ["storm_dividend", "storm_shrouds", "persian_dome_compass"].includes(
+            id,
+          )) ||
+        (state.money < 60 &&
+          ["cargo_net", "brokers_network", "merchant_scales"].includes(id)),
+    );
+    if (relevant.length) {
+      const choice = weightedPick(
+        random,
+        relevant.map((module) => [module, 1]),
+      );
+      picks.push(choice);
+      available.splice(available.indexOf(choice), 1);
+    }
+  } else if (rebalanced(state)) {
+    const broad = available.filter(({ id }) =>
+      [
+        "cargo_net",
+        "merchant_scales",
+        "convoy_pennant",
+        "smugglers_hold",
+        "brokers_network",
+        "bulk_hauler",
+        "salvage_crane",
+        "overdrive_engine",
+      ].includes(id),
+    );
+    if (broad.length) {
+      const choice = broad[Math.floor(random() * broad.length)];
+      picks.push(choice);
+      available.splice(available.indexOf(choice), 1);
+    }
+  }
   while (picks.length < 3 && available.length) {
     const idx = Math.floor(random() * available.length);
     picks.push(available.splice(idx, 1)[0]);
@@ -219,6 +406,17 @@ function rollModuleChoices(state: GameState, reroll = false): Module[] {
 
 // Reuses the existing module pool when the draft is reopened.
 export function startModuleDrafting(state: GameState) {
+  if (
+    harborTrading(state) &&
+    ((state.phase !== 4 && state.phase !== "module_swap") ||
+      state._draftChoices?.length === 0)
+  )
+    return;
+  if (
+    rebalanced(state) &&
+    (state.shipLevel === 0 || state.currentRound >= state.maxRounds)
+  )
+    return;
   state._newModule = undefined;
   if (state._draftChoices === undefined) {
     state._draftChoices = rollModuleChoices(state);
@@ -238,7 +436,7 @@ export function swapModuleChoices(state: GameState, logs: string[]) {
   }
   state._draftChoices = rollModuleChoices(state, true);
   state.moduleSwapUsed = true;
-  logs.push("🔄 Swapped Module Choices for a fresh batch");
+  logs.push("🔄 Redrew Module Choices");
 }
 
 export function handleModuleSelect(
@@ -250,9 +448,12 @@ export function handleModuleSelect(
   const mod = choices[idx];
   if (!mod || hasModule(state, mod.id)) return;
   if (state.equippedModules.length < state.shipLevel) {
+    if (rebalanced(state)) state.roundIncomeTaxDue ??= incomeTaxDue(state);
     state.equippedModules.push(mod);
     logs.push(`✅ Installed ${mod.name}!`);
-    state._draftChoices = choices.filter((m) => m.id !== mod.id);
+    state._draftChoices = harborTrading(state)
+      ? []
+      : choices.filter((m) => m.id !== mod.id);
     state.phase = 4;
   } else {
     state._newModule = mod;
@@ -269,11 +470,12 @@ export function finalizeModuleSwap(
   const mod = state._newModule;
   const previous = state.equippedModules[slotIdx];
   if (!mod || !previous || hasModule(state, mod.id)) return;
+  if (rebalanced(state)) state.roundIncomeTaxDue ??= incomeTaxDue(state);
   state.equippedModules[slotIdx] = mod;
   logs.push(`🔄 Swapped ${previous.name} for ${mod.name}!`);
-  state._draftChoices = (state._draftChoices ?? []).filter(
-    (m) => m.id !== mod.id,
-  );
+  state._draftChoices = harborTrading(state)
+    ? []
+    : (state._draftChoices ?? []).filter((m) => m.id !== mod.id);
   state._newModule = undefined;
   state.phase = 4;
 }

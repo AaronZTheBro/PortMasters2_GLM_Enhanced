@@ -7,6 +7,8 @@ import {
   type BarterLedger,
   type BarterOffer,
 } from "../lib/game/barter-ledger";
+import { harborTrading } from "../lib/game/expansion";
+import { HARBOR_MATERIALS, HARBOR_PRODUCTS } from "../lib/game/harbor-catalog";
 import { BARTER_ITEMS } from "../lib/game/constants";
 import { getOwnedAmount } from "../lib/game/engine/core";
 import type { GameState } from "../lib/game/types";
@@ -22,7 +24,7 @@ type Post = {
 export type BarterAction =
   Post | { kind: "accept" | "cancel"; offerId?: string };
 
-function parseLedger(raw: string): BarterLedger {
+export function parseBarterLedger(raw: string): BarterLedger {
   const value = JSON.parse(raw) as Partial<BarterLedger>;
   return { offers: value.offers ?? [], entries: value.entries ?? [] };
 }
@@ -33,10 +35,10 @@ export async function readBarter(roomId: string) {
     select: { barterLedger: true, voyageEpoch: true },
   });
   if (!room) return null;
-  return { epoch: room.voyageEpoch, ...parseLedger(room.barterLedger) };
+  return { epoch: room.voyageEpoch, ...parseBarterLedger(room.barterLedger) };
 }
 
-function append(
+export function appendBarterEntry(
   ledger: BarterLedger,
   userId: string,
   changes: BarterEntry["changes"],
@@ -46,7 +48,7 @@ function append(
 }
 
 function refund(ledger: BarterLedger, offer: BarterOffer) {
-  append(
+  appendBarterEntry(
     ledger,
     offer.fromUserId,
     [{ item: offer.offerItem, amount: offer.offerAmount }],
@@ -59,7 +61,7 @@ export async function closeBarter(roomId: string, userId?: string) {
   return db.$transaction(async (tx) => {
     const room = await tx.room.findUnique({ where: { id: roomId } });
     if (!room) return;
-    const ledger = parseLedger(room.barterLedger);
+    const ledger = parseBarterLedger(room.barterLedger);
     for (const offer of ledger.offers) {
       if (
         !userId ||
@@ -105,8 +107,17 @@ async function owns(
   return getOwnedAmount(state, item) >= amount;
 }
 
-function validItem(item: string | undefined): item is string {
-  return (BARTER_ITEMS as readonly string[]).includes(item ?? "");
+function validItem(
+  item: string | undefined,
+  rulesVersion: number,
+): item is string {
+  return (
+    typeof item === "string" &&
+    (BARTER_ITEMS as readonly string[]).includes(item) &&
+    (harborTrading({ rulesVersion }) ||
+      (!Object.hasOwn(HARBOR_MATERIALS, item) &&
+        !Object.hasOwn(HARBOR_PRODUCTS, item)))
+  );
 }
 
 function validAmount(amount: number | undefined): amount is number {
@@ -127,7 +138,7 @@ export async function modifyBarter(
     });
     if (!membership) return "You are no longer in this harbor.";
 
-    const ledger = parseLedger(room.barterLedger);
+    const ledger = parseBarterLedger(room.barterLedger);
     if (action.kind === "post") {
       const {
         offerItem,
@@ -137,8 +148,8 @@ export async function modifyBarter(
         targetUserId,
       } = action;
       if (
-        !validItem(offerItem) ||
-        !validItem(requestItem) ||
+        !validItem(offerItem, room.rulesVersion) ||
+        !validItem(requestItem, room.rulesVersion) ||
         offerItem === requestItem ||
         !validAmount(offerAmount) ||
         !validAmount(requestAmount)
@@ -170,7 +181,7 @@ export async function modifyBarter(
         targetName,
       };
       ledger.offers.push(offer);
-      append(
+      appendBarterEntry(
         ledger,
         user.id,
         [{ item: offerItem, amount: -offerAmount }],
@@ -206,7 +217,7 @@ export async function modifyBarter(
         ) {
           return `You do not have enough ${offer.requestItem} for that trade.`;
         }
-        append(
+        appendBarterEntry(
           ledger,
           user.id,
           [
@@ -215,7 +226,7 @@ export async function modifyBarter(
           ],
           `🤝 Traded ${offer.requestAmount} ${offer.requestItem} for ${offer.offerAmount} ${offer.offerItem}`,
         );
-        append(
+        appendBarterEntry(
           ledger,
           offer.fromUserId,
           [{ item: offer.requestItem, amount: offer.requestAmount }],

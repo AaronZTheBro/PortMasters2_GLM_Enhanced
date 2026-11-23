@@ -6,7 +6,7 @@ The application runs as one Node.js process. Its Next.js interface, API routes, 
 
 ## Requirements
 
-Node.js 22 and npm 11 are required. A platform with native SQLite support is also required.
+Use Node.js 22 and npm 11 or later. The package manager setting pins npm 11.17.0. A platform with native SQLite support is also required.
 
 This repository uses npm and its package lock file. Bun, pnpm, and Yarn are not supported.
 
@@ -27,11 +27,11 @@ Register a captain, create or join a harbor, and start when two captains are pre
 
 ## Voyage rules
 
-New voyages use the expanded cargo, recipe, Boon, and ship module catalogues. Fair Winds runs for eight rounds and introduces staple contracts and forecasts. Open Waters runs for twelve rounds and opens the wider charters in rounds four and eight. Monsoon Season runs for sixteen rounds, opens its charters in rounds six and eleven, and adds Broker leaks and heavier raid pressure.
+New voyages open with the founding catalog. Later ports rotate in new cargo and unlock more Boons and modules. Fair Winds runs for eight rounds with more buyer information. Open Waters runs for twelve rounds with more time to plan. Monsoon Season runs for sixteen rounds with higher costs, stronger raids, and possible Broker leaks.
 
-The harbor shares one forecast schedule. Each captain has a personal market and order board. Every Broker's Whisper creates one guaranteed buyer at the named port. Free and paid rumors share the available slots, while staple contracts and forecast buyers keep their places. The harbor also keeps its Tidewatch bonus and order race winner across reconnects.
+The harbor shares a seeded schedule of port arrivals and forecast events. Markets and orders belong to each captain. Each Broker whisper reveals one distinct buyer already on the board, including the goods, quantities, port, and gross reward. The harbor retains Tidewatch, the Word on the Docks winner, and the raw purchases used by the next Harbor Pulse across restarts. Each round’s Harbor Pulse stays available to a captain who reconnects after the market opens.
 
-Voyages already underway keep their saved rules and boards. Starting a fresh voyage uses the expanded rules.
+Voyages already underway keep their saved rules and boards. Starting a fresh voyage uses the current balance rules.
 
 ## Runtime
 
@@ -55,7 +55,7 @@ Set `DEBUG_PRISMA=1` only when query logging is needed.
 
 ## Repository hygiene
 
-The repository keeps source code, Prisma schema, tests, public icons, and package metadata. Generated folders such as `node_modules`, `.next`, and `generated` are ignored and can be rebuilt from the scripts above. Local database files, cache files, screenshots, personal launch scripts, and machine specific paths should stay out of source control.
+The repository keeps source code, Prisma schema, tests, original artwork, and package metadata. The game renders commodity icons as SVG. The three original PNG files in `public/icons` are archived art and have no live interface references. Generated folders such as `node_modules`, `.next`, and `generated` are ignored and can be rebuilt from the scripts above. Local database files, cache files, screenshots, personal launch scripts, and machine specific paths should stay out of source control.
 
 ## Database schema
 
@@ -97,7 +97,7 @@ Back up a persistent production database before changing the schema. Schema push
 
 `npm run test:integration` runs the isolated full stack integration test on port 2154. Stop the development server in this checkout first.
 
-`npm run test:balance` simulates 5,000 voyages per difficulty using four captain strategies and verifies the affordability and profit of every opening staple trade. Pass a different seed count after `--` for a shorter or longer run.
+`npm run test:balance` runs the historical balance simulation for rules version 2, using 5,000 voyages per difficulty by default. Add `rebalanced` after the seed count to run rules version 3, for example `npm run test:balance -- 5000 rebalanced`. Use `npm run test:balance:harbor` for the current economy comparison. Pass a different seed count after `--` for a shorter or longer run.
 
 `npm run typecheck` checks TypeScript without output files.
 
@@ -109,6 +109,18 @@ Back up a persistent production database before changing the schema. Schema push
 
 `npm run db:generate` regenerates the Prisma client.
 
+## Voyage economy
+
+New voyages use rules version 5. Fair Winds, Open Waters, and Monsoon Season begin with 100, 100, and 90 Gold before Renown and pay 15, 18, and 22 Gold in base maintenance. Captains open at ship level zero with six lots and six ordinary buyers. The founding recipes, ordinary finished good price ranges, and charter cadence come from the original economy. Later imports replace existing offers. Hosts do not select a specialty.
+
+From round two, the local merchant posts its terms before purchases. Fair Winds also reveals a mixed buyer from round two. The other waters show a mixed buyer from round three. An announced commission gives artisans a round to prepare. The Workshop Supplier sells the missing inputs for one recipe per round before the final round. A Broker whisper reveals the terms of one distinct existing buyer, including all requested cargo. Imperial Mandates follow their own schedule.
+
+The Port Exchange accepts all cargo at fallback prices. The first three units of a good use a higher rate each round, subject to rounding. The quote includes freight and VAT. Exchange sales earn no Reputation. Reserve the Exchange for unwanted stock or bills, and compare any resale with the original purchase cost.
+
+Upgrade in the Shipyard to open module slots. Each Shipyard visit allows one installation or swap. The Shipyard sets aside Income Tax before upgrades, voluntary loan repayments, and Convoy Venture contributions. A new module affects the following round's tax. Active voyages on rules versions 1 through 4 retain their saved boards, prices, and effects.
+
+Run `npm run test:balance:harbor` to compare the original commit, version 4, and version 5 across shared seeds. The opening comparison uses existing cargo only. The full voyage comparison uses independent scripted captains and tracks finances, stock, and builds. Multiplayer standings depend on live barter and aid and are measured separately.
+
 ## Verification
 
 Run the full verification suite with the command below.
@@ -117,7 +129,7 @@ Run the full verification suite with the command below.
 npm run verify
 ```
 
-The integration test creates two temporary captains in one harbor. It verifies the live roster, chat, shared forecast and rules, checkpoint recovery after reconnecting, phase readiness, persisted room data, and standings replay without a second award. It removes its temporary database after the run.
+The integration test creates two temporary captains in one harbor. It verifies the live roster, chat, shared forecast and rules, checkpoint recovery after reconnecting, phase readiness, Harbor Pulse from saved purchases, Exchange sale retry rejection, and standings replay without a second award. It removes its temporary database after the run.
 
 For a final visual check, register two captains in isolated browser profiles, create a public harbor, join it with the second captain, and advance both through a phase. Confirm the responsive workspace, dialogs, chat, one shared transaction, and a reload all preserve room state.
 

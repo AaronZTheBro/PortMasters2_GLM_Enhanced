@@ -5,9 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Anchor,
+  ScrollText,
   ShoppingCart,
   ClipboardCheck,
-  Coins,
   Wrench,
   SkullIcon,
   ArrowUpCircle,
@@ -24,17 +24,14 @@ import {
   Swords,
   Wallet,
   LayoutGrid,
-  TrendingUp,
-  TrendingDown,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ItemIcon } from "./shared";
-import type { GameState } from "@/lib/game/types";
 
 // Types
 
 export type ChronicleEventType =
+  | "note"
   | "round_start"
   | "purchase"
   | "order"
@@ -50,30 +47,14 @@ export type ChronicleEventType =
 
 export type ChronicleEvent = {
   round: number;
-  phase: string;
   type: ChronicleEventType;
   description: string;
-  /** Gold amount if relevant (cost, reward, payment, etc.) */
-  amount?: number;
-  /** Signed gold change. Positive means gain and negative means loss. When present, takes precedence
-   *  over `amount` for the colored delta badge so a parent that already knows
-   *  the direction can pass it without us guessing from the type. */
-  goldDelta?: number;
-  /** Item id (e.g. "Hemp", "Silk") for purchase / order / barter events so we
-   *  can render an ItemIcon next to the entry. */
-  itemId?: string;
-  /** Optional count of units involved (e.g. 3 bales of Hemp). */
-  quantity?: number;
 };
 
-export type VoyageChronicleProps = {
+type VoyageChronicleProps = {
   events: ChronicleEvent[];
   currentRound: number;
   className?: string;
-  /** Optional full game state. When provided, the chronicle enriches its
-   *  round summary cards with the captain's actual money / revenue / costs
-   *  for that round, derived by tracking the state across renders. */
-  gameState?: GameState;
 };
 
 // Filter categories
@@ -136,6 +117,13 @@ type EventStyle = {
 };
 
 const EVENT_STYLES: Record<ChronicleEventType, EventStyle> = {
+  note: {
+    icon: ScrollText,
+    color: "text-muted-foreground",
+    dotBg: "bg-muted-foreground",
+    dotRing: "ring-muted-foreground/20",
+    label: "Ledger entry",
+  },
   round_start: {
     icon: Flag,
     color: "text-teal-600 dark:text-teal-400",
@@ -238,57 +226,6 @@ function groupByRound(events: ChronicleEvent[]): Map<number, ChronicleEvent[]> {
     sorted.set(k, map.get(k)!);
   }
   return sorted;
-}
-
-/** Whether the type represents a gain (orders, loan received). */
-function isGain(type: ChronicleEventType): boolean {
-  return type === "order" || type === "loan" || type === "boon";
-}
-
-/** Whether the type represents a cost (purchase, wages, maintenance). */
-function isCost(type: ChronicleEventType): boolean {
-  return (
-    type === "purchase" ||
-    type === "wages" ||
-    type === "maintenance" ||
-    type === "upgrade" ||
-    type === "barter"
-  );
-}
-
-/** Resolve the signed gold delta for an event. If `goldDelta` is provided,
- *  use it directly; otherwise derive the sign from the event type. */
-function resolveDelta(event: ChronicleEvent): number | null {
-  if (event.goldDelta != null && Number.isFinite(event.goldDelta)) {
-    return event.goldDelta;
-  }
-  if (event.amount == null || event.amount === 0) return null;
-  return isGain(event.type)
-    ? Math.abs(event.amount)
-    : isCost(event.type)
-      ? -Math.abs(event.amount)
-      : event.amount;
-}
-
-// Round summary computation
-
-type RoundSummary = {
-  round: number;
-  earned: number;
-  spent: number;
-  count: number;
-};
-
-function summarizeRound(events: ChronicleEvent[]): RoundSummary {
-  let earned = 0;
-  let spent = 0;
-  for (const ev of events) {
-    const delta = resolveDelta(ev);
-    if (delta == null) continue;
-    if (delta > 0) earned += delta;
-    else spent += -delta;
-  }
-  return { round: events[0]?.round ?? 0, earned, spent, count: events.length };
 }
 
 // Supporting components
@@ -419,66 +356,6 @@ function RoundHeader({
   );
 }
 
-function RoundSummaryCard({
-  summary,
-  gameState,
-}: {
-  summary: RoundSummary;
-  gameState?: GameState;
-}) {
-  const net = summary.earned - summary.spent;
-  const isPositive = net >= 0;
-  // Pull the captain's running totals from the live game state when we have
-  // it, so the summary card can show the actual bank balance next to the
-  // flow for each round. Falls back to derived totals otherwise.
-  const bank = gameState?.money;
-
-  return (
-    <div className="mx-1 mb-1.5 rounded-lg border border-black/[0.05] dark:border-white/[0.07] bg-black/[0.02] dark:bg-white/[0.03] px-2.5 py-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-3 text-[10px]">
-          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-            <TrendingUp className="h-3 w-3" aria-hidden />
-            <span className="font-semibold tabular-nums">
-              +{summary.earned}g
-            </span>
-            <span className="text-muted-foreground/60 font-normal">in</span>
-          </span>
-          <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400">
-            <TrendingDown className="h-3 w-3" aria-hidden />
-            <span className="font-semibold tabular-nums">
-              Spent {summary.spent}g
-            </span>
-            <span className="text-muted-foreground/60 font-normal">out</span>
-          </span>
-        </div>
-        <span
-          className={cn(
-            "text-[10px] font-semibold tabular-nums",
-            isPositive
-              ? "text-emerald-600 dark:text-emerald-400"
-              : "text-rose-600 dark:text-rose-400",
-          )}
-        >
-          {isPositive ? "+" : ""}
-          {net}g net
-        </span>
-      </div>
-      {bank != null && (
-        <div className="mt-1 pt-1 border-t border-black/[0.04] dark:border-white/[0.06] flex items-center justify-between text-[9px] text-muted-foreground/70">
-          <span className="inline-flex items-center gap-1">
-            <Coins className="h-2.5 w-2.5" aria-hidden />
-            treasury
-          </span>
-          <span className="tabular-nums font-medium text-foreground/80">
-            {bank}g
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function TimelineEvent({
   event,
   index,
@@ -490,10 +367,6 @@ function TimelineEvent({
 }) {
   const style = EVENT_STYLES[event.type];
   const Icon = style.icon;
-  const delta = resolveDelta(event);
-  const showDelta = delta != null && delta !== 0;
-  const isGainDelta = (delta ?? 0) > 0;
-
   return (
     <motion.div
       initial={{ opacity: 0, x: -12 }}
@@ -557,47 +430,9 @@ function TimelineEvent({
           className={cn("h-3.5 w-3.5 shrink-0 mt-0.5", style.color)}
           aria-hidden
         />
-        {event.itemId && (
-          <ItemIcon
-            item={event.itemId}
-            className="!h-3.5 !w-3.5 !align-[-2px] mt-0.5"
-          />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-1.5 flex-wrap">
-            <span className="text-[11px] font-medium leading-tight text-foreground/90 break-words">
-              <TextWithShipIcons>{event.description}</TextWithShipIcons>
-            </span>
-            {event.quantity != null && event.quantity > 0 && (
-              <span className="shrink-0 text-[9px] text-muted-foreground/60 tabular-nums">
-                ×{event.quantity}
-              </span>
-            )}
-            {showDelta && (
-              <span
-                className={cn(
-                  "shrink-0 text-[10px] font-semibold tabular-nums inline-flex items-center gap-0.5",
-                  isGainDelta
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-rose-600 dark:text-rose-400",
-                )}
-              >
-                {isGainDelta ? (
-                  <TrendingUp className="h-2.5 w-2.5" aria-hidden />
-                ) : (
-                  <TrendingDown className="h-2.5 w-2.5" aria-hidden />
-                )}
-                {isGainDelta ? `+${delta}g` : `${delta}g`}
-              </span>
-            )}
-          </div>
-          {/* Phase tag */}
-          {event.phase && (
-            <span className="text-[9px] text-muted-foreground/60 leading-none">
-              {event.phase}
-            </span>
-          )}
-        </div>
+        <span className="min-w-0 flex-1 break-words text-[11px] font-medium leading-tight text-foreground/90">
+          <TextWithShipIcons>{event.description}</TextWithShipIcons>
+        </span>
       </div>
     </motion.div>
   );
@@ -665,7 +500,6 @@ export function VoyageChronicle({
   events,
   currentRound,
   className,
-  gameState,
 }: VoyageChronicleProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(0);
@@ -700,8 +534,7 @@ export function VoyageChronicle({
     return events.filter((ev) => {
       if (filterDef && !filterDef.match(ev.type)) return false;
       if (q) {
-        const haystack =
-          `${ev.description} ${ev.phase} ${ev.type}`.toLowerCase();
+        const haystack = `${ev.description} ${ev.type}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -781,7 +614,6 @@ export function VoyageChronicle({
             {roundKeys.map((round) => {
               const roundEvents = filteredGrouped.get(round)!;
               const isCurrent = round === currentRound;
-              const summary = summarizeRound(roundEvents);
 
               return (
                 <motion.div
@@ -793,9 +625,6 @@ export function VoyageChronicle({
                 >
                   {/* Round section header */}
                   <RoundHeader round={round} isCurrent={isCurrent} />
-
-                  {/* Round summary card */}
-                  <RoundSummaryCard summary={summary} gameState={gameState} />
 
                   {/* Events within this round */}
                   <div className="relative ml-1 pl-3 border-l-2 border-black/[0.06] dark:border-white/[0.08]">

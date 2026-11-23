@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { GLOSSARY } from "@/lib/game/glossary";
+import { glossaryEntry } from "@/lib/game/glossary";
 import { cn } from "@/lib/utils";
+
+export const VoyageGlossary = createContext<number | undefined>(undefined);
 
 export function Term({
   children,
@@ -21,10 +23,13 @@ export function Term({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const rulesVersion = useContext(VoyageGlossary);
   const body =
     content ??
-    (term ? GLOSSARY[term] : undefined) ??
-    (typeof children === "string" ? GLOSSARY[children] : undefined);
+    (term ? glossaryEntry(term, rulesVersion) : undefined) ??
+    (typeof children === "string"
+      ? glossaryEntry(children, rulesVersion)
+      : undefined);
   if (!body) return <>{children}</>;
 
   return (

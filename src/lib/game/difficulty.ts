@@ -1,3 +1,5 @@
+import { OPEN_HARBOR_RULES } from "./rules-version";
+
 // Central difficulty configuration and pure selectors for room rules.
 
 export type Difficulty = "fair_winds" | "open_waters" | "monsoon";
@@ -50,7 +52,7 @@ export const DIFFICULTIES: Record<Difficulty, DifficultyConfig> = {
     icon: "🌤️",
     tagline: "A gentle passage for new captains.",
     summary:
-      "Eight rounds on the founding trade. A short, legible voyage with room to learn the rhythm before the money runs tight.",
+      "Eight rounds with better Exchange prices and more room to recover.",
     rounds: 8,
     startingGold: 100,
     maintenance: 15,
@@ -73,7 +75,7 @@ export const DIFFICULTIES: Record<Difficulty, DifficultyConfig> = {
     icon: "🌊",
     tagline: "The full trade opens as the harbor grows busy.",
     summary:
-      "Twelve rounds. The charter opens twice and the market swells from six cards to ten, with pirates that begin to bite past the midpoint.",
+      "Twelve rounds with room to specialize and rising raid risk after the midpoint.",
     rounds: 12,
     startingGold: 100,
     maintenance: 18,
@@ -96,7 +98,7 @@ export const DIFFICULTIES: Record<Difficulty, DifficultyConfig> = {
     icon: "⛈️",
     tagline: "A long, adversarial haul for seasoned captains.",
     summary:
-      "Sixteen rounds, back loaded and unforgiving. The market swells to eleven cards, the largest imperial mandates fall late, and a corrupt broker may leak your position to the pirates.",
+      "Sixteen rounds with higher upkeep, stronger raids, and a Broker who may leak your position.",
     rounds: 16,
     startingGold: 90,
     maintenance: 22,
@@ -253,6 +255,14 @@ export function pirateChanceFor(
 export function mandateIndexFor(
   value: unknown,
   roundNo: number,
+  version?: number,
 ): number | undefined {
-  return difficultyConfig(value).mandates[roundNo];
+  const cfg = difficultyConfig(value);
+  if (
+    version === OPEN_HARBOR_RULES &&
+    cfg.key === "fair_winds" &&
+    roundNo === 7
+  )
+    return 0;
+  return cfg.mandates[roundNo];
 }

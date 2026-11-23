@@ -6,13 +6,22 @@ import {
 } from "../difficulty";
 import type { GameState } from "../types";
 import { hasModule } from "./core";
-import { EFFECT, RAID_TERMS, expanded, forecastFor } from "../expansion";
+import {
+  EFFECT,
+  raidTerms,
+  REBALANCE,
+  expanded,
+  forecastFor,
+  rebalanced,
+  harborTrading,
+  voyageRaidAdjustment,
+} from "../expansion";
 import { voyageRandom } from "../voyage-rng";
 import { quoteDues } from "./pricing";
 
 // Rolls personal raid risk before settlement costs are charged.
 export function quotePirateWaters(state: GameState) {
-  // Difficulty controls the raid chance while severity remains total loss.
+  // The saved voyage rules set raid severity and the reserve for bills.
   const base = pirateChanceFor(
     state.difficulty,
     state.currentRound,
@@ -26,19 +35,40 @@ export function quotePirateWaters(state: GameState) {
     !(usesExpandedRules && state.modifierFlags.false_colors)
       ? difficultyConfig(state.difficulty).brokerCorruptionRisk
       : 0;
-  const weather = forecastFor(state)?.kind === "seas" ? EFFECT.heavySeas : 0;
-  let chance = Math.min(usesExpandedRules ? 0.5 : 1, base + leak + weather);
+  const updated = rebalanced(state);
+  const weather =
+    forecastFor(state)?.kind === "seas"
+      ? updated
+        ? REBALANCE.heavySeas
+        : EFFECT.heavySeas
+      : 0;
+  const harborAdjustment = voyageRaidAdjustment(
+    state.rulesVersion,
+    state.difficulty,
+  );
+  let chance = Math.min(
+    usesExpandedRules ? 0.5 : 1,
+    base + leak + weather + harborAdjustment,
+  );
   if (state.modifierFlags.pirate_risk_discount)
     chance *= 1 - state.modifierFlags.pirate_risk_discount;
   if (hasModule(state, "persian_dome_compass")) chance *= 0.7;
 
-  const terms = RAID_TERMS[state.difficulty];
+  const terms = raidTerms(state.difficulty, state);
   const reservedBills = usesExpandedRules
     ? Math.min(funds, Math.floor(quoteDues(state).total * terms.reserveRate))
     : 0;
   const protection = usesExpandedRules
-    ? (state.modifierFlags.safe_anchorage ? EFFECT.safeAnchorage : 0) +
-      (hasModule(state, "bonded_warehouse") ? EFFECT.bondedWarehouse : 0)
+    ? (state.modifierFlags.safe_anchorage
+        ? updated
+          ? REBALANCE.safeAnchorage
+          : EFFECT.safeAnchorage
+        : 0) +
+      (hasModule(state, "bonded_warehouse")
+        ? updated
+          ? REBALANCE.warehouse
+          : EFFECT.bondedWarehouse
+        : 0)
     : 0;
   const reserve = Math.min(funds, reservedBills + protection);
   const exposed = funds - reserve;
@@ -46,20 +76,33 @@ export function quotePirateWaters(state: GameState) {
     ? Math.max(
         0,
         terms.lossRate -
-          (hasModule(state, "storm_shrouds") ? EFFECT.stormShrouds : 0),
+          (hasModule(state, "storm_shrouds")
+            ? updated
+              ? REBALANCE.shrouds
+              : EFFECT.stormShrouds
+            : 0),
       )
     : 1;
   const raidLoss = Math.floor(exposed * severity + Number.EPSILON);
   const escortBase = Math.floor(
     (funds - reservedBills) *
       escortRateFor(state.difficulty) *
-      (1 - (state.modifierFlags.escort_discount ?? 0)),
+      (1 -
+        (state.modifierFlags.escort_discount ??
+          (updated && state.modifierFlags.false_colors ? 0.5 : 0))),
   );
+  const anchorageSavings =
+    updated && state.modifierFlags.safe_anchorage
+      ? Math.min(REBALANCE.anchorageEscort, escortBase)
+      : 0;
   const lanternSavings =
     usesExpandedRules && hasModule(state, "storm_lantern")
-      ? Math.min(escortBase, EFFECT.stormLantern)
+      ? Math.min(
+          escortBase - anchorageSavings,
+          updated ? REBALANCE.lantern : EFFECT.stormLantern,
+        )
       : 0;
-  const escortCost = escortBase - lanternSavings;
+  const escortCost = escortBase - anchorageSavings - lanternSavings;
   return {
     chance,
     escortCost,
@@ -70,12 +113,23 @@ export function quotePirateWaters(state: GameState) {
     exposed,
     raidLoss,
     lanternSavings,
+    anchorageSavings,
   };
 }
 
 export function resolvePirateAttack(state: GameState, logs: string[]) {
   if (state.pirateAttackResolved) return;
   state.pirateAttackResolved = true;
+  if (harborTrading(state)) {
+    state.directPassageRound = state.currentRound;
+    if (
+      hasModule(state, "storm_dividend") &&
+      state.currentRound < state.maxRounds
+    )
+      logs.push(
+        "Storm Dividend is ready for next round's first ordinary order.",
+      );
+  }
   const { chance, raidLoss: lost, reserve } = quotePirateWaters(state);
   if (voyageRandom(state, "pirateRaid")() < chance) {
     state.money -= lost;
@@ -95,8 +149,14 @@ export function hireEscort(state: GameState, logs: string[]) {
     logs.push("❌ Too late, this round's waters are already resolved");
     return;
   }
-  const { escortCost: cost, lanternSavings } = quotePirateWaters(state);
+  const {
+    escortCost: cost,
+    lanternSavings,
+    anchorageSavings,
+  } = quotePirateWaters(state);
   state.money -= cost;
+  if (anchorageSavings > 0)
+    logs.push(`Safe Anchorage saved ${anchorageSavings} Gold on the escort.`);
   if (lanternSavings > 0)
     logs.push(`Storm Lantern saved ${lanternSavings} Gold on the escort.`);
   state.escortHired = true;

@@ -1,19 +1,33 @@
 // Orchestrates voyage phases, checkpoints, settlement, and restarts.
+import { formatReputation } from "../../utils";
 import { APP_NAME, MERCHANT_RATINGS, type MerchantRating } from "../constants";
 import { DEFAULT_DIFFICULTY, type Difficulty } from "../difficulty";
-import type { VoyageRules } from "../expansion";
+import { rebalanced, type VoyageRules } from "../expansion";
+import { tallyPurchasesByResource } from "../harborPulse";
 import {
   createInitialGameState,
   type GameContext,
   type GameState,
 } from "../types";
 import { settleOutstandingDebts } from "./aid";
-import { completeBarterPhase } from "./barter";
-import { selectBoon, startBoonDrafting } from "./boons";
+import { needsStarterModule, selectBoon, startBoonDrafting } from "./boons";
 import { completePhase1, startPhase1 } from "./market";
 import { startPhase2 } from "./orders";
-import { calcIncomeTax } from "./pricing";
+import { incomeTaxDue } from "./pricing";
 import { payMaintenance, payWages, processProduction } from "./workers";
+
+export function displayLedgerLine(line: string) {
+  return line
+    .replace(
+      /^(📈 )?Profit before tax: [-−](\d+ Gold)/,
+      "$1Loss before tax: $2",
+    )
+    .replace(/^(🏆 Final Reputation: )[-−](\d+)/, "$1$2 below zero")
+    .replace(
+      /^([ \t]*💰 Reward: \d+ Gold · ⚓ Freight: \d+ Gold = 📊 )?Net Proceeds: [-−](\d+ Gold)/,
+      "$1Net Cost: $2",
+    );
+}
 
 export function endRound(state: GameState, logs: string[]) {
   logs.push(`\n📊=== Round ${state.currentRound} Settlement ===`);
@@ -24,13 +38,21 @@ export function endRound(state: GameState, logs: string[]) {
   logs.push(`   📦 Materials: ${state.materialCosts} Gold`);
   logs.push(`   👥 Wages: ${state.workerWages} Gold`);
   const preTax = state.roundRevenue - totalCost;
-  logs.push(`📈 Profit before tax: ${preTax} Gold`);
-  const tax = calcIncomeTax(state, preTax);
+  logs.push(
+    `📈 ${preTax < 0 ? "Loss" : "Profit"} before tax: ${Math.abs(preTax)} Gold`,
+  );
+  const due = incomeTaxDue(state);
+  const tax = Math.min(due, Math.max(0, state.money));
   if (tax > 0) {
     state.money -= tax;
     state.incomeTaxPaid += tax;
-    logs.push(`🏛️ Income tax paid after modifiers: ${tax} Gold`);
-  } else logs.push("🏛️ No income tax due");
+    logs.push(`🏛️ Income Tax paid after modifiers: ${tax} Gold`);
+  } else if (due === 0) logs.push("🏛️ No Income Tax due");
+  if (tax < due)
+    logs.push(
+      `🏛️ Income Tax was limited by available Gold. Assessed ${due} Gold and collected ${tax} Gold.`,
+    );
+  state.roundIncomeTaxDue = undefined;
   if (state.roundVatPaid)
     logs.push(`🧾 VAT paid this round: ${state.roundVatPaid} Gold`);
   state.roundVatPaid = 0;
@@ -43,6 +65,10 @@ export function endRound(state: GameState, logs: string[]) {
   state.maintenanceCosts = 0;
   state.materialCosts = 0;
   state.workerWages = 0;
+  state.lastPurchaseTally = {
+    round: state.currentRound,
+    quantities: tallyPurchasesByResource(state),
+  };
   state.currentRound++;
   if (state.currentRound > state.maxRounds) {
     settleOutstandingDebts(state, logs);
@@ -60,7 +86,7 @@ export function endRound(state: GameState, logs: string[]) {
   startBoonDrafting(state, logs);
 }
 
-export function completePhase2(state: GameState, logs: string[]) {
+function completePhase2(state: GameState, logs: string[]) {
   if (state.orderCount === 0) logs.push("⏭️ Trading skipped");
   else logs.push(`✅ Trading ended, completed ${state.orderCount} trades`);
   startPhase3(state, logs);
@@ -99,12 +125,13 @@ export function finishSettlement(state: GameState, logs: string[]) {
 
 export function startPhase4(state: GameState, logs: string[]) {
   state.phase = 4;
+  if (rebalanced(state)) state.roundIncomeTaxDue = incomeTaxDue(state);
   logs.push(
     `\n🚢=== Round ${state.currentRound} · Phase 4: Shipyard & Modules ===`,
   );
 }
 
-export function skipUpgrade(state: GameState, logs: string[]) {
+function skipUpgrade(state: GameState, logs: string[]) {
   logs.push("⏭️ Skipped Shipyard Actions");
   endRound(state, logs);
 }
@@ -117,13 +144,13 @@ export function merchantRatingForScore(score: number): MerchantRating {
   );
 }
 
-export function endGame(state: GameState, logs: string[]) {
+function endGame(state: GameState, logs: string[]) {
   state.gameOver = true;
   state.phase = "endgame";
   logs.push("\n" + "=".repeat(50));
   logs.push(`🎮 ${APP_NAME} · Game Over!`);
   logs.push(`💰 Final Funds: ${state.money} Gold`);
-  logs.push(`🏆 Final Reputation: ${state.score}`);
+  logs.push(`🏆 Final Reputation: ${formatReputation(state.score)}`);
   logs.push(`🧾 Total Taxes Paid: ${state.vatPaid + state.incomeTaxPaid} Gold`);
   let rating: string;
   if (state.defaultedDebt) {
@@ -175,7 +202,10 @@ export function canAdvancePhase(state: GameState) {
   if (state.gameOver) return false;
   if (state.phase === 3) return state.pirateAttackResolved;
   if (state.phase === 5) {
-    return state.boonChoices.some((boon) => boon.id === state.pendingBoonId);
+    return (
+      !needsStarterModule(state) &&
+      state.boonChoices.some((boon) => boon.id === state.pendingBoonId)
+    );
   }
   return [1, 2, 4, "barter", "worker_mgmt"].includes(state.phase);
 }
@@ -188,8 +218,10 @@ export function nextPhase(state: GameState, ctx: GameContext, logs: string[]) {
     state.pendingBoonId = undefined;
     selectBoon(state, ctx, boonId, logs);
   } else if (state.phase === 1) completePhase1(state, logs);
-  else if (state.phase === "barter") completeBarterPhase(state, logs);
-  else if (state.phase === "worker_mgmt") startPhase2(state, ctx, logs);
+  else if (state.phase === "barter") {
+    logs.push("Bartering ended.");
+    state.phase = "worker_mgmt";
+  } else if (state.phase === "worker_mgmt") startPhase2(state, ctx, logs);
   else if (state.phase === 2) completePhase2(state, logs);
   else if (state.phase === 3) finishSettlement(state, logs);
   else if (state.phase === 4) skipUpgrade(state, logs);

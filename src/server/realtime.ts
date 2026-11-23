@@ -15,12 +15,6 @@ import {
 } from "../lib/game/legacy";
 import {
   BROKERS_FAVOR_UNLOCK_LEVEL,
-  CONVOY_VENTURE_MAX_CONTRIBUTOR_SHARE,
-  CONVOY_VENTURE_MAX_ROUNDS_AHEAD,
-  CONVOY_VENTURE_MAX_TARGET,
-  CONVOY_VENTURE_MIN_ROUNDS_AHEAD,
-  CONVOY_VENTURE_MIN_TARGET,
-  CONVOY_VENTURE_PAYOUT_MULTIPLIER,
   TIDEWATCH_SURGE_THRESHOLD,
   WORD_ON_THE_DOCKS_LEDGER_ENTRY,
   WORD_ON_THE_DOCKS_REWARD,
@@ -34,18 +28,23 @@ import {
   roundsFor,
 } from "../lib/game/difficulty";
 import {
-  computeAcceptedContribution,
-  computeSettlements,
-  computeVentureDeadlineBounds,
   parseVentureContributions,
   ventureAnnouncementFor,
   ventureTotal,
   type VentureOutcome,
+  type VentureSettlement,
 } from "../lib/game/convoy";
 import { computeBackingResolution } from "../lib/game/backing";
-import { computeHarborPulse } from "../lib/game/harborPulse";
-import { EXPANDED_RULES, type VoyageRules } from "../lib/game/expansion";
-import { buildForecasts, readVoyageRules } from "../lib/game/forecast";
+import {
+  computeHarborPulse,
+  savedPurchaseTotals,
+} from "../lib/game/harborPulse";
+import {
+  CLASSIC_HARBOR_RULES,
+  expanded,
+  type VoyageRules,
+} from "../lib/game/expansion";
+import { buildCurrentVoyageRules, readVoyageRules } from "../lib/game/forecast";
 import { unlockedResources } from "../lib/game/pools";
 import type { GameState } from "../lib/game/types";
 import type { BarterUpdate } from "../lib/game/barter-ledger";
@@ -56,6 +55,7 @@ import {
   readBarter,
   type BarterAction,
 } from "./barter";
+import { contributeToConvoy, postConvoy, settleExpiredConvoys } from "./convoy";
 
 // Types
 type PublicUser = {
@@ -239,7 +239,6 @@ export function attachRealtime(httpServer: HttpServer): Server {
         roomAidRequests.delete(roomId);
         // The database cascade already removed persistent Loan rows.
         roomOutstandingLoans.delete(roomId);
-        roomPulseTallies.delete(roomId);
         concludedRooms.delete(roomId);
         roomMutedUsers.delete(roomId);
       } else {
@@ -300,6 +299,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
     const room = await db.room.findUnique({
       where: { id: roomId },
       select: {
+        started: true,
         currentRound: true,
         currentPhase: true,
         phaseReleased: true,
@@ -310,6 +310,44 @@ export function attachRealtime(httpServer: HttpServer): Server {
         difficulty: true,
       },
     });
+    if (room?.started) {
+      const saves = await db.gameState.findMany({
+        where: { roomId, user: { memberships: { some: { roomId } } } },
+        select: { data: true, user: { select: PUBLIC_USER_SELECT } },
+      });
+      for (const { data, user } of saves) {
+        if (roomStatuses.get(roomId)?.has(user.id)) continue;
+        let saved: Partial<GameState> | null;
+        try {
+          saved = JSON.parse(data) as Partial<GameState> | null;
+        } catch {
+          continue;
+        }
+        if (
+          !saved?.gameOver ||
+          (saved.voyageEpoch ?? 0) !== room.voyageEpoch ||
+          (saved.phase !== "endgame" && saved.phase !== "bankruptcy")
+        )
+          continue;
+        const phase = saved.defaultedDebt ? "bankruptcy" : saved.phase;
+        rememberStatus(roomId, {
+          roomId,
+          voyageEpoch: room.voyageEpoch,
+          user,
+          phase,
+          phaseLabel: phase === "bankruptcy" ? "Bankrupt" : "Voyage Complete",
+          round: Math.min(
+            saved.currentRound ?? room.currentRound,
+            saved.maxRounds ?? Infinity,
+          ),
+          gold: saved.money ?? 0,
+          reputation: saved.score ?? 0,
+          shipLevel: saved.shipLevel ?? 0,
+          gameOver: true,
+          at: Date.now(),
+        });
+      }
+    }
     cp = roomCheckpoints.get(roomId);
     if (cp) return cp;
     cp = {
@@ -371,16 +409,29 @@ export function attachRealtime(httpServer: HttpServer): Server {
       if (!cp.readyUserIds.has(id)) return;
     }
     cp.releasing = true;
-    const harborPulse =
-      cp.phase === "5"
-        ? computeHarborPulse(
-            roomPulseTallies.get(roomId)?.get(cp.round - 1),
-            cp.rules.version === EXPANDED_RULES
-              ? unlockedResources(cp.difficulty, cp.round - 1, cp.rules.version)
-              : undefined,
-          )
-        : undefined;
     try {
+      let harborPulse = cp.harborPulse;
+      if (cp.phase === "5" && cp.round > 1) {
+        const saves = await db.gameState.findMany({
+          where: { roomId },
+          select: { data: true },
+        });
+        harborPulse = computeHarborPulse(
+          savedPurchaseTotals(
+            saves.map(({ data }) => data),
+            cp.voyageEpoch,
+            cp.round - 1,
+          ),
+          expanded({ rulesVersion: cp.rules.version })
+            ? unlockedResources(
+                cp.difficulty,
+                cp.round - 1,
+                cp.rules.version,
+                cp.rules.specialties,
+              )
+            : undefined,
+        );
+      }
       if (cp.phase === "barter") {
         await closeBarter(roomId);
         await broadcastBarter(roomId);
@@ -1087,34 +1138,6 @@ export function attachRealtime(httpServer: HttpServer): Server {
   }
   void hydrateLoans();
 
-  // The Harbor Pulse
-  // Aggregate each captain's purchases by room and round. The next Phase 1
-  // consumes that tally once; it is intentionally ephemeral, so a process
-  // restart yields a neutral pulse for the affected round.
-  const roomPulseTallies = new Map<
-    string,
-    Map<number, Record<string, number>>
-  >();
-
-  function addPulseReport(
-    roomId: string,
-    round: number,
-    tally: Record<string, number>,
-  ) {
-    let byRound = roomPulseTallies.get(roomId);
-    if (!byRound) {
-      byRound = new Map();
-      roomPulseTallies.set(roomId, byRound);
-    }
-    const existing = byRound.get(round) ?? {};
-    for (const [item, qty] of Object.entries(tally)) {
-      if (typeof qty !== "number" || !Number.isFinite(qty) || qty <= 0)
-        continue;
-      existing[item] = (existing[item] ?? 0) + qty;
-    }
-    byRound.set(round, existing);
-  }
-
   function combinedReputation(roomId: string): number {
     const statuses = roomStatuses.get(roomId);
     if (!statuses) return 0;
@@ -1154,95 +1177,59 @@ export function attachRealtime(httpServer: HttpServer): Server {
     };
   }
 
-  async function broadcastVentures(roomId: string, voyageEpoch: number) {
+  async function broadcastVentures(
+    roomId: string,
+    voyageEpoch: number,
+    destination = `room:${roomId}`,
+  ) {
     const ventures = await db.convoyVenture.findMany({
-      where: { roomId, voyageEpoch, status: "open" },
+      where: { roomId, voyageEpoch, status: { in: ["open", "filled"] } },
       orderBy: { createdAt: "asc" },
     });
-    // Include the voyage lock even when the open list is empty.
-    const locked = await hasRoomClaimedVenture(roomId, voyageEpoch);
-    io.to(`room:${roomId}`).emit("venture:update", {
+    io.to(destination).emit("venture:update", {
       roomId,
-      ventures: ventures.map(ventureSummary),
-      locked,
+      ventures: ventures
+        .filter(({ status }) => status === "open")
+        .map(ventureSummary),
+      locked: ventures.some(({ status }) => status === "filled"),
     });
   }
 
-  // A room may fill only one venture per voyage. Both posting and contributing
-  // check this persisted outcome before accepting more Gold.
-  async function hasRoomClaimedVenture(
+  async function publishVentureChanges(
     roomId: string,
     voyageEpoch: number,
-  ): Promise<boolean> {
-    const filled = await db.convoyVenture.findFirst({
-      where: { roomId, voyageEpoch, status: "filled" },
-      select: { id: true },
-    });
-    return Boolean(filled);
-  }
-
-  // Settle filled, failed, and destroyed ventures with personal contributor
-  // payouts. Captains without contributions receive no settlement.
-  async function settleVenture(
-    venture: { id: string; roomId: string; contributions: string },
-    outcome: VentureOutcome,
+    outcomes: {
+      ventureId: string;
+      outcome: VentureOutcome;
+      settlements: VentureSettlement[];
+    }[],
   ) {
-    const contributions = parseVentureContributions(venture.contributions);
-    const settlements = computeSettlements(contributions, outcome);
-    await db.convoyVenture.update({
-      where: { id: venture.id },
-      data: { status: outcome, resolvedAt: new Date() },
-    });
-    io.to(`room:${venture.roomId}`).emit("venture:settled", {
-      roomId: venture.roomId,
-      ventureId: venture.id,
-      outcome,
-      settlements,
-    });
-    if (settlements.length) {
-      io.to(`room:${venture.roomId}`).emit("room:system", {
-        roomId: venture.roomId,
-        content: ventureAnnouncementFor(outcome),
-      });
+    await broadcastBarter(roomId);
+    for (const result of outcomes) {
+      io.to(`room:${roomId}`).emit("venture:resolved", { roomId, ...result });
+      if (result.settlements.length)
+        io.to(`room:${roomId}`).emit("room:system", {
+          roomId,
+          content: ventureAnnouncementFor(result.outcome),
+        });
     }
+    await broadcastVentures(roomId, voyageEpoch);
   }
 
-  // After a venture fills, destroy and fully refund every other open venture
-  // in the same room and voyage.
-  async function destroyOtherOpenVentures(
-    roomId: string,
-    voyageEpoch: number,
-    exceptVentureId: string,
-  ) {
-    const others = await db.convoyVenture.findMany({
-      where: {
-        roomId,
-        voyageEpoch,
-        status: "open",
-        id: { not: exceptVentureId },
-      },
-    });
-    for (const v of others) await settleVenture(v, "destroyed");
-  }
-
-  // Resolve ventures after their deadline or when their voyage ends.
   async function resolveExpiredVentures(
     roomId: string,
     voyageEpoch: number,
     currentRound: number,
     forceAll: boolean,
   ) {
-    const open = await db.convoyVenture.findMany({
-      where: { roomId, voyageEpoch, status: "open" },
-    });
-    let anyResolved = false;
-    for (const v of open) {
-      if (forceAll || currentRound > v.deadlineRound) {
-        await settleVenture(v, "failed");
-        anyResolved = true;
-      }
-    }
-    if (anyResolved) await broadcastVentures(roomId, voyageEpoch);
+    const outcomes = await settleExpiredConvoys(
+      roomId,
+      voyageEpoch,
+      currentRound,
+      forceAll,
+    );
+    if (outcomes.length)
+      await publishVentureChanges(roomId, voyageEpoch, outcomes);
   }
 
   // Helpers
@@ -1402,6 +1389,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
       const cp = await getCheckpoint(roomId);
       const barter = await readBarter(roomId);
       if (barter) sendBarter(socket.id, s.userId, roomId, barter);
+      await broadcastVentures(roomId, voyageEpoch, socket.id);
       io.to(socket.id).emit(
         "phase:ready_update",
         await readyStatePayload(roomId, cp),
@@ -1550,11 +1538,11 @@ export function attachRealtime(httpServer: HttpServer): Server {
           newRank !== null &&
           (curRank === null || newRank > curRank)
         ) {
+          if (cp.round !== broadcast.round) cp.harborPulse = undefined;
           cp.round = broadcast.round;
           cp.phase = phaseStr;
           cp.readyUserIds.clear();
           cp.advancing = false;
-          cp.harborPulse = undefined;
           await db.room
             .updateMany({
               where: {
@@ -1566,7 +1554,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
                 currentRound: cp.round,
                 currentPhase: cp.phase,
                 phaseReleased: false,
-                phasePulse: "{}",
+                phasePulse: JSON.stringify(cp.harborPulse ?? {}),
               },
             })
             .catch(() => {});
@@ -1643,23 +1631,6 @@ export function attachRealtime(httpServer: HttpServer): Server {
         cp.readyUserIds.delete(s.userId);
         ack?.(true);
         await broadcastReadyState(roomId, cp);
-      },
-    );
-
-    // Collect each captain's Phase 1 purchase tally for the next Harbor Pulse.
-    socket.on(
-      "harbor:pulse:report",
-      (payload: {
-        roomId?: string;
-        round?: number;
-        tally?: Record<string, number>;
-      }) => {
-        const s = requireAuth();
-        if (!s) return;
-        const roomId = payload?.roomId ?? s.roomId;
-        if (!roomId || roomId !== s.roomId) return;
-        if (typeof payload?.round !== "number" || !payload.tally) return;
-        addPulseReport(roomId, payload.round, payload.tally);
       },
     );
 
@@ -1743,21 +1714,11 @@ export function attachRealtime(httpServer: HttpServer): Server {
         select: { voyageEpoch: true },
       });
       if (!room) return;
-      const ventures = await db.convoyVenture.findMany({
-        where: { roomId, voyageEpoch: room.voyageEpoch, status: "open" },
-        orderBy: { createdAt: "asc" },
-      });
-      socket.emit("venture:update", {
-        roomId,
-        ventures: ventures.map(ventureSummary),
-        locked: await hasRoomClaimedVenture(roomId, room.voyageEpoch),
-      });
+      await broadcastVentures(roomId, room.voyageEpoch, socket.id);
     });
 
     // A filled venture locks further posts for this voyage. Failed ventures do
-    // not consume that opportunity. Payload shape and bounds are validated
-    // here; affordability remains client side because the server has no
-    // authoritative wallet state.
+    // not consume that opportunity. Posting does not debit Gold.
     socket.on(
       "venture:post",
       async (payload: {
@@ -1769,180 +1730,79 @@ export function attachRealtime(httpServer: HttpServer): Server {
         if (!s) return;
         const roomId = payload?.roomId ?? s.roomId;
         if (!roomId || roomId !== s.roomId) return;
-        const targetGold = Math.floor(Number(payload?.targetGold));
-        const deadlineRound = Math.floor(Number(payload?.deadlineRound));
-        if (!Number.isFinite(targetGold) || !Number.isFinite(deadlineRound)) {
-          socket.emit("venture:error", { roomId, error: "Invalid venture." });
-          return;
-        }
-        if (
-          targetGold < CONVOY_VENTURE_MIN_TARGET ||
-          targetGold > CONVOY_VENTURE_MAX_TARGET
-        ) {
-          socket.emit("venture:error", {
+        const targetGold = Number(payload?.targetGold);
+        const deadlineRound = Number(payload?.deadlineRound);
+        try {
+          const result = await postConvoy(
             roomId,
-            error: `Target must be between ${CONVOY_VENTURE_MIN_TARGET} and ${CONVOY_VENTURE_MAX_TARGET} Gold.`,
-          });
-          return;
-        }
-        const room = await db.room.findUnique({
-          where: { id: roomId },
-          select: { voyageEpoch: true, currentRound: true, difficulty: true },
-        });
-        if (!room) return;
-        if (await hasRoomClaimedVenture(roomId, room.voyageEpoch)) {
-          socket.emit("venture:error", {
-            roomId,
-            error:
-              "This harbor has already used its one Convoy Venture for this voyage.",
-          });
-          return;
-        }
-        // Keep the deadline before the final round so rewards remain usable.
-        const voyageRounds = roundsFor(room.difficulty);
-        const bounds = computeVentureDeadlineBounds(
-          room.currentRound,
-          voyageRounds,
-          CONVOY_VENTURE_MIN_ROUNDS_AHEAD,
-          CONVOY_VENTURE_MAX_ROUNDS_AHEAD,
-        );
-        if (!bounds) {
-          socket.emit("venture:error", {
-            roomId,
-            error:
-              "Too late in the voyage to post a new Convoy Venture: there's no round left that would leave time to spend the reward.",
-          });
-          return;
-        }
-        const { minRound, maxRound } = bounds;
-        if (deadlineRound < minRound || deadlineRound > maxRound) {
-          socket.emit("venture:error", {
-            roomId,
-            error: `Deadline must be between round ${minRound} and round ${maxRound}.`,
-          });
-          return;
-        }
-        await db.convoyVenture.create({
-          data: {
-            roomId,
-            voyageEpoch: room.voyageEpoch,
-            posterId: s.userId,
-            posterName: s.user.displayName,
+            s.user,
             targetGold,
             deadlineRound,
-            payoutMultiplier: CONVOY_VENTURE_PAYOUT_MULTIPLIER,
-          },
-        });
-        await broadcastVentures(roomId, room.voyageEpoch);
-        io.to(`room:${roomId}`).emit("room:system", {
-          roomId,
-          content: `⚓ ${s.user.displayName} posted a Convoy Venture: ${targetGold} Gold needed by Round ${deadlineRound}.`,
-        });
+          );
+          if (result.error !== undefined) {
+            socket.emit("venture:error", { roomId, error: result.error });
+            return;
+          }
+          await broadcastVentures(roomId, result.epoch);
+          io.to(`room:${roomId}`).emit("room:system", {
+            roomId,
+            content: `⚓ ${s.user.displayName} posted a Convoy Venture: ${targetGold} Gold needed by Round ${deadlineRound}.`,
+          });
+        } catch (error) {
+          console.error("Could not post a Convoy Venture", error);
+          socket.emit("venture:error", {
+            roomId,
+            error:
+              "Could not confirm the Convoy Venture. Check the board before posting again.",
+          });
+        }
       },
     );
 
-    // Confirm the accepted amount before the contributor's client escrows Gold.
     socket.on(
       "venture:contribute",
-      async (payload: {
-        roomId?: string;
-        ventureId?: string;
-        amount?: number;
-      }) => {
+      async (
+        payload: { roomId?: string; ventureId?: string; amount?: number },
+        ack?: (result: { error: string | null }) => void,
+      ) => {
         const s = requireAuth();
-        if (!s) return;
+        if (!s)
+          return ack?.({ error: "Join the harbor before backing a convoy." });
         const roomId = payload?.roomId ?? s.roomId;
-        if (!roomId || roomId !== s.roomId) return;
-        const ventureId = payload?.ventureId;
-        const amount = Math.floor(Number(payload?.amount));
-        if (!ventureId || !Number.isFinite(amount) || amount <= 0) {
-          socket.emit("venture:error", {
-            roomId,
-            error: "Invalid contribution.",
-          });
-          return;
-        }
-        const venture = await db.convoyVenture.findUnique({
-          where: { id: ventureId },
-        });
-        if (
-          !venture ||
-          venture.roomId !== roomId ||
-          venture.status !== "open"
-        ) {
-          socket.emit("venture:error", {
-            roomId,
-            error: "That venture is no longer open.",
-          });
-          return;
-        }
-        // Reject contributions after another venture has filled this voyage.
-        if (await hasRoomClaimedVenture(roomId, venture.voyageEpoch)) {
-          socket.emit("venture:error", {
-            roomId,
-            error:
-              "This harbor has already used its one Convoy Venture for this voyage.",
-          });
-          return;
-        }
-        const room = await db.room.findUnique({
-          where: { id: roomId },
-          select: { currentRound: true },
-        });
-        if (room && room.currentRound > venture.deadlineRound) {
-          socket.emit("venture:error", {
-            roomId,
-            error: "That venture's deadline has already passed.",
-          });
-          return;
-        }
-        const contributions = parseVentureContributions(venture.contributions);
-        const currentTotal = ventureTotal(contributions);
-        const existing = contributions[s.userId];
-        const accepted = computeAcceptedContribution(
-          currentTotal,
-          venture.targetGold,
-          amount,
-          existing?.amount ?? 0,
-          CONVOY_VENTURE_MAX_CONTRIBUTOR_SHARE,
-        );
-        if (accepted <= 0) {
-          // Distinguish a full venture from this captain's personal share cap so
-          // the rejection explains which limit was reached.
-          const atOwnShareCap =
-            currentTotal < venture.targetGold &&
-            (existing?.amount ?? 0) >=
-              Math.ceil(
-                venture.targetGold * CONVOY_VENTURE_MAX_CONTRIBUTOR_SHARE,
-              );
-          socket.emit("venture:error", {
-            roomId,
-            error: atOwnShareCap
-              ? "You've already backed this venture as much as any single captain can. It needs another captain to fund the rest."
-              : "That venture is already fully funded.",
-          });
-          return;
-        }
-        contributions[s.userId] = {
-          name: s.user.displayName,
-          amount: (existing?.amount ?? 0) + accepted,
+        if (!roomId || roomId !== s.roomId)
+          return ack?.({ error: "Join the harbor before backing a convoy." });
+        const sendResult = (error: string | null) => {
+          if (ack) ack({ error });
+          else if (error) socket.emit("venture:error", { roomId, error });
         };
-        const newTotal = currentTotal + accepted;
-        const updated = await db.convoyVenture.update({
-          where: { id: ventureId },
-          data: { contributions: JSON.stringify(contributions) },
-        });
-        socket.emit("venture:contributed", { roomId, ventureId, accepted });
-        if (newTotal >= venture.targetGold) {
-          await settleVenture(updated, "filled");
-          // Destroy and refund every other open venture after the room fills one.
-          await destroyOtherOpenVentures(
+        const ventureId = payload?.ventureId;
+        const amount = Number(payload?.amount);
+        if (!ventureId || !Number.isSafeInteger(amount) || amount <= 0) {
+          sendResult("Invalid contribution.");
+          return;
+        }
+        try {
+          const result = await contributeToConvoy(
             roomId,
-            venture.voyageEpoch,
-            venture.id,
+            s.user,
+            ventureId,
+            amount,
+          );
+          if (result.epoch === undefined) {
+            sendResult(result.error);
+            return;
+          }
+          await publishVentureChanges(roomId, result.epoch, result.outcomes);
+          sendResult(null);
+        } catch (error) {
+          console.error(
+            "Could not confirm a Convoy Venture contribution",
+            error,
+          );
+          sendResult(
+            "Could not confirm the contribution. Check the Convoy Venture board before trying again.",
           );
         }
-        await broadcastVentures(roomId, venture.voyageEpoch);
       },
     );
 
@@ -2429,7 +2289,8 @@ export function attachRealtime(httpServer: HttpServer): Server {
     // Starting the voyage
     // The host starts a room with at least two captains. Each client begins
     // Boon drafting from the room:started event.
-    socket.on("room:start", async (payload: { roomId?: string }) => {
+    type StartRoom = { roomId?: string };
+    socket.on("room:start", async (payload: StartRoom) => {
       const s = requireAuth();
       if (!s) return;
       const roomId = payload?.roomId ?? s.roomId;
@@ -2472,12 +2333,11 @@ export function attachRealtime(httpServer: HttpServer): Server {
       if (startingRooms.has(roomId)) return;
       startingRooms.add(roomId);
       try {
-        const forecasts = buildForecasts(
+        const rules = buildCurrentVoyageRules(
           roomId,
           room.voyageEpoch,
           room.difficulty,
         );
-        const rules = { version: EXPANDED_RULES, forecasts };
         await db.room.update({
           where: { id: roomId },
           data: {
@@ -2488,7 +2348,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
             phasePulse: "{}",
             voyageResult: "",
             rulesVersion: rules.version,
-            forecastPlan: JSON.stringify(forecasts),
+            forecastPlan: JSON.stringify(rules),
             tidewatchSurge: false,
             docksWinnerId: null,
           },
@@ -2559,7 +2419,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
               phasePulse: "{}",
               barterLedger: "{}",
               voyageResult: null,
-              rulesVersion: EXPANDED_RULES,
+              rulesVersion: CLASSIC_HARBOR_RULES,
               forecastPlan: "[]",
               tidewatchSurge: false,
               docksWinnerId: null,
@@ -2574,8 +2434,6 @@ export function attachRealtime(httpServer: HttpServer): Server {
         clearAid(roomId);
         // Clear debts together with the previous voyage's GameState.
         clearLoans(roomId);
-        // Clear Harbor Pulse tallies before round numbering restarts.
-        roomPulseTallies.delete(roomId);
         // Mutes last only for the current voyage.
         if (roomMutedUsers.delete(roomId)) emitRoomMembers(roomId);
 
@@ -2587,6 +2445,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
         });
         const cp = await getCheckpoint(roomId);
         await broadcastReadyState(roomId, cp);
+        await broadcastVentures(roomId, restarted.voyageEpoch);
       } finally {
         restartingRooms.delete(roomId);
       }

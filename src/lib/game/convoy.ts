@@ -91,10 +91,21 @@ export function computeVentureDeadlineBounds(
 // Keeps outcome announcements beside the settlement rules they describe.
 export function ventureAnnouncementFor(outcome: VentureOutcome): string {
   if (outcome === "filled") {
-    return `⚓ A Convoy Venture filled! Every contributor is paid their share, times ${CONVOY_VENTURE_PAYOUT_MULTIPLIER}x. This harbor's one Convoy Venture chance for this voyage has now been used.`;
+    return `⚓ A Convoy Venture filled! Every contributor is paid their share, multiplied by ${CONVOY_VENTURE_PAYOUT_MULTIPLIER}. This harbor's one Convoy Venture chance for this voyage has now been used.`;
   }
   if (outcome === "failed") {
     return `⚓ A Convoy Venture missed its deadline. Every contributor gets back a partial refund.`;
   }
   return `⚓ A Convoy Venture was cancelled: another venture in the harbor already claimed this voyage's one chance. Every contributor gets back their full stake.`;
+}
+
+export function ventureSettlementLine(outcome: VentureOutcome, amount: number) {
+  switch (outcome) {
+    case "filled":
+      return `⚓ Convoy Venture filled! Your share: ${amount} Gold`;
+    case "failed":
+      return `⚓ Convoy Venture missed its deadline. Partial refund: ${amount} Gold`;
+    case "destroyed":
+      return `⚓ Convoy Venture cancelled: another venture filled first. Full refund: ${amount} Gold`;
+  }
 }

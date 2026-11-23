@@ -16,7 +16,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type PublicUser } from "@/lib/api";
 import { Avatar, Pill, MeritIcon } from "./shared";
-import { cn } from "@/lib/utils";
+import { cn, formatReputation } from "@/lib/utils";
 import { useCountUp } from "@/lib/use-count-up";
 import {
   Anchor,
@@ -745,7 +745,7 @@ function ProfileBody({
                           {voyage.reputation != null && (
                             <Pill tone="violet">
                               <Trophy className="h-3 w-3" />
-                              {voyage.reputation.toLocaleString()} rep
+                              Reputation {formatReputation(voyage.reputation)}
                             </Pill>
                           )}
                           {voyage.crowned && (

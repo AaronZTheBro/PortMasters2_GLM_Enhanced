@@ -1,9 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import type { Socket } from "socket.io-client";
+import type { GameState } from "./game/types";
+import type { VentureOutcome, VentureSettlement } from "./game/convoy";
 
-export type VentureContributor = {
+type VentureContributor = {
   userId: string;
   name: string;
   amount: number;
@@ -21,54 +29,13 @@ export type ConvoyVenture = {
   contributions: VentureContributor[];
 };
 
-export type VentureSettlement = {
-  userId: string;
-  name: string;
-  amount: number;
-};
-
-// "filled" pays CONVOY_VENTURE_PAYOUT_MULTIPLIER times a
-// contributor's own stake, and is the one outcome that can ever happen once
-// per voyage, room wide (see hasRoomClaimedVenture in
-// src/server/realtime.ts). "failed" refunds only
-// CONVOY_VENTURE_FAILURE_REFUND_RATE after a venture's own deadline round
-// passes short of target. "destroyed" refunds every contributor in full: a
-// different venture in the same room's voyage reached "filled" first and
-// claimed the one shared chance before this one got the chance to.
-export type VentureOutcome = "filled" | "failed" | "destroyed";
-
-/**
- * The shared board of multi round ventures is a thin relay around the
- * venture:* socket events (see src/server/realtime.ts). It stays separate
- * from GameState just like useBarter and useAid because an open venture is
- * state shared by the room that no single client can compute alone. Unlike
- * barter and aid, this board is backed by a real database table server side
- * (a venture can outlive a single phase, even a single round), but the
- * client side shape here is deliberately identical to those two: a list,
- * a post, an action, and a callback for when something involving me
- * resolves. The actual wallet update (escrow on contribute, credit on
- * settlement) is the caller's job via the engine functions in
- * src/lib/game/engine.ts.
- *
- * `onContributed` fires once, only on the client that just contributed,
- * telling it exactly how much of its requested amount actually landed (a
- * venture can be topped up by someone else microseconds earlier, so less
- * may have been needed than was asked to give). `onSettled` fires on every
- * client in the room whenever any venture resolves, for any of the three
- * outcomes above; the caller filters the settlements list for its own
- * userId to find out whether it was involved at all.
- *
- * `locked` reflects whether this room has already used its one Convoy
- * Venture chance for the current voyage (see hasRoomClaimedVenture in
- * src/server/realtime.ts): once true, posting a new venture will always be
- * rejected, and it only ever goes back to false on a fresh voyage.
- */
 export function useConvoy(
   socket: Socket | null,
   roomId: string,
-  onContributed: (ventureId: string, accepted: number) => void,
+  getGame: () => GameState,
+  flush: () => Promise<void>,
+  spendingRef: RefObject<boolean>,
   onSettled: (
-    ventureId: string,
     outcome: VentureOutcome,
     settlements: VentureSettlement[],
   ) => void,
@@ -77,10 +44,7 @@ export function useConvoy(
   const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const onContributedRef = useRef(onContributed);
-  useEffect(() => {
-    onContributedRef.current = onContributed;
-  }, [onContributed]);
+  const [busy, setBusy] = useState(false);
   const onSettledRef = useRef(onSettled);
   useEffect(() => {
     onSettledRef.current = onSettled;
@@ -98,22 +62,13 @@ export function useConvoy(
       setVentures(data.ventures);
       setLocked(data.locked);
     };
-    const onContributedEvent = (data: {
-      roomId: string;
-      ventureId: string;
-      accepted: number;
-    }) => {
-      if (data.roomId !== roomId) return;
-      onContributedRef.current(data.ventureId, data.accepted);
-    };
     const onSettledEvent = (data: {
       roomId: string;
-      ventureId: string;
       outcome: VentureOutcome;
       settlements: VentureSettlement[];
     }) => {
       if (data.roomId !== roomId) return;
-      onSettledRef.current(data.ventureId, data.outcome, data.settlements);
+      onSettledRef.current(data.outcome, data.settlements);
     };
     const onPostError = (data: { roomId: string; error: string }) => {
       if (data.roomId !== roomId) return;
@@ -121,15 +76,13 @@ export function useConvoy(
     };
 
     socket.on("venture:update", onUpdate);
-    socket.on("venture:contributed", onContributedEvent);
-    socket.on("venture:settled", onSettledEvent);
+    socket.on("venture:resolved", onSettledEvent);
     socket.on("venture:error", onPostError);
     socket.emit("venture:state:request", { roomId });
 
     return () => {
       socket.off("venture:update", onUpdate);
-      socket.off("venture:contributed", onContributedEvent);
-      socket.off("venture:settled", onSettledEvent);
+      socket.off("venture:resolved", onSettledEvent);
       socket.off("venture:error", onPostError);
     };
   }, [socket, roomId]);
@@ -143,16 +96,35 @@ export function useConvoy(
   );
 
   const contribute = useCallback(
-    (ventureId: string, amount: number) => {
-      if (!socket) return;
+    async (ventureId: string, amount: number) => {
+      if (!socket?.connected || spendingRef.current || getGame().readyVote)
+        return;
+      spendingRef.current = true;
+      setBusy(true);
       setError(null);
-      socket.emit("venture:contribute", { roomId, ventureId, amount });
+      try {
+        await flush();
+        const result: { error: string | null } = await socket
+          .timeout(5000)
+          .emitWithAck("venture:contribute", { roomId, ventureId, amount });
+        setError(result.error);
+      } catch {
+        setError(
+          "Could not confirm the contribution. Check the Convoy Venture board before trying again.",
+        );
+        socket.emit("barter:state:request", { roomId });
+        socket.emit("venture:state:request", { roomId });
+      } finally {
+        spendingRef.current = false;
+        setBusy(false);
+      }
     },
-    [socket, roomId],
+    [flush, getGame, roomId, socket, spendingRef],
   );
 
   return {
     ventures,
+    busy,
     locked,
     error,
     clearError: () => setError(null),

@@ -1,5 +1,6 @@
 "use client";
 
+import { displayLedgerLine } from "@/lib/game/engine/lifecycle";
 import { ShipMark, ShipIcon, TextWithShipIcons } from "../../ShipVisualizer";
 
 import { useMemo, useState } from "react";
@@ -39,7 +40,7 @@ import { meritById } from "@/lib/game/merits";
 import type { GameState } from "@/lib/game/types";
 import type { CaptainLegacySummary } from "@/lib/game/legacy";
 import type { VoyageCompleteEvent } from "@/lib/realtime";
-import { cn } from "@/lib/utils";
+import { cn, formatReputation } from "@/lib/utils";
 import { Avatar, MeritIcon } from "../../shared";
 import { CaptainLegacyCard } from "../../CaptainLegacyCard";
 import { AchievementCelebration } from "../../AchievementCelebration";
@@ -317,7 +318,7 @@ export function Endgame({
     lines.push("⚓ PortMasters 2 Voyage Complete ⚓");
     lines.push("");
     lines.push(`Captain: ${mine?.displayName ?? "Unknown"}`);
-    lines.push(`Final Reputation: ${game.score}`);
+    lines.push(`Final Reputation: ${formatReputation(game.score)}`);
     lines.push(`Merchant Rating: ${rating}`);
     lines.push(`Final Funds: ${game.money} Gold`);
     lines.push("");
@@ -325,7 +326,9 @@ export function Endgame({
     lines.push(`Rounds Sailed: ${roundsSailed} / ${game.maxRounds}`);
     lines.push(`Ship Level: ${game.shipLevel}`);
     lines.push(`Orders Completed: ${game.totalOrdersCompleted}`);
-    lines.push(`Trading Profit Before Income Tax: ${netProfit} Gold`);
+    lines.push(
+      `Trading ${netProfit < 0 ? "Loss" : "Profit"} Before Income Tax: ${Math.abs(netProfit)} Gold`,
+    );
     lines.push(`Workers Employed: ${workerCount}`);
     lines.push(`Cargo Remaining: ${cargoCount}`);
     if (crowned) {
@@ -338,7 +341,7 @@ export function Endgame({
       voyageResult.standings.forEach((s, i) => {
         const medal = i < 3 ? RANK_MEDALS[i] : `${i + 1}.`;
         lines.push(
-          `${medal} ${s.displayName}: ${s.reputation} Rep, ${s.gold} Gold`,
+          `${medal} ${s.displayName}: Reputation ${formatReputation(s.reputation)}, ${s.gold} Gold`,
         );
       });
     }
@@ -418,7 +421,7 @@ export function Endgame({
           <ul className="mt-1 space-y-1">
             {decisions.map((line) => (
               <li key={line}>
-                <TextWithShipIcons>{line}</TextWithShipIcons>
+                <TextWithShipIcons>{displayLedgerLine(line)}</TextWithShipIcons>
               </li>
             ))}
           </ul>
@@ -472,7 +475,7 @@ export function Endgame({
 
       <div className="text-xl font-bold text-teal-700 dark:text-teal-300 my-2 flex items-center justify-center gap-2">
         <Trophy className="h-5 w-5" />
-        Final Reputation: {game.score}
+        Final Reputation: {formatReputation(game.score)}
       </div>
       <div className="text-lg text-emerald-600 dark:text-emerald-400 my-1 flex items-center justify-center gap-2">
         <Coins className="h-5 w-5" />
@@ -615,7 +618,7 @@ export function Endgame({
                         <div className="flex items-center gap-1 mt-0.5 text-[10px]">
                           <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300 font-semibold">
                             <Trophy className="h-2.5 w-2.5" />
-                            {s.reputation}
+                            {formatReputation(s.reputation)}
                           </span>
                           <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300 font-semibold">
                             <Coins className="h-2.5 w-2.5" />
@@ -682,8 +685,8 @@ export function Endgame({
             />
             <StatCard
               icon={netProfit >= 0 ? TrendingUp : TrendingDown}
-              label="Trading Profit"
-              value={`${netProfit >= 0 ? "+" : ""}${netProfit} G`}
+              label="Trading Profit Before Income Tax"
+              value={`${netProfit < 0 ? "Loss " : "Profit "}${Math.abs(netProfit)} Gold`}
               sub="Before Income Tax"
               tone={netProfit >= 0 ? "emerald" : "rose"}
               index={2}
@@ -774,7 +777,7 @@ export function Endgame({
                     This Voyage
                   </div>
                   <div className="text-lg font-bold text-teal-600 dark:text-teal-400 tabular-nums">
-                    {game.score}
+                    {formatReputation(game.score)}
                   </div>
                 </div>
                 <div className="text-xl text-muted-foreground/50 italic">
@@ -813,7 +816,7 @@ export function Endgame({
                 ) : (
                   <span className="inline-flex items-center gap-1 text-rose-500">
                     <ArrowDown className="h-3.5 w-3.5" />
-                    {delta} Rep below your best
+                    {Math.abs(delta)} Rep below your best
                   </span>
                 )}
               </div>
@@ -825,7 +828,7 @@ export function Endgame({
             <div className="flex items-center gap-1.5">
               <ShipIcon className="h-3.5 w-3.5 text-teal-500" />
               <span className="font-semibold text-foreground">
-                {game.currentRound}
+                {roundsSailed}
               </span>{" "}
               Rounds
             </div>
@@ -839,9 +842,9 @@ export function Endgame({
             <div className="flex items-center gap-1.5">
               <Trophy className="h-3.5 w-3.5 text-amber-500" />
               <span className="font-semibold text-foreground">
-                {game.score}
+                {formatReputation(game.score)}
               </span>{" "}
-              Rep.
+              Reputation
             </div>
             <div className="flex items-center gap-1.5">
               <Package className="h-3.5 w-3.5 text-violet-500" />

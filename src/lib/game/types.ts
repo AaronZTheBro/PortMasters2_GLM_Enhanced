@@ -17,8 +17,12 @@ import {
 
 import {
   CLASSIC_RULES,
+  openHarbor,
   type HarborForecast,
   type VoyageRules,
+  type Specialty,
+  voyageMaintenance,
+  voyageStartingGold,
 } from "./expansion";
 
 export type Phase =
@@ -51,6 +55,8 @@ export type ResourceCard = {
   totalCost: number;
   isProductCard: boolean;
   featured?: boolean;
+  workshopSupply?: boolean;
+  paidGold?: number;
   staple?: boolean;
 };
 
@@ -63,6 +69,11 @@ export type OrderCard = {
   isProductOrder: boolean;
   staple?: boolean;
   whisperIndex?: number;
+  workshop?: boolean;
+  buyer?:
+    "merchant" | "commission" | "mixed" | "speculative" | "standing" | "rival";
+  clearance?: boolean;
+  settledGold?: number;
   // Set only on the extra order a captain conjures with Broker's Favor (see
   // callBrokersFavor in engine.ts). completeOrder reads it to take the
   // Broker's commission off this order's reward; every other order leaves it
@@ -75,11 +86,19 @@ export type OrderCard = {
   isMandate?: boolean;
 };
 
-export type IntelItem = { item: string; port: string; orderId?: number };
+export type IntelItem = {
+  item: string;
+  port: string;
+  orderId?: number;
+  quantity?: number;
+  reward?: number;
+  cargo?: ResourceRef[];
+};
 
 export type Worker = {
   task: string | null;
   producedCount: number;
+  finishedAssignments?: number;
   isSkilled: boolean;
   hiredRound?: number;
 };
@@ -110,10 +129,21 @@ export type GameState = {
   rulesVersion?: number;
   seatSeed?: string;
   forecasts?: HarborForecast[];
+  specialties?: Specialty[];
+  arrivals?: string[];
+  exchangeSales?: Record<string, number>;
+  directPassageRound?: number;
+  ceramicCollection?: string[];
+  finishedSales?: string[];
+  travelingCommissionRound?: number;
+  resourcefulRecipes?: string[];
   effectUses?: Record<string, number>;
   emergencyLoanUsed?: boolean;
   producedRecipes?: string[];
   scoutedOrder?: OrderCard;
+  scoutedOrders?: OrderCard[];
+  plannedOrders?: OrderCard[];
+  workshopContracts?: { round: number; item: string; quantity: number }[];
   // The room's voyage epoch (see Room.voyageEpoch in prisma/schema.prisma),
   // stamped onto this state when the voyage is created and folded into the
   // deterministic seed so a restart (which bumps the epoch) rerolls every
@@ -134,6 +164,7 @@ export type GameState = {
   roundVatPaid?: number;
   processedLoanSettlements?: string[];
   incomeTaxPaid: number;
+  roundIncomeTaxDue?: number;
   roundRevenue: number;
   roundCosts: number;
   // Every artisan the captain employs, keyed by type (see WORKER_TYPES in
@@ -171,18 +202,9 @@ export type GameState = {
   lastBoonId: string | null;
   phase2DemandTags: string[];
   revealedIntel: IntelItem[];
-  // A price nudge for each resource in this
-  // round's Phase 1, keyed by resource name (Hemp, Silk, Tea), derived room
-  // wide from what the whole harbor bought last round (see
-  // computeHarborPulse in src/server/realtime.ts) and delivered on the same
-  // phase:advance broadcast that already carries every captain into Phase 1
-  // together. Read by genResourceCard in engine.ts as one more multiplier
-  // alongside Boons and modules; never persisted beyond the round it was
-  // delivered for, and empty on round 1 since there is no prior round to
-  // react to. A captain who buys nothing never changes anyone's pulse but
-  // their own report still contributes a zero tally, exactly like everyone
-  // else's.
+  // Price adjustments and the last completed round's raw purchases.
   harborPulse: Record<string, number>;
+  lastPurchaseTally?: { round: number; quantities: Record<string, number> };
   // Flips true once the whole
   // room's combined Reputation crosses TIDEWATCH_SURGE_THRESHOLD (see the
   // game:status handler in src/server/realtime.ts, which is where every
@@ -329,15 +351,26 @@ export function createInitialGameState(
   const cfg = difficultyConfig(difficulty);
   return {
     inventory: initialInventory(),
-    money: cfg.startingGold + startingGoldBonus,
+    money: voyageStartingGold(difficulty, rules.version) + startingGoldBonus,
     difficulty,
     rulesVersion: rules.version,
     seatSeed: undefined,
     forecasts: rules.forecasts,
+    specialties: rules.specialties,
+    arrivals: rules.arrivals,
+    exchangeSales: undefined,
+    directPassageRound: undefined,
+    ceramicCollection: undefined,
+    finishedSales: undefined,
+    travelingCommissionRound: undefined,
+    resourcefulRecipes: undefined,
     effectUses: {},
     emergencyLoanUsed: false,
     producedRecipes: [],
     scoutedOrder: undefined,
+    scoutedOrders: undefined,
+    plannedOrders: undefined,
+    workshopContracts: undefined,
     renownLevel,
     brokersFavorUsed: false,
     voyageEpoch,
@@ -355,11 +388,12 @@ export function createInitialGameState(
     vatPaid: 0,
     roundVatPaid: 0,
     incomeTaxPaid: 0,
+    roundIncomeTaxDue: undefined,
     roundRevenue: 0,
     roundCosts: 0,
     workers: emptyWorkerRoster(),
-    fixedCost: cfg.maintenance,
-    shipLevel: 0,
+    fixedCost: voyageMaintenance(difficulty, rules.version),
+    shipLevel: openHarbor({ rulesVersion: rules.version }) ? 1 : 0,
     shipUpgradeCost: [15, 25, 40],
     phase: 0,
     resourceCards: [],
@@ -376,6 +410,7 @@ export function createInitialGameState(
     phase2DemandTags: [],
     revealedIntel: [],
     harborPulse: {},
+    lastPurchaseTally: undefined,
     tidewatchSurge: false,
     equippedModules: [],
     boonChoices: [],

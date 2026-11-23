@@ -78,6 +78,7 @@ model Room {
   currentPhase String @default("0")
   phaseReleased Boolean @default(false)
   phasePulse String @default("{}")
+  // Saved barter transfers and Convoy Venture receipts for this voyage.
   barterLedger String @default("{}")
 
   // Incremented whenever the host restarts the voyage. This becomes part of

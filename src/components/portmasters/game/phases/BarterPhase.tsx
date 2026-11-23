@@ -5,7 +5,8 @@ import { poolsFor } from "@/lib/game/engine/market";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { QuantityInput } from "@/components/ui/quantity-input";
-import { COMMODITIES, ICONS, PRODUCT_PRICES } from "@/lib/game/constants";
+import { productPriceRange } from "@/lib/game/pools";
+import { COMMODITIES } from "@/lib/game/constants";
 import { getOwnedAmount } from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
@@ -40,11 +41,11 @@ import { ReadyFooter, type Barter, type PhaseSync } from "./PhaseShared";
 // value: Gold is 1 (it IS gold), commodities the midpoint of their port price
 // band, products the midpoint of their sale band. Real trade value depends on
 // ports, modules, and demand; this is only a visual hint, never shown as fact.
-function itemValueEstimate(item: string): number {
+function itemValueEstimate(item: string, rulesVersion?: number): number {
   if (item === "Gold") return 1;
   const comm = COMMODITIES[item];
   if (comm) return (comm.basePrice[0] + comm.basePrice[1]) / 2;
-  const prod = PRODUCT_PRICES[item];
+  const prod = productPriceRange(item, rulesVersion);
   if (prod) return (prod[0] + prod[1]) / 2;
   return 4;
 }
@@ -54,9 +55,10 @@ function fairnessRatio(
   offerAmount: number,
   requestItem: string,
   requestAmount: number,
+  rulesVersion?: number,
 ): number {
-  const give = itemValueEstimate(offerItem) * offerAmount;
-  const take = itemValueEstimate(requestItem) * requestAmount;
+  const give = itemValueEstimate(offerItem, rulesVersion) * offerAmount;
+  const take = itemValueEstimate(requestItem, rulesVersion) * requestAmount;
   if (take <= 0) return 0;
   return give / take;
 }
@@ -140,7 +142,7 @@ type HistoryEntry = {
   offerAmount: number;
   requestItem: string;
   requestAmount: number;
-  settledAt: number;
+  closedAt: number;
 };
 
 // Component
@@ -226,51 +228,22 @@ export function BarterPhase({
     return () => clearInterval(t);
   }, []);
 
-  // Trade history panel
-  // Tracks offers that have vanished from the board (accepted or cancelled
-  // : we can't tell the two apart here without the onFulfilled hook, so we
-  // label them as "settled", which is accurate either way).
   const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const prevOfferIdsRef = useRef<Set<string>>(new Set());
-  // Cache of the previous offers list, kept in a ref so we can look up
-  // details when an offer disappears. Updated at the end of the effect below.
-  const prevOffersCacheRef = useRef<BarterOffer[]>([]);
+  const previousOffers = useRef<BarterOffer[]>([]);
   useEffect(() => {
-    const prevIds = prevOfferIdsRef.current;
-    const liveIds = new Set(barter.offers.map((o) => o.id));
-    // Offers that were in prev but are no longer live = settled.
-    const settledIds = Array.from(prevIds).filter((id) => !liveIds.has(id));
-    if (settledIds.length > 0) {
-      // We need the offer details, which we look up from the previous
-      // offers list we cached alongside the id set.
-      const settledOffers = prevOffersCacheRef.current.filter((o) =>
-        settledIds.includes(o.id),
+    const liveIds = new Set(barter.offers.map(({ id }) => id));
+    const closed = previousOffers.current.filter(({ id }) => !liveIds.has(id));
+    previousOffers.current = barter.offers;
+    if (!closed.length) return;
+    const closedAt = Date.now();
+    queueMicrotask(() => {
+      setHistory((entries) =>
+        [...closed.map((offer) => ({ ...offer, closedAt })), ...entries].slice(
+          0,
+          4,
+        ),
       );
-      const now = Date.now();
-      if (settledOffers.length > 0) {
-        // Deferred so this isn't a synchronous setState call inside the
-        // effect body.
-        queueMicrotask(() => {
-          setHistory((h) => {
-            const next = [
-              ...settledOffers.map((o) => ({
-                id: o.id,
-                fromName: o.fromName,
-                offerItem: o.offerItem,
-                offerAmount: o.offerAmount,
-                requestItem: o.requestItem,
-                requestAmount: o.requestAmount,
-                settledAt: now,
-              })),
-              ...h,
-            ];
-            return next.slice(0, 4);
-          });
-        });
-      }
-    }
-    prevOfferIdsRef.current = liveIds;
-    prevOffersCacheRef.current = barter.offers;
+    });
   }, [barter.offers]);
 
   async function submitOffer() {
@@ -319,6 +292,7 @@ export function BarterPhase({
     offerAmount,
     requestItem,
     requestAmount,
+    game.rulesVersion,
   );
   const tone = fairnessTone(ratio);
   // Map a 0..2 ratio onto a 0..100 bar fill, clamped.
@@ -406,13 +380,14 @@ export function BarterPhase({
                 className="h-9 w-16 shrink-0"
               />
               <select
+                aria-label="Good to offer"
                 value={offerItem}
                 onChange={(e) => setOfferItem(e.target.value)}
                 className={cn(selectClass, "flex-1 min-w-0")}
               >
                 {items.map((it) => (
                   <option key={it} value={it}>
-                    {ICONS[it]} {it}
+                    {it}
                   </option>
                 ))}
               </select>
@@ -480,13 +455,14 @@ export function BarterPhase({
                 className="h-9 w-16 shrink-0"
               />
               <select
+                aria-label="Good to request"
                 value={requestItem}
                 onChange={(e) => setRequestItem(e.target.value)}
                 className={cn(selectClass, "flex-1 min-w-0")}
               >
                 {items.map((it) => (
                   <option key={it} value={it}>
-                    {ICONS[it]} {it}
+                    {it}
                   </option>
                 ))}
               </select>
@@ -616,7 +592,7 @@ export function BarterPhase({
               canPost && "pm-grad-emerald text-white",
             )}
             variant={canPost ? "default" : "secondary"}
-            disabled={!canPost || barter.busy}
+            disabled={phaseSync.waiting || !canPost || barter.busy}
             onClick={submitOffer}
           >
             <Handshake className="h-4 w-4" />
@@ -840,7 +816,7 @@ export function BarterPhase({
                         size="sm"
                         variant="destructive"
                         className="h-7 px-2.5 text-[10px] rounded shrink-0"
-                        disabled={barter.busy}
+                        disabled={phaseSync.waiting || barter.busy}
                         onClick={() => void barter.cancel(o.id)}
                       >
                         Cancel
@@ -853,7 +829,9 @@ export function BarterPhase({
                           canAfford && "pm-grad-primary text-white",
                         )}
                         variant={canAfford ? "default" : "secondary"}
-                        disabled={!canAfford || barter.busy}
+                        disabled={
+                          phaseSync.waiting || !canAfford || barter.busy
+                        }
                         onClick={() => barter.accept(o.id)}
                       >
                         <Handshake className="h-3 w-3" />
@@ -868,25 +846,25 @@ export function BarterPhase({
         )}
       </div>
 
-      {/* Recent trade activity */}
+      {/* Recently closed offers */}
       {history.length > 0 && (
         <div className="rounded-xl border border-black/5 dark:border-white/10 bg-background/40 p-3 mb-4">
           <h3 className="text-[11px] font-semibold flex items-center gap-1.5 mb-1.5 text-muted-foreground">
             <Clock className="h-3 w-3" />
-            Recent Activity
+            Recently Closed Offers
           </h3>
           <div className="space-y-1">
             {history.map((h) => {
               const giveColor = resolveColor(h.offerItem);
               const takeColor = resolveColor(h.requestItem);
-              const secs = Math.round((Date.now() - h.settledAt) / 1000);
+              const secs = Math.round((Date.now() - h.closedAt) / 1000);
               return (
                 <div
                   key={h.id}
                   className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
                 >
-                  <span className="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400 font-medium">
-                    <Handshake className="h-3 w-3" /> settled
+                  <span className="inline-flex items-center gap-0.5 text-muted-foreground font-medium">
+                    <Clock className="h-3 w-3" /> closed
                   </span>
                   <span className="font-medium text-foreground">
                     {h.fromName}

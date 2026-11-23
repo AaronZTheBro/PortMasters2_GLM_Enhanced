@@ -1,5 +1,11 @@
 // Shared ownership primitives used across engine subsystems.
-import { EFFECT, expanded } from "../expansion";
+import {
+  EFFECT,
+  expanded,
+  REBALANCE,
+  harborTrading,
+  rebalanced,
+} from "../expansion";
 import type { GameState } from "../types";
 
 export function hasModule(state: GameState, id: string): boolean {
@@ -12,6 +18,12 @@ export function shipUpgradeSurcharge(state: GameState): number {
 
 export function maintenanceSurcharge(state: GameState): number {
   const overdrive = hasModule(state, "overdrive_engine") ? 10 : 0;
+  if (rebalanced(state))
+    return overdrive
+      ? harborTrading(state)
+        ? 3
+        : REBALANCE.overdriveUpkeep
+      : 0;
   const expandedUpkeep = expanded(state)
     ? Number(hasModule(state, "convoy_pennant")) +
       Number(hasModule(state, "storm_shrouds"))
