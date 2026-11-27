@@ -27,7 +27,7 @@ import {
   WORD_ON_THE_DOCKS_REWARD,
   WORD_ON_THE_DOCKS_THRESHOLD,
 } from "@/lib/game/constants";
-import { CLASSIC_HARBOR_RULES } from "@/lib/game/expansion";
+import { CURRENT_HARBOR_RULES } from "@/lib/game/expansion";
 import { meritById } from "@/lib/game/merits";
 import { useRealtime } from "@/lib/use-realtime";
 import type { GameState } from "@/lib/game/types";
@@ -1430,7 +1430,7 @@ export function GameRoom({
   );
 
   const helpRules =
-    state.game.phase === 0 ? CLASSIC_HARBOR_RULES : state.game.rulesVersion;
+    state.game.phase === 0 ? CURRENT_HARBOR_RULES : state.game.rulesVersion;
   const helpSpecialties = state.game.specialties;
 
   const view = (

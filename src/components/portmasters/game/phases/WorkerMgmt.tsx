@@ -114,6 +114,7 @@ function WorkerList({
   resolveColor: (item: string) => string | undefined;
 }) {
   if (!list.length) return null;
+  const hasIdleArtisan = list.some((worker) => worker.task === null);
   return (
     <div
       className={cn(
@@ -189,7 +190,7 @@ function WorkerList({
                   </div>
                 ) : (
                   <div className="mt-1 text-[10px] text-muted-foreground italic">
-                    Idle : assign a task below
+                    {tasks.length ? "Idle · Assign a task below" : "Idle"}
                   </div>
                 )}
               </div>
@@ -214,9 +215,6 @@ function WorkerList({
         {tasks.map((t) => {
           const { inputs, saved } = quoteRecipe(game, t);
           const materials = Object.entries(inputs);
-          // Decorative shortage check: highlight the button red if the
-          // player doesn't currently hold the materials for this task. The
-          // engine will still refuse the assignment, this just previews it.
           const short = materials.some(
             ([m, a]) => (game.inventory[m] || 0) < a,
           );
@@ -225,13 +223,19 @@ function WorkerList({
               key={t}
               size="sm"
               variant="secondary"
-              title={short ? "Not enough materials" : `Assign: produce ${t}`}
+              title={
+                !hasIdleArtisan
+                  ? "All artisans of this type are working"
+                  : short
+                    ? "Not enough materials"
+                    : `Assign: produce ${t}`
+              }
               className={cn(
                 "pm-artisan-chip min-h-11 flex-wrap px-2.5 text-xs rounded border gap-1",
                 short &&
                   "!bg-rose-500/10 !border-rose-500/40 !text-rose-600 dark:!text-rose-300",
               )}
-              disabled={locked}
+              disabled={locked || short || !hasIdleArtisan}
               onClick={() => act((g, l) => assignTask(g, type, t, l))}
             >
               <ItemIcon item={t} className="size-4" />

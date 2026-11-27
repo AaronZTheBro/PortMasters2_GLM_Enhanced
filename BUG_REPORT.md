@@ -326,3 +326,34 @@ November 22, 2026. Traveling Commission, Storm Dividend, and Market Momentum now
 Market Day guidance now identifies the price adjustment and its rounding without promising a lot at the arrival port. The source reference audit reached all 143 application modules and found no empty source, public, or test folders. The three unreferenced commodity PNG files are archived original artwork identified in the README.
 
 The effect sweep checked 21,978 Boon and module configurations across rules versions 4 and 5, including 87,912 order quotes and settlements. The full verification command passed 76 unit tests, one multiplayer integration test, lint, TypeScript checking, and the production build. Chrome verified a negative Reputation produced by a Broker order in the room and endgame, plus the freight tooltip and player guide.
+
+## Original economy and saved voyage review
+
+November 26, 2026. The checkout already contained the restored opening in version 5. Version 6 keeps the original six lots, six buyers, opening cargo, ship level, recipes, charter timing, ordinary price ranges, starting funds and base maintenance. The comparison uses the playable engine from commit `773df1c`. The founding rules in `3d8e57e` also use six opening buyers and value raw orders at five Gold per unit plus a buyer premium.
+
+1. The Broker could sell a commission that the captain had already seen in the previous round. New voyages carry the announced terms forward, including reports earned before a Signal Lantern swap. Paid whispers and Farsight draw from the remaining buyers. Market Day announces a mixed buyer seeking the featured material. Its order and the import lot occupy existing slots.
+2. The purchase screen labeled the cheapest bundle as the best deal without considering what the captain needed. It also counted limited discounts more than once in its budget projection. The screen now shows actual lot savings, cash, outstanding bills and remaining offers.
+3. Artisan Boons previously used a fixed cash threshold even when the captain already employed the required artisan or could hire one at the discounted wage. New drafts use actual payroll and worker eligibility. The last Shipyard draft also omits modules whose effects can no longer pay during the voyage.
+4. The disconnect timer could delete an unattended room and both personal saves. An unattended voyage now keeps its seats and checkpoint. Empty lobbies still expire. Active play retains the departure window for absent captains.
+5. The price history filter reset when new observations arrived, and an initial quote appeared stable. Price history now preserves the selection and distinguishes a first quote from a trend. Final standings capture the previous best before awarding Reputation. Activity and Chronicle views render recorded losses in words and associate voyage events with their harbor.
+6. The balance simulator skipped escorts in the archived game because the original quote omitted a later field. It now reads the original raid exposure, wages, recipes and prices. Each solo captain can earn the harbor race and generate Harbor Pulse. Recovery pairs each affected run with the same strategy and seed without the loss.
+
+### Measurements
+
+The default comparison ran 150 shared seeds on each difficulty. It covered 1,800 opening boards and 14,400 scripted voyages including recovery controls. For the best feasible combination of sales from starting stock, both the original engine and version 6 returned 15, 47 and 76 Gold at the tenth, fiftieth and ninetieth percentiles on every difficulty. The median was one order. Version 4 medians were 102, 111 and 121 Gold respectively, with three orders.
+
+For raw, artisan and mixed trading respectively, version 6 solvency was 100%, 100% and 99% on Fair Winds, 99%, 87% and 89% on Open Waters, and 55%, 44% and 52% on Monsoon Season. The corresponding median trading cash margins after cargo costs, freight and wages were 205, 403 and 306 Gold on Fair Winds, 318, 432.5 and 452.5 Gold on Open Waters, and 366, 422 and 433.5 Gold on Monsoon Season. These margins exclude upkeep, escort costs and the value of stock still in the hold.
+
+Of 27,382 immediate Exchange resale quotes observed by the arbitrage strategy, 25,843 lost Gold, 623 broke even and 916 made a profit. The Fair Winds artisan policy led on 110 of 150 seeds, down from 121 under version 5. In Monsoon Season, 43 of 150 recovery voyages finished after losing up to 35 Gold in round four, compared with 78 matched controls. These figures describe the seven scripted strategies. Human play and barter can change the outcome.
+
+### Verification
+
+Across 360 replayed voyages on saved versions 1 through 5, all 12,172 sampled game states matched the previous release. The server restart test restored each rules version through the room socket and personal save API after the process was left unattended beyond the departure window. It then completed final settlement. In separate production browser checks, archived saves from versions 1 through 5 reloaded, traded, hired an escort and settled their final round. Their closing Gold, Reputation, VAT and Income Tax matched the previous release. The order effect sweep exercised 65,934 combinations of quotes, settlement and retries using each Boon and each module individually and in pairs.
+
+Two captains completed eight rounds of Fair Winds in production Chrome. They exchanged Hemp for Silk, used a Broker order after reloading, produced Linen Clothes, sold at the Exchange, installed modules and saw the same standings. Finch finished with 296 Reputation and 205 Gold. Wren finished with 266 Reputation and 57 Gold. The purchase and trading screens fit desktop, portrait phone and landscape phone viewports.
+
+An older harbor that had yet to set sail could bring its free version 4 ship level and opening balance into the new rules. The first launch now initializes the versioned opening from the new room plan and the captain’s Renown allowance. In production Chrome, two captains launched from a saved version 4 waiting room on each difficulty. All six opened at ship level zero with six lots and six buyers. Opening Gold and upkeep were 100 and 15 on Fair Winds, 100 and 18 on Open Waters, and 90 and 22 on Monsoon Season.
+
+`npm run verify` passed lint, 90 unit tests, the server integration test, type checking and the production build. The separate balance command was `npm run test:balance:harbor` with its default 150 seeds.
+
+The source reference review found no unreachable application modules or empty folders under source, public assets, tests or Prisma. The three original commodity PNG files are documented archive assets. The review removed misleading price estimates and a redundant order draw. Rendered regression checks cover signed prices and Reputation, settlement, endgame, historical ledger text and player guides across the saved rules versions.

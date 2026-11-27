@@ -301,6 +301,7 @@ export const api = {
       }>;
       activities: Array<{
         id: string;
+        roomId: string | null;
         type: string;
         detail: string | null;
         createdAt: string;

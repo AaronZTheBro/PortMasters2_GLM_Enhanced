@@ -10,17 +10,22 @@ import {
   PRODUCTS,
   RESOURCES,
   WAGES,
+  TIDEWATCH_SURGE_THRESHOLD,
 } from "../src/lib/game/constants";
 import { DIFFICULTY_ORDER } from "../src/lib/game/difficulty";
 import {
   CLASSIC_HARBOR_RULES,
   CLASSIC_RULES,
+  REVISED_HARBOR_RULES,
+  CURRENT_HARBOR_RULES,
   OPEN_HARBOR_RULES,
   REBALANCED_RULES,
+  classicHarbor,
   harborTrading,
   openHarbor,
 } from "../src/lib/game/expansion";
 import {
+  buildClassicHarborRules,
   buildCurrentVoyageRules,
   buildOpenHarborRules,
   buildVoyageRules,
@@ -51,6 +56,7 @@ import {
   startPhase3,
 } from "../src/lib/game/engine/lifecycle";
 import {
+  applyTidewatchSurge,
   buyWorkshopSupply,
   poolsFor,
   purchaseCard,
@@ -59,6 +65,7 @@ import {
   upcomingBuyer,
 } from "../src/lib/game/engine/market";
 import {
+  claimWordOnTheDocksReward,
   chooseWorkshopContract,
   completeOrder,
   purchaseIntel,
@@ -86,6 +93,11 @@ import {
   quoteRecipe,
 } from "../src/lib/game/engine/workers";
 
+import {
+  computeHarborPulse,
+  tallyPurchasesByResource,
+} from "../src/lib/game/harborPulse";
+
 const strategies = [
   "raw",
   "artisan",
@@ -105,12 +117,17 @@ const versions = [
   REBALANCED_RULES,
   OPEN_HARBOR_RULES,
   CLASSIC_HARBOR_RULES,
+  REVISED_HARBOR_RULES,
+  CURRENT_HARBOR_RULES,
 ].filter((version) =>
   selectedVersion === undefined
     ? version !== REBALANCED_RULES
     : version === selectedVersion,
 );
-assert.ok(versions.length, "Choose a saved rules version from 1, 3, 4, or 5.");
+assert.ok(
+  versions.length,
+  "Choose a saved rules version from 1, 3, 4, 5, 6, or 7.",
+);
 
 const modern = {
   createInitialGameState,
@@ -136,6 +153,23 @@ const modern = {
   hireEscort,
   resolvePirateAttack,
   getCardFinalCost,
+  dueGold: (state: GameState) => quoteDues(state).total,
+  upgradeGold: (state: GameState) => quoteShipUpgrade(state).cost,
+  nextPulse: (state: GameState) =>
+    computeHarborPulse(
+      tallyPurchasesByResource(state),
+      poolsFor(state).resources,
+    ),
+  applyTidewatchSurge,
+  claimWordOnTheDocksReward,
+  surgeThreshold: TIDEWATCH_SURGE_THRESHOLD,
+  canProduce,
+  voyageRecipe,
+  quoteRecipe,
+  recipeMaterialCost,
+  wages: WAGES,
+  materialPrices: COMMODITIES,
+  productPriceRange,
 };
 
 function loadOriginal(): typeof modern {
@@ -147,7 +181,14 @@ function loadOriginal(): typeof modern {
     const localRequire = createRequire(
       join(source, "src/lib/game", "types.ts"),
     );
+    const core = localRequire("./engine/core.ts");
+    const pricing = localRequire("./engine/pricing.ts");
+    const market = localRequire("./engine/market.ts");
+    const pirates = localRequire("./engine/pirates.ts");
+    const pulse = localRequire("./harborPulse.ts");
+    const constants = localRequire("./constants.ts");
     return Object.assign(
+      {},
       localRequire("./types.ts"),
       ...[
         "market",
@@ -158,6 +199,33 @@ function loadOriginal(): typeof modern {
         "pirates",
         "pricing",
       ].map((name) => localRequire(`./engine/${name}.ts`)),
+      {
+        dueGold: (state: GameState) =>
+          state.fixedCost +
+          core.maintenanceSurcharge(state) +
+          Object.keys(state.workers).reduce(
+            (total, type) => total + pricing.workerWagesFor(state, type),
+            0,
+          ),
+        upgradeGold: (state: GameState) =>
+          state.shipUpgradeCost[state.shipLevel] +
+          core.shipUpgradeSurcharge(state),
+        quotePirateWaters: (state: GameState) => ({
+          ...pirates.quotePirateWaters(state),
+          raidLoss: Math.max(0, state.money),
+        }),
+        nextPulse: (state: GameState) =>
+          pulse.computeHarborPulse(market.tallyPurchasesByResource(state)),
+        surgeThreshold: constants.TIDEWATCH_SURGE_THRESHOLD,
+        canProduce: localRequire("./pools.ts").canProduce,
+        voyageRecipe: (item: string) => constants.RECIPES[item],
+        quoteRecipe: (_state: GameState, item: string) => ({
+          inputs: constants.RECIPES[item].materials,
+        }),
+        wages: constants.WAGES,
+        materialPrices: constants.COMMODITIES,
+        productPriceRange: (item: string) => constants.PRODUCT_PRICES[item],
+      },
     );
   } finally {
     rmSync(source, { recursive: true, force: true });
@@ -170,11 +238,6 @@ const engineFor = (version: number) =>
 
 const bump = (target: Record<string, number>, key: string, amount = 1) =>
   (target[key] = (target[key] ?? 0) + amount);
-const mid = (item: string, game: GameState) => {
-  const [lo, hi] =
-    COMMODITIES[item]?.basePrice ?? productPriceRange(item, game.rulesVersion);
-  return (lo + hi) / 2;
-};
 const preferences: Record<Strategy, string[]> = {
   raw: [
     "silk_market_charter",
@@ -225,11 +288,12 @@ function run(
   version: number,
   seed: number,
   strategy: Strategy,
+  cashShock = strategy === "recovery",
 ) {
   const random = Math.random;
   Math.random = createRng(`measured harbor ${seed}:legacy actions`);
   try {
-    return play(difficulty, version, seed, strategy);
+    return play(difficulty, version, seed, strategy, cashShock);
   } finally {
     Math.random = random;
   }
@@ -242,7 +306,9 @@ function rulesFor(
   seed: number,
 ) {
   if (version === CLASSIC_RULES) return;
-  if (version === CLASSIC_HARBOR_RULES)
+  if (version === CLASSIC_HARBOR_RULES || version === REVISED_HARBOR_RULES)
+    return buildClassicHarborRules(roomSeed, 1, difficulty, version);
+  if (version === CURRENT_HARBOR_RULES)
     return buildCurrentVoyageRules(roomSeed, 1, difficulty);
   if (version === OPEN_HARBOR_RULES)
     return buildOpenHarborRules(roomSeed, 1, difficulty);
@@ -298,7 +364,7 @@ function measureOpening(
     return {
       net,
       sales,
-      netAfterBills: net - game.fixedCost,
+      netLessBaseUpkeep: net - game.fixedCost,
       buyers: choices.length,
     };
   });
@@ -315,7 +381,7 @@ function measureOpening(
       version,
       seeds,
       netGoldP10P50P90: spread("net"),
-      netAfterBillsP10P50P90: spread("netAfterBills"),
+      netLessBaseUpkeepP10P50P90: spread("netLessBaseUpkeep"),
       ordersFilledP10P50P90: spread("sales"),
       buyerCountP10P50P90: spread("buyers"),
     }),
@@ -327,6 +393,7 @@ function play(
   version: number,
   seed: number,
   strategy: Strategy,
+  cashShock: boolean,
 ) {
   const {
     createInitialGameState,
@@ -351,7 +418,26 @@ function play(
     hireEscort,
     resolvePirateAttack,
     getCardFinalCost,
+    dueGold,
+    upgradeGold,
+    nextPulse,
+    applyTidewatchSurge,
+    claimWordOnTheDocksReward,
+    surgeThreshold,
+    canProduce,
+    voyageRecipe,
+    quoteRecipe,
+    recipeMaterialCost,
+    wages,
+    materialPrices,
+    productPriceRange,
   } = engineFor(version);
+  const mid = (item: string, state: GameState) => {
+    const [lo, hi] =
+      materialPrices[item]?.basePrice ??
+      productPriceRange(item, state.rulesVersion);
+    return (lo + hi) / 2;
+  };
   const roomSeed = `measured harbor ${seed}`;
   const ctx = { roomSeed, seedBase: `${roomSeed}:captain` };
   const game = createInitialGameState(
@@ -366,6 +452,15 @@ function play(
     effectValues: Record<string, number> = {},
     drafted: Record<string, number> = {};
   const modules = preferences[strategy];
+  let shockPaid = 0;
+  let cashBeforeShock: number | undefined;
+  let recoveredByRoundFive = false;
+  let escorts = 0;
+  let escortGold = 0;
+  let brokerFees = 0;
+  let wagesPaid = 0;
+  let belowBillsBeforeTrading = 0;
+  let lowestCashBeforeTrading = game.money;
   const craft =
     strategy === "artisan" || strategy === "mixed" || strategy === "recovery";
   let shortages = 0,
@@ -374,11 +469,13 @@ function play(
     raidLoss = 0,
     raids = 0,
     exchangeNet = 0,
+    clearanceNet = 0,
     resaleNet = 0,
     resaleAttempts = 0,
     resaleProfitRounds = 0,
     resaleLotsChecked = 0,
     resaleLotsPositive = 0,
+    resaleLotsEven = 0,
     cargoCosts = 0,
     freight = 0,
     orderRevenue = 0,
@@ -386,6 +483,7 @@ function play(
   const accumulatedUnsold: Record<string, number> = {};
   const peakUnsold: Record<string, number> = {};
   const finalRoundStock: Record<string, number> = {};
+  let finalInventoryBeforeSales: Record<string, number> = {};
   const chooseModule = () => {
     const choices = game._draftChoices ?? [];
     const desired = modules
@@ -420,6 +518,11 @@ function play(
     const previousRevenue = game.totalRevenue;
     completeOrder(game, order.id, logs);
     if (game.completedOrders.includes(order.id)) {
+      if (game._pendingDocksClaim) {
+        claimWordOnTheDocksReward(game, logs);
+        game._pendingDocksClaim = undefined;
+      }
+      if (game.score >= surgeThreshold) applyTidewatchSurge(game, logs);
       orderRevenue += game.totalRevenue - previousRevenue;
       freight += game.totalCosts - previousCost;
       bump(
@@ -442,9 +545,12 @@ function play(
   for (let round = 1; round <= game.maxRounds && !game.gameOver; round++) {
     const logs: string[] = [];
     rounds++;
-    if (strategy === "recovery" && round === 4)
-      game.money = Math.floor(game.money * 0.55);
-    const reserve = quoteDues(game).total;
+    if (cashShock && round === 4) {
+      cashBeforeShock = game.money;
+      shockPaid = Math.max(0, Math.min(35, game.money));
+      game.money -= shockPaid;
+    }
+    const reserve = dueGold(game);
     if (game.money < reserve * 1.5) liquidity++;
     if (round === 1) {
       startBoonDrafting(game, logs);
@@ -480,8 +586,17 @@ function play(
 
     const initialStock = { ...game.inventory };
     const current = poolsFor(game);
-    const desired = upcomingBuyer(game, ctx, round + 1, openHarbor(game))
-      ?.resources[0]?.type;
+    const advertisedProducts = new Set(
+      (version === CLASSIC_RULES
+        ? []
+        : [
+            upcomingBuyer(game, ctx, round + 1),
+            ...(game.equippedModules.some(({ id }) => id === "signal_lantern")
+              ? [upcomingBuyer(game, ctx, round + 1, true)]
+              : []),
+          ]
+      ).flatMap((order) => order?.resources.map(({ type }) => type) ?? []),
+    );
     const candidates = current.products.filter(
       (item) =>
         !["mixed", "recovery"].includes(strategy) ||
@@ -509,13 +624,13 @@ function play(
           0,
         );
         return (
-          (desired === item ? 42 : 0) +
+          (advertisedProducts.has(item) ? 42 : 0) +
           (crew ? 18 : 0) -
           missing -
           game.inventory[item] * 26 +
           (mid(item, game) -
             recipeMaterialCost(item, game.rulesVersion) -
-            WAGES[worker]) *
+            wages[worker]) *
             0.25
         );
       };
@@ -526,7 +641,7 @@ function play(
         strategy,
       ) &&
       game.money > reserve + (strategy === "information" ? 15 : 10) &&
-      (version !== CLASSIC_HARBOR_RULES ||
+      (!classicHarbor(game) ||
         (strategy === "information" && game.money > reserve * 3) ||
         !game.scoutedOrders?.some((order) =>
           order.resources.every(
@@ -548,11 +663,13 @@ function play(
       const tip = held.sort(
         (a, b) =>
           mid(b, game) *
-            (b in COMMODITIES ? Math.min(4, game.inventory[b]) : 1) -
+            (b in materialPrices ? Math.min(4, game.inventory[b]) : 1) -
           mid(a, game) *
-            (a in COMMODITIES ? Math.min(4, game.inventory[a]) : 1),
+            (a in materialPrices ? Math.min(4, game.inventory[a]) : 1),
       )[0];
+      const cash = game.money;
       purchaseIntel(game, logs, tip);
+      brokerFees += cash - game.money;
     }
     const requirements = recipe ? quoteRecipe(game, recipe).inputs : {};
     const known = [
@@ -591,10 +708,12 @@ function play(
         0,
       ) - getCardFinalCost(game, card);
     if (strategy === "arbitrage" && harborTrading(game)) {
-      resaleLotsChecked += game.resourceCards.length;
-      resaleLotsPositive += game.resourceCards.filter(
-        (card) => immediateResale(card) > 0,
-      ).length;
+      for (const card of game.resourceCards) {
+        const net = immediateResale(card);
+        resaleLotsChecked++;
+        if (net > 0) resaleLotsPositive++;
+        if (net === 0) resaleLotsEven++;
+      }
     }
     const scoreLot = (card: ResourceCard) => {
       const cost = getCardFinalCost(game, card);
@@ -612,7 +731,7 @@ function play(
             ? Math.min(qty, Math.max(0, prepared.quantity - held))
             : 0;
           const target =
-            type in COMMODITIES
+            type in materialPrices
               ? strategy === "mixed"
                 ? held > 0
                   ? 2
@@ -639,17 +758,31 @@ function play(
       );
     };
     const remaining = [...game.resourceCards];
-    if (
-      version === CLASSIC_HARBOR_RULES &&
-      !recipe &&
-      strategy !== "arbitrage"
-    ) {
-      const revealed = new Set(
-        game.revealedIntel.map(({ orderId }) => orderId),
-      );
+    if (harborTrading(game) && !recipe && strategy !== "arbitrage") {
       const leads = [
         ...(game.scoutedOrders ?? []),
-        ...(game.plannedOrders ?? []).filter(({ id }) => revealed.has(id)),
+        ...game.revealedIntel.flatMap((tip, index): OrderCard[] => {
+          const cargo =
+            tip.cargo ??
+            (tip.quantity ? [{ type: tip.item, required: tip.quantity }] : []);
+          if (!cargo.length || tip.reward === undefined) return [];
+          return [
+            {
+              id: tip.orderId ?? 200 + index,
+              whisperIndex: index,
+              resources: cargo,
+              totalItems: cargo.reduce(
+                (sum, { required = 0 }) => sum + required,
+                0,
+              ),
+              isProductOrder: cargo.some(
+                ({ type }) => !(type in materialPrices),
+              ),
+              demandPort: tip.port,
+              reward: tip.reward,
+            },
+          ];
+        }),
       ];
       let best: { value: number; cards: ResourceCard[] } | undefined;
       for (const lead of leads) {
@@ -757,7 +890,11 @@ function play(
         }
       }
     }
+    if (game.money < dueGold(game)) belowBillsBeforeTrading++;
+    lowestCashBeforeTrading = Math.min(lowestCashBeforeTrading, game.money);
     startPhase2(game, ctx, logs);
+    if (round === game.maxRounds)
+      finalInventoryBeforeSales = { ...game.inventory };
     const orders = game.customerCards.slice().sort((a, b) => {
       if (
         game.modifierFlags.market_momentum &&
@@ -797,15 +934,16 @@ function play(
       peakUnsold[product] = Math.max(peakUnsold[product] ?? 0, held);
     }
     if (harborTrading(game)) {
-      const target =
-        quoteDues(game).total * (strategy === "recovery" ? 2.7 : 1.4);
+      const target = dueGold(game) * (strategy === "recovery" ? 2.7 : 1.4);
       const goods = [...PRODUCTS, ...RESOURCES]
         .filter((item) => game.inventory[item] > 0)
         .sort((a, b) => mid(b, game) - mid(a, game));
       for (const item of goods) {
         const held = game.inventory[item];
         const surplus =
-          item in COMMODITIES ? Math.max(0, held - 4) : Math.max(0, held - 1);
+          item in materialPrices
+            ? Math.max(0, held - 4)
+            : Math.max(0, held - 1);
         const amount =
           game.money < target ? Math.max(surplus, Math.min(held, 2)) : surplus;
         const quote = quotePortExchange(game, item, amount);
@@ -814,7 +952,7 @@ function play(
           bump(sells, "exchange");
         }
       }
-    } else {
+    } else if (version === REBALANCED_RULES) {
       const item = current.products.find(
         (good) =>
           game.inventory[good] > 0 &&
@@ -823,7 +961,9 @@ function play(
             round === game.maxRounds),
       );
       if (item && quoteClearance(game, item, 1)) {
+        const cash = game.money;
         sellClearance(game, item, Math.min(2, game.inventory[item]), logs);
+        clearanceNet += game.money - cash;
         bump(sells, "clearance");
       }
     }
@@ -839,22 +979,25 @@ function play(
     if (
       strategy !== "risk" &&
       risk.escortCost <= risk.raidLoss * risk.chance * 1.25
-    )
+    ) {
+      const before = game.money;
       hireEscort(game, logs);
-    else {
+      escorts++;
+      escortGold += before - game.money;
+    } else {
       const cash = game.money;
       resolvePirateAttack(game, logs);
       if (cash > game.money) raids++;
       raidLoss += cash - game.money;
     }
     finishSettlement(game, logs);
+    wagesPaid += game.workerWages;
     if (game.gameOver) break;
     if (round < game.maxRounds) {
       if (
         game.shipLevel < 3 &&
         game.money >
-          quoteShipUpgrade(game).cost +
-            reserve * (strategy === "recovery" ? 4 : 2.5)
+          upgradeGold(game) + reserve * (strategy === "recovery" ? 4 : 2.5)
       )
         upgradeShip(game, logs);
       if (game.shipLevel > 0) startModuleDrafting(game);
@@ -874,7 +1017,12 @@ function play(
         }
       }
     }
+    const pulse = nextPulse(game);
     endRound(game, logs);
+    game.harborPulse = pulse;
+    if (round === 5 && cashBeforeShock !== undefined)
+      recoveredByRoundFive =
+        game.money >= Math.max(cashBeforeShock, dueGold(game));
   }
   return {
     game,
@@ -882,16 +1030,27 @@ function play(
     effectValues,
     drafted,
     shortages,
+    shockPaid,
+    cashBeforeShock,
+    recoveredByRoundFive,
+    escorts,
+    escortGold,
+    brokerFees,
+    wagesPaid,
+    belowBillsBeforeTrading,
+    lowestCashBeforeTrading,
     liquidity,
     rounds,
     raidLoss,
     raids,
     exchangeNet,
+    clearanceNet,
     resaleNet,
     resaleAttempts,
     resaleProfitRounds,
     resaleLotsChecked,
     resaleLotsPositive,
+    resaleLotsEven,
     cargoCosts,
     freight,
     orderRevenue,
@@ -899,6 +1058,7 @@ function play(
     accumulatedUnsold,
     peakUnsold,
     finalRoundStock,
+    finalInventoryBeforeSales,
   };
 }
 
@@ -908,6 +1068,7 @@ for (const difficulty of DIFFICULTY_ORDER) {
     const groups = new Map(
       strategies.map((strategy) => [strategy, [] as ReturnType<typeof run>[]]),
     );
+    const unshockedRecovery: ReturnType<typeof run>[] = [];
     const soloTopScores: Record<string, number> = {};
     for (let seed = 0; seed < seeds; seed++) {
       const outcomes = strategies.map((strategy) => ({
@@ -916,6 +1077,7 @@ for (const difficulty of DIFFICULTY_ORDER) {
       }));
       for (const { strategy, result } of outcomes)
         groups.get(strategy)!.push(result);
+      unshockedRecovery.push(run(difficulty, version, seed, "recovery", false));
       const solvent = outcomes.filter(
         ({ result }) => result.game.phase === "endgame",
       );
@@ -932,6 +1094,22 @@ for (const difficulty of DIFFICULTY_ORDER) {
           (results.reduce((sum, result) => sum + value(result), 0) / seeds) *
             100,
         ) / 100;
+      const margin = (r: ReturnType<typeof run>) =>
+        r.orderRevenue -
+        r.freight +
+        r.exchangeNet +
+        r.clearanceNet -
+        r.cargoCosts;
+      const median = (
+        value: (result: ReturnType<typeof run>) => number,
+        sample = results,
+      ) => {
+        const sorted = sample.map(value).sort((a, b) => a - b);
+        const middle = Math.floor(sorted.length / 2);
+        return sorted.length % 2
+          ? sorted[middle]
+          : (sorted[middle - 1] + sorted[middle]) / 2;
+      };
       const sumMap = (
         read: (result: ReturnType<typeof run>) => Record<string, number>,
       ) => {
@@ -941,15 +1119,17 @@ for (const difficulty of DIFFICULTY_ORDER) {
             bump(total, key, value);
         return total;
       };
-      const builds: Record<string, number> = {};
-      for (const { game } of results)
-        bump(
-          builds,
-          game.equippedModules
+      const builds = new Map<string, typeof results>();
+      for (const result of results) {
+        const key =
+          result.game.equippedModules
             .map(({ id }) => id)
             .sort()
-            .join(", ") || "no modules",
-        );
+            .join(", ") || "no modules";
+        const sample = builds.get(key);
+        if (sample) sample.push(result);
+        else builds.set(key, [result]);
+      }
       const remaining = Object.fromEntries(
         PRODUCTS.map((item) => [
           item,
@@ -959,22 +1139,41 @@ for (const difficulty of DIFFICULTY_ORDER) {
       const reachedFinalTrade = results.filter(
         ({ rounds, game }) => rounds === game.maxRounds,
       );
-      const finalRoundStockBeforeExchange = Object.fromEntries(
-        PRODUCTS.flatMap((item) => {
-          const total = reachedFinalTrade.reduce(
-            (sum, result) => sum + (result.finalRoundStock[item] ?? 0),
-            0,
-          );
-          return total > 0
-            ? [
-                [
-                  item,
-                  Math.round((total / reachedFinalTrade.length) * 100) / 100,
-                ],
-              ]
-            : [];
-        }),
+      const meanFinalStock = (
+        read: (result: ReturnType<typeof run>) => Record<string, number>,
+      ) => {
+        const totals: Record<string, number> = {};
+        for (const result of reachedFinalTrade)
+          for (const [item, amount] of Object.entries(read(result)))
+            if (amount > 0) bump(totals, item, amount);
+        return Object.fromEntries(
+          Object.entries(totals).map(([item, total]) => [
+            item,
+            Math.round((100 * total) / reachedFinalTrade.length) / 100,
+          ]),
+        );
+      };
+      const exposed = results.filter(
+        (result) => result.cashBeforeShock !== undefined,
       );
+      const recovery =
+        strategy === "recovery"
+          ? {
+              fixedShockGold: 35,
+              reachedShock: exposed.length,
+              paidFullShock: exposed.filter(({ shockPaid }) => shockPaid === 35)
+                .length,
+              regainedCashAndOneBillByEndOfRoundFive: exposed.filter(
+                ({ recoveredByRoundFive }) => recoveredByRoundFive,
+              ).length,
+              solventWithShock: results.filter(
+                ({ game }) => game.phase === "endgame",
+              ).length,
+              solventWithoutShock: unshockedRecovery.filter(
+                ({ game }) => game.phase === "endgame",
+              ).length,
+            }
+          : undefined;
       console.log(
         JSON.stringify({
           difficulty,
@@ -987,9 +1186,17 @@ for (const difficulty of DIFFICULTY_ORDER) {
           soloTopScores: soloTopScores[strategy] ?? 0,
           shortages: avg((r) => r.shortages),
           lowLiquidity: avg((r) => r.liquidity),
+          roundsBelowBillsBeforeTrading: avg((r) => r.belowBillsBeforeTrading),
+          medianLowestCashBeforeTrading: median(
+            (r) => r.lowestCashBeforeTrading,
+          ),
           rounds: avg((r) => r.rounds),
           raidLoss: avg((r) => r.raidLoss),
           raids: avg((r) => r.raids),
+          escorts: avg((r) => r.escorts),
+          escortGold: avg((r) => r.escortGold),
+          brokerFees: avg((r) => r.brokerFees),
+          recovery,
           exchangeNet: avg((r) => r.exchangeNet),
           resaleNet: avg((r) => r.resaleNet),
           resaleAttempts: avg((r) => r.resaleAttempts),
@@ -1002,22 +1209,43 @@ for (const difficulty of DIFFICULTY_ORDER) {
             (sum, result) => sum + result.resaleLotsPositive,
             0,
           ),
+          resaleLotsEven: results.reduce(
+            (sum, result) => sum + result.resaleLotsEven,
+            0,
+          ),
           cargoCosts: avg((r) => r.cargoCosts),
           freightAndAudits: avg((r) => r.freight),
-          tradingCashMargin: avg(
-            (r) => r.orderRevenue - r.freight + r.exchangeNet - r.cargoCosts,
-          ),
+          tradingCashMargin: avg(margin),
+          medianTradingCashMargin: median(margin),
+          wagesPaid: avg((r) => r.wagesPaid),
+          medianMarginAfterWages: median((r) => margin(r) - r.wagesPaid),
           crewUnits: avg((r) => r.crewUnits),
-          distinctBuilds: Object.keys(builds).length,
-          commonBuilds: Object.entries(builds)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 3),
+          distinctBuilds: builds.size,
+          commonBuilds: [...builds]
+            .sort((a, b) => b[1].length - a[1].length)
+            .slice(0, 3)
+            .map(([modules, sample]) => ({
+              modules,
+              voyages: sample.length,
+              solvent: sample.filter(({ game }) => game.phase === "endgame")
+                .length,
+              medianMarginAfterWages: median(
+                (r) => margin(r) - r.wagesPaid,
+                sample,
+              ),
+            })),
           sales: sumMap((r) => r.sells),
           effects: sumMap((r) => r.effectValues),
+          boonPicks: sumMap((r) => r.drafted),
           remaining,
           reachedFinalTrade: reachedFinalTrade.length,
-          finalRoundStockBeforeExchange,
-          unsoldBeforeExchange: sumMap((r) => r.accumulatedUnsold),
+          finalInventoryBeforeSales: meanFinalStock(
+            (r) => r.finalInventoryBeforeSales,
+          ),
+          finalProductStockBeforeFallback: meanFinalStock(
+            (r) => r.finalRoundStock,
+          ),
+          unsoldBeforeFallback: sumMap((r) => r.accumulatedUnsold),
           peakUnsold: Object.fromEntries(
             PRODUCTS.flatMap((item) => {
               const peak = Math.max(

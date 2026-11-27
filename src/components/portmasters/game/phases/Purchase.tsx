@@ -24,7 +24,7 @@ import {
 import type { GameState } from "@/lib/game/types";
 import { cn, formatGoldProceeds } from "@/lib/utils";
 import { itemColorResolver } from "@/lib/use-color-preference";
-import { Anchor, Check, Wallet, Star } from "lucide-react";
+import { Anchor, Check, Wallet } from "lucide-react";
 import { motion } from "framer-motion";
 import type { PublicUser } from "@/lib/api";
 import { Term } from "../../Term";
@@ -96,33 +96,6 @@ function portAccent(port: string) {
     }
   );
 }
-
-// Deal quality : classifies a card's price as great / good / fair based on
-// the discount from its base totalCost. Purely decorative.
-type DealQuality = "great" | "good" | "fair";
-
-function dealQuality(finalCost: number, totalCost: number): DealQuality {
-  if (totalCost <= 0) return "fair";
-  const discount = (totalCost - finalCost) / totalCost;
-  if (discount >= 0.2) return "great";
-  if (discount > 0) return "good";
-  return "fair";
-}
-
-const DEAL_BADGE: Record<DealQuality, { label: string; className: string }> = {
-  great: {
-    label: "★ Great Deal",
-    className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  },
-  good: {
-    label: "Good Price",
-    className: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
-  },
-  fair: {
-    label: "Fair Price",
-    className: "bg-muted text-muted-foreground",
-  },
-};
 
 function MarketPriceReference({
   game,
@@ -206,61 +179,6 @@ function PricePill({
   );
 }
 
-// Budget indicator : shows available gold vs total unpurchased card costs,
-// plus an available deal counter. Purely informational.
-function BudgetBar({
-  money,
-  totalCardCosts,
-  dealsAvailable,
-}: {
-  money: number;
-  totalCardCosts: number;
-  dealsAvailable: number;
-}) {
-  const pct =
-    totalCardCosts > 0 ? Math.min(100, (money / totalCardCosts) * 100) : 100;
-  const canAffordAll = money >= totalCardCosts;
-  return (
-    <div className="mb-3.5 flex items-center gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3.5 py-2.5">
-      <Wallet className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-      <div className="min-w-0 flex-1">
-        <div className="mb-1 flex items-baseline justify-between text-[11px]">
-          <span className="font-semibold">Your Budget</span>
-          <span
-            className={cn(
-              "text-muted-foreground",
-              !canAffordAll && "text-rose-600 dark:text-rose-400",
-            )}
-          >
-            {money}💰 available · {totalCardCosts}💰 total cards
-          </span>
-        </div>
-        <div className="h-2 overflow-hidden rounded-full bg-muted">
-          <motion.div
-            className={cn(
-              "h-full rounded-full",
-              canAffordAll
-                ? "bg-gradient-to-r from-emerald-400 to-emerald-600"
-                : "bg-gradient-to-r from-amber-400 to-rose-500",
-            )}
-            initial={{ width: 0 }}
-            animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.6, ease: "easeOut" }}
-          />
-        </div>
-      </div>
-      <div className="shrink-0 border-l border-black/10 pl-3 text-center dark:border-white/10">
-        <div className="text-[9px] tracking-wide text-muted-foreground/70">
-          Deals
-        </div>
-        <div className="text-base font-bold leading-none text-amber-600 dark:text-amber-400">
-          {dealsAvailable}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function Purchase({
   game,
   act,
@@ -290,24 +208,9 @@ export function Purchase({
       : undefined;
   const due = quoteDues(game).total;
 
-  // Aggregate stats for the budget bar and best deal highlight. These are
-  // derived from existing game state without changing game logic.
-  const unpurchasedCards = game.resourceCards.filter(
-    (c) => !game.purchasedCards.includes(c.id),
-  );
-  const totalCardCosts = unpurchasedCards.reduce(
-    (sum, c) => sum + getCardFinalCost(game, c),
-    0,
-  );
-  const dealsAvailable = unpurchasedCards.length;
-  const bestDealId =
-    unpurchasedCards.length > 0
-      ? unpurchasedCards.reduce((best, c) => {
-          const cost = getCardFinalCost(game, c);
-          const bestCost = getCardFinalCost(game, best);
-          return cost < bestCost ? c : best;
-        }).id
-      : null;
+  const remainingLots = game.resourceCards.filter(
+    (card) => !game.purchasedCards.includes(card.id),
+  ).length;
 
   return (
     <div>
@@ -343,11 +246,14 @@ export function Purchase({
           </span>
         </div>
       )}
-      <BudgetBar
-        money={game.money}
-        totalCardCosts={totalCardCosts}
-        dealsAvailable={dealsAvailable}
-      />
+      <div className="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3.5 py-2.5 text-sm">
+        <Wallet className="size-4 text-amber-600 dark:text-amber-400" />
+        <strong>{game.money} Gold available</strong>
+        <span>Current wages and maintenance: {due} Gold</span>
+        <span>
+          {remainingLots} {remainingLots === 1 ? "lot" : "lots"} available
+        </span>
+      </div>
       {rebalanced(game) && (
         <div className="mb-4 grid gap-3 lg:grid-cols-2">
           {stapleItem && stapleQuote && (
@@ -403,10 +309,11 @@ export function Purchase({
                     ? "This round's supply lot was purchased."
                     : "You have the ingredients for one assignment."}
               </p>
-              <p className="text-xs text-muted-foreground">
-                {harborTrading(game) && "Missing ingredients cost a premium. "}
-                Wages and maintenance due this round total {due} Gold.
-              </p>
+              {harborTrading(game) && (
+                <p className="text-xs text-muted-foreground">
+                  Missing ingredients cost a premium.
+                </p>
+              )}
               {supply && (
                 <Button
                   size="sm"
@@ -425,13 +332,11 @@ export function Purchase({
       <MarketPriceReference game={game} colorFor={resolveColor} />
       <div className="pm-decision-grid">
         {game.resourceCards.map((c, index) => {
-          const finalCost = getCardFinalCost(game, c);
           const breakdown = explainCardPrice(game, c);
+          const finalCost = breakdown.final;
           const purchased = game.purchasedCards.includes(c.id);
           const canAfford = game.money >= finalCost && !purchased;
-          const quality = dealQuality(finalCost, c.totalCost);
           const accent = portAccent(c.port);
-          const isBestDeal = c.id === bestDealId && !purchased;
           return (
             <motion.div
               key={c.id}
@@ -447,9 +352,7 @@ export function Purchase({
                 accent.ring,
                 purchased
                   ? "border-emerald-500/30 bg-emerald-500/[0.04]"
-                  : isBestDeal
-                    ? "border-amber-500/40 bg-amber-500/[0.04] ring-1 ring-amber-500/30"
-                    : "border-black/10 dark:border-white/10 bg-background/50",
+                  : "border-black/10 dark:border-white/10 bg-background/50",
               )}
             >
               {/* Port accent bar */}
@@ -459,12 +362,6 @@ export function Purchase({
                   📍 {c.port}
                 </span>
                 <div className="flex items-center gap-1.5">
-                  {isBestDeal && (
-                    <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">
-                      <Star className="h-2.5 w-2.5" />
-                      Best
-                    </span>
-                  )}
                   {purchased && (
                     <motion.span
                       initial={{ scale: 0, rotate: -180 }}
@@ -485,7 +382,7 @@ export function Purchase({
                       : c.workshopSupply
                         ? "Workshop supply"
                         : c.featured
-                          ? "Forecast lot"
+                          ? "Featured lot"
                           : c.isProductCard
                             ? "Finished good"
                             : "Raw material"}
@@ -537,21 +434,11 @@ export function Purchase({
                         💰 Total: {finalCost} Gold
                       </span>
                     </Term>
-                    <div className="flex items-center gap-1.5">
-                      {finalCost < c.totalCost && (
-                        <span className="text-muted-foreground text-[10px]">
-                          (Was {c.totalCost})
-                        </span>
-                      )}
-                      <span
-                        className={cn(
-                          "text-[9px] font-semibold px-1.5 py-0.5 rounded-full",
-                          DEAL_BADGE[quality].className,
-                        )}
-                      >
-                        {DEAL_BADGE[quality].label}
+                    {finalCost < c.totalCost && (
+                      <span className="text-xs text-teal-700 dark:text-teal-300">
+                        Save {c.totalCost - finalCost} Gold
                       </span>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>

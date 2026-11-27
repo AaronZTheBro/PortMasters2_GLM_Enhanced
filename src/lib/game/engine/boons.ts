@@ -1,6 +1,7 @@
 // Drafts round boons and voyage modules from the current content pool.
 import { RECIPES, type Boon, type Module } from "../constants";
 import {
+  revisedHarbor,
   expanded,
   openHarbor,
   harborTrading,
@@ -12,13 +13,19 @@ import {
 import { CERAMICS } from "../harbor-catalog";
 import { describeForecast } from "../forecast";
 import { voyageRandom } from "../voyage-rng";
-import { incomeTaxDue, quoteDues, quoteShipUpgrade } from "./pricing";
+import {
+  getHireCost,
+  incomeTaxDue,
+  quoteDues,
+  quoteShipUpgrade,
+} from "./pricing";
 import {
   canProduce,
   isOceanCargo,
   unlockedBoons,
   unlockedModules,
   unlockedProducts,
+  unlockedWorkerTypes,
   voyageRecipe,
 } from "../pools";
 import { weightedPick } from "../rng";
@@ -98,6 +105,27 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
     );
   const compatible = (boon: Boon) => {
     if (!updated) return true;
+    if (
+      revisedHarbor(state.rulesVersion) &&
+      ["resourceful_crew", "guild_turnover", "master_apprentice"].includes(
+        boon.id,
+      )
+    ) {
+      if (state.currentRound >= state.maxRounds) return false;
+      const draft = { ...state, modifierFlags: boon.modifiers };
+      const budget = state.money - quoteDues(draft).total;
+      return unlockedWorkerTypes(
+        state.difficulty,
+        state.currentRound,
+        state.rulesVersion,
+      ).some(({ id, tier }) => {
+        if (boon.id === "guild_turnover" && !tier) return false;
+        return (
+          (boon.id !== "master_apprentice" && state.workers[id].length > 0) ||
+          getHireCost(draft, id) <= budget
+        );
+      });
+    }
     if (harbor && boon.id === "resourceful_crew")
       return state.currentRound < state.maxRounds;
     if (harbor && boon.id === "guild_turnover")
@@ -353,7 +381,21 @@ function rollModuleChoices(state: GameState, reroll = false): Module[] {
     state.currentRound,
     state.rulesVersion,
     state.specialties,
-  ).filter((m) => !hasModule(state, m.id));
+  ).filter(({ id }) => {
+    if (hasModule(state, id)) return false;
+    if (
+      !revisedHarbor(state.rulesVersion) ||
+      state.currentRound + 1 !== state.maxRounds
+    )
+      return true;
+    if (id === "traveling_commission")
+      return state.travelingCommissionRound === state.maxRounds;
+    if (id === "collectors_seal")
+      return Boolean(state.ceramicCollection?.length);
+    if (id === "storm_dividend")
+      return state.directPassageRound === state.currentRound;
+    return !["artisans_workshop", "wage_ledger", "signal_lantern"].includes(id);
+  });
   const picks: Module[] = [];
   const random = voyageRandom(state, reroll ? "moduleReroll" : "moduleDraft");
   if (harborTrading(state)) {

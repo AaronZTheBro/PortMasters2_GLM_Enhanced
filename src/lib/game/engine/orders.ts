@@ -666,10 +666,9 @@ export function startPhase2(
     `\n🤝=== Round ${state.currentRound} · Phase 2: Trade Manifest ===`,
   );
   state.seatSeed ??= ctx.seedBase;
-  const orderPools = poolsFor(state);
-  const { cards, random: orderRng } = ordinaryOrders(state, ctx);
   if (classicHarbor(state)) {
-    state.customerCards = (state.plannedOrders ?? cards).map((order) => {
+    const planned = state.plannedOrders ?? ordinaryOrders(state, ctx).cards;
+    state.customerCards = planned.map((order) => {
       const index = state.revealedIntel.findIndex(
         ({ orderId }) => orderId === order.id,
       );
@@ -677,6 +676,8 @@ export function startPhase2(
     });
     state.plannedOrders = undefined;
   } else {
+    const orderPools = poolsFor(state);
+    const { cards, random: orderRng } = ordinaryOrders(state, ctx);
     state.customerCards = cards;
     const orderCount = cards.length;
     const extraOrders = state.modifierFlags.extra_order ?? 0;

@@ -16,6 +16,7 @@ import {
 import { describeForecast } from "../forecast";
 import {
   expanded,
+  revisedHarbor,
   forecastFor,
   openHarbor,
   classicHarbor,
@@ -499,7 +500,12 @@ function classicHarborOrders(state: GameState, ctx: GameContext, random: Rng) {
     ...genProductOrder(random, announced ? pools : founding, announced, 1),
     buyer: "commission",
   };
-  const first = pick(random, STAPLE_CHOICES);
+  const stapleDraw = pick(random, STAPLE_CHOICES);
+  const event = forecastFor(state);
+  const first =
+    revisedHarbor(state.rulesVersion) && event?.kind === "market" && event.item
+      ? event.item
+      : stapleDraw;
   const types = [
     first,
     pick(
@@ -543,7 +549,6 @@ function classicHarborOrders(state: GameState, ctx: GameContext, random: Rng) {
     }, 0);
   }
   const id = cards.length - 1;
-  const event = forecastFor(state);
   const imports = pools.products.filter(
     (item) => !founding.products.includes(item),
   );
@@ -651,9 +656,9 @@ export function ordinaryOrders(state: GameState, ctx: GameContext) {
   const random = createRng(
     `${ctx.seedBase}:V${state.voyageEpoch}:R${state.currentRound}:orders`,
   );
-  const pools = poolsFor(state);
   if (classicHarbor(state))
     return { cards: classicHarborOrders(state, ctx, random), random };
+  const pools = poolsFor(state);
   if (openHarbor(state))
     return { cards: harborOrders(state, ctx, random, pools), random };
   const count = marketCountsFor(state.difficulty, state.currentRound).order;
@@ -881,25 +886,47 @@ export function startPhase1(
     `${ctx.seedBase}:V${state.voyageEpoch}:R${state.currentRound}:market`,
   );
   if (classicHarbor(state)) {
-    state.plannedOrders = ordinaryOrders(state, ctx).cards;
-    state.resourceCards = classicHarborLots(
-      state,
-      ctx,
-      marketRng,
-      state.plannedOrders,
-    );
+    const orders = ordinaryOrders(state, ctx).cards;
+    const previous = state.announcedBuyers;
+    const announced =
+      revisedHarbor(state.rulesVersion) &&
+      previous?.round === state.currentRound
+        ? previous.buyers
+        : [];
+    for (const buyer of announced) orders[buyer.id] = buyer;
+    state.plannedOrders = orders;
+    state.resourceCards = classicHarborLots(state, ctx, marketRng, orders);
     state.revealedIntel = [];
     state.phase2DemandTags = [
       ...marketPools.resources,
       ...marketPools.products,
     ];
-    const orders = state.plannedOrders;
     const reports = state.currentRound > 1 ? [orders[0]] : [];
     if (
       state.currentRound > 1 &&
       (state.difficulty === "fair_winds" || state.currentRound >= 3)
     )
       reports.push(orders[2]);
+    if (revisedHarbor(state.rulesVersion)) {
+      reports.push(...announced.filter((buyer) => !reports.includes(buyer)));
+      state.announcedBuyers = undefined;
+      if (state.currentRound < state.maxRounds) {
+        const round = state.currentRound + 1;
+        const next = ordinaryOrders(
+          { ...state, modifierFlags: {}, currentRound: round },
+          ctx,
+        ).cards;
+        const hasLantern = state.equippedModules.some(
+          ({ id }) => id === "signal_lantern",
+        );
+        const publicBuyer =
+          forecastFor(state, round)?.kind === "market" ? next[2] : next[1];
+        state.announcedBuyers = {
+          round,
+          buyers: hasLantern ? [publicBuyer, next[3]] : [publicBuyer],
+        };
+      }
+    }
     if (state.modifierFlags.coastal_forecast)
       reports.push(
         ...orders.filter((order) => !reports.includes(order)).slice(0, 2),
@@ -1068,6 +1095,12 @@ export function upcomingBuyer(
   round: number,
   additional = false,
 ): OrderCard | undefined {
+  if (revisedHarbor(state.rulesVersion)) {
+    const announced = state.announcedBuyers;
+    return announced?.round === round
+      ? announced.buyers[Number(additional)]
+      : undefined;
+  }
   if (classicHarbor(state)) {
     if (
       round <= state.currentRound ||

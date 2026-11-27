@@ -55,6 +55,7 @@ export type VoyageStanding = {
   renownLevel: number;
   renownTitle: string;
   xpGained: number;
+  previousBestScore?: number;
   leveledUp: boolean;
   brokersFavorUnlocked: boolean;
   // Captain's Merit ids (see src/lib/game/merits.ts) newly earned by this

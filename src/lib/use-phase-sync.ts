@@ -1,7 +1,5 @@
 "use client";
 
-import { voyageMaintenance, voyageStartingGold } from "./game/expansion";
-
 import {
   useCallback,
   useEffect,
@@ -11,9 +9,13 @@ import {
 } from "react";
 import type { Socket } from "socket.io-client";
 import type { GameContext, GameState } from "@/lib/game/types";
-import { restartGame, startBoonDrafting } from "@/lib/game/engine";
+import { restartGame } from "@/lib/game/engine";
 import { needsStarterModule } from "./game/engine/boons";
-import { canAdvancePhase, nextPhase } from "@/lib/game/engine/lifecycle";
+import {
+  canAdvancePhase,
+  nextPhase,
+  startVoyage,
+} from "@/lib/game/engine/lifecycle";
 import { renownStartingGoldBonus } from "@/lib/game/legacy";
 import { normalizeDifficulty } from "@/lib/game/difficulty";
 import { api } from "@/lib/api";
@@ -91,21 +93,7 @@ export function usePhaseSync(
       act((state, logs) => {
         while (rank(state.currentRound, String(state.phase)) < target) {
           if (state.phase === 0) {
-            if (data.rules) {
-              state.money +=
-                voyageStartingGold(state.difficulty, data.rules.version) -
-                voyageStartingGold(state.difficulty, state.rulesVersion);
-              state.rulesVersion = data.rules.version;
-              state.forecasts = data.rules.forecasts;
-              state.arrivals = data.rules.arrivals;
-              state.specialties = data.rules.specialties;
-              state.fixedCost = voyageMaintenance(
-                state.difficulty,
-                data.rules.version,
-              );
-            }
-            state.seatSeed = ctx.seedBase;
-            startBoonDrafting(state, logs);
+            startVoyage(state, ctx, data.rules, startingGoldBonus, logs);
             continue;
           }
           if (!canAdvancePhase(state)) break;
@@ -116,7 +104,7 @@ export function usePhaseSync(
       });
       void flush().catch(() => {});
     },
-    [act, ctx, flush, getGame, reloadGame],
+    [act, ctx, flush, getGame, reloadGame, startingGoldBonus],
   );
 
   useEffect(() => {

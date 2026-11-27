@@ -1,5 +1,6 @@
 import {
   CLASSIC_RULES,
+  revisedHarbor,
   expanded,
   classicHarbor,
   harborTrading,
@@ -22,6 +23,7 @@ import {
 
 import {
   APP_NAME,
+  helperReputationCapFor,
   BROKERS_FAVOR_UNLOCK_LEVEL,
   BROKERS_FAVOR_PAYOUT_CAP,
   WORD_ON_THE_DOCKS_THRESHOLD,
@@ -183,7 +185,7 @@ export function guideTabs(
               callout: {
                 tone: "info",
                 text: classic
-                  ? "Start with six lots and six ordinary buyers. Later ports rotate imports into existing slots. Check the port merchant before buying and look ahead to next round's announced commission. The Workshop Supplier sells missing inputs for one recipe per round and closes in the final round."
+                  ? "Start with six lots and six ordinary buyers. Later ports rotate imports into existing slots. Check the port merchant before buying and look ahead to next round's announced buyer. The Workshop Supplier sells missing inputs for one recipe per round and closes in the final round."
                   : "The Workshop Supplier sells missing inputs for one recipe per round and closes in the final round.",
               },
             }
@@ -211,7 +213,7 @@ export function guideTabs(
                   ? "Ordinary buyers usually pay more than the Exchange. Buying cargo just to resell it at the Exchange usually loses Gold."
                   : "Ordinary buyers offer better deals for prepared cargo. Standing contracts keep the same terms for two rounds. Mixed orders want distinct materials, and speculative buyers pay extra for a less predictable request.",
                 classic
-                  ? "Coastal Forecast reveals two more buyers. Merchants Converge replaces one buyer with a known commission. Signal Lantern reveals a second commission a round ahead."
+                  ? "Coastal Forecast reveals two more buyers. Merchants Converge replaces one buyer with a known commission. Signal Lantern reveals an additional finished good commission a round ahead."
                   : "During buying, each Broker whisper adds one buyer and reveals the terms. Coastal Forecast and Merchants Converge can reveal buyers for the current round. Signal Lantern reveals one commission a round ahead.",
               ],
             },
@@ -281,13 +283,18 @@ export function guideTabs(
                   : "Choose a good to ask about. Each revealed buyer shows the exact quantity, port, and gross reward before trading.",
               ]
             : []),
+          ...(revisedHarbor(rulesVersion)
+            ? [
+                "Before Market Day, the announced buyer wants the featured material and one other material. Other rounds announce a finished good commission. Reports stay visible when their round opens, even if you replace Signal Lantern. Paid whispers reveal other buyers.",
+              ]
+            : []),
           "The usual price is 5 Gold for one rumor. Broker's Network charges 2 Gold for up to two, and Ocean Interpreter adds one when available.",
           "Farsight reveals one rumor for free, with no chance of a Broker leak. Modules add rumors only to paid purchases.",
           `At Renown Level ${BROKERS_FAVOR_UNLOCK_LEVEL}, Broker's Favor can add one buyer per voyage for a chosen quantity of cargo you hold. The Broker limits the payout before freight to ${BROKERS_FAVOR_PAYOUT_CAP} Gold, so check the buyer's quote before trading.`,
           ...(harbor
             ? [
                 classic
-                  ? "You can buy one bundle per round. You pay only for buyers you have yet to discover."
+                  ? "You can buy one bundle per round while hidden buyers remain. Check how many buyers the bundle reveals before paying."
                   : "Pay for one bundle per round. It adds buyers without replacing any existing buyer.",
               ]
             : []),
@@ -353,7 +360,7 @@ export function guideTabs(
           "Any captain with enough Gold can lend it to you on the spot; it's in your hands immediately",
           "Repay it any time before the voyage's last round ends, or it's taken from your funds automatically and handed to your lender",
           "Still short when the voyage finishes? That unpaid loan is what bankrupts you, not the round it was borrowed in",
-          "Lending Gold raises your own Reputation, scaled to how much you lent",
+          `Lending and successful backing share a limit of ${helperReputationCapFor(difficulty)} Reputation per voyage. Larger loans earn more until you reach that limit.`,
         ],
       },
       {
@@ -364,7 +371,7 @@ export function guideTabs(
         bullets: [
           "A third captain can back one: pledge some of their own Gold as a safety net for the lender, escrowed the instant they pledge it",
           "Only spent if the loan actually defaults, and only up to whatever was pledged; the lender still eats any shortfall past that",
-          "Never called on when the loan is repaid in full? The whole pledge comes back, plus a small Reputation bonus for the risk paying off",
+          "Full repayment returns the pledge and awards Reputation up to your remaining limit for helping captains.",
           "One backer per loan; you can't back a loan you're the lender or borrower on yourself",
         ],
       },
@@ -486,11 +493,16 @@ export function guideTabs(
           ? "Start with one module slot and choose a module before your first Boon. Upgrade in Phase 4 for up to three slots."
           : "Phase 4: Upgrade your ship to unlock module slots.",
         bullets: [
+          ...(revisedHarbor(rulesVersion)
+            ? [
+                "At the last Shipyard before the final round, the draft leaves out modules that would have no time to affect the voyage.",
+              ]
+            : []),
           "A module stays equipped for the voyage until you replace it. Each upgrade opens one slot, up to three.",
           "You can reroll the remaining module draft once per round for free. Boon rerolls cost 10 Gold once per round. A redraw can include a previous choice.",
           ...(harbor
             ? [
-                "Install or replace one module per Shipyard visit.",
+                "Install or replace one module per Shipyard visit before the final round.",
                 "Silk Market Charter and Buyer's Festival can boost the same sale. Open Hold rewards mixed raw orders. Market Momentum rewards an ordinary raw sale followed by a finished good order.",
                 "Resourceful Crew saves inputs for distinct recipes. Collector's Seal rewards distinct ceramics. Storm Dividend rewards a direct crossing in the following round.",
               ]
@@ -500,17 +512,16 @@ export function guideTabs(
       {
         icon: "⭐",
         title: "Captain's Legacy",
-        intro:
-          "An eligible voyage banks final Reputation as Renown XP when the harbor concludes, win or lose.",
+        intro: `At voyage end, an eligible captain earns Renown XP equal to positive final Reputation times ${cfg.renownXpMultiplier}, rounded to the nearest whole point.`,
         bullets: [
           "Renown is permanent: it survives a restart and carries into every future voyage, in any harbor, unlike Gold, cargo, and ship level",
-          "Each Renown level grants a small Gold bonus at the start of your next fresh voyage",
+          "Each level above the first adds 3 starting Gold, up to 60 Gold per voyage",
           "A captain who cannot repay a loan at the end of the voyage is bankrupt and cannot win the Sea Master crown",
           "Check your current Renown level, title, and Sea Master crowns any time from the Lobby",
         ],
         callout: {
           tone: "success",
-          text: "An honest bankruptcy still banks final Reputation as Renown XP, even though that captain cannot win the crown.",
+          text: "A bankrupt captain can still earn Renown XP from positive Reputation.",
         },
       },
     ],
@@ -664,7 +675,7 @@ export function tipsGroups(
       title: "Borrowing and Lending",
       items: [
         `Repay a loan as soon as you can afford it, instead of waiting for it to be deducted automatically at Round ${cfg.rounds}`,
-        "Lending Gold raises your own Reputation, so helping a captain who can clearly repay you is rarely a bad trade",
+        `Lending and successful backing can earn up to ${helperReputationCapFor(difficulty)} Reputation in total this voyage.`,
         "Watch how much you've lent out across the voyage; it's still your Gold until it's actually repaid",
       ],
     },
@@ -672,7 +683,7 @@ export function tipsGroups(
       icon: "🛡️",
       title: "Backing Strategy",
       items: [
-        "Back a loan you'd have happily lent Gold on yourself; you're taking on the same risk and earn Reputation if the loan is fully repaid",
+        "If the loan is fully repaid, your pledge comes back and can earn Reputation up to your shared limit for helping captains.",
         "Only pledge what you can afford to lose outright, the same rule as lending directly",
         "A loan to a captain who's clearly about to turn a profit is a safer backing bet than one taken late in the voyage with little runway left to repay it",
       ],
@@ -787,7 +798,7 @@ ${mandates.length ? `<p style="font-size:13px;margin-top:10px">📜 On round${ma
       title: "⚠️ The artisan trap",
       content: `<p>Artisans turn raw materials into valuable finished goods and collect wages at each Phase 3. That part is simple. What catches most new players is this:</p>
 <div style="background:#C62828;color:#fff;border-radius:6px;padding:12px;margin:12px 0;text-align:center;font-size:14px;font-weight:bold;line-height:1.7">
-  Assign a task this round.<br>Production lands at settlement, after this round's order phase.${classic ? " Check next round's announced commission before assigning a task. Use the Port Exchange only if no suitable buyer appears. Assignments close in the final round." : harbor ? " Use forecasts, Broker buyers, or the Port Exchange to plan how to sell. Assignments close in the final round." : rebalanced({ rulesVersion }) ? " Check next round's featured buyer or book a personal workshop contract. Surplus can go to the Clearance Buyer. The workshop closes for assignments in the final round." : ""}
+  Assign a task this round.<br>Production lands at settlement, after this round's order phase.${classic ? " Check next round's announced cargo before assigning a task. Use the Port Exchange only if no suitable buyer appears. Assignments close in the final round." : harbor ? " Use forecasts, Broker buyers, or the Port Exchange to plan how to sell. Assignments close in the final round." : rebalanced({ rulesVersion }) ? " Check next round's featured buyer or book a personal workshop contract. Surplus can go to the Clearance Buyer. The workshop closes for assignments in the final round." : ""}
 </div>
 <p style="font-size:13px;color:var(--foreground);line-height:1.6">Artisans available during this voyage are ${workerCopy}. Every hired artisan charges wages <strong>each round</strong>, even when idle. Hire only when you can cover payroll alongside maintenance.</p>`,
     },
@@ -827,7 +838,7 @@ ${cfg.brokerCorruption ? `<p>In these waters a broker can be corrupt. The rumor 
   <li>Hire artisans only when you can cover their wages for more than the current round.</li>
   <li>Ship upgrades add a module slot and reduce base freight. Keep enough Gold for later bills.</li>
   <li>Caught short by pirates or a bad round? Ask the harbor for a loan before you assume the voyage is over.</li>
-  <li>An eligible finished voyage banks final Reputation as Renown XP, win or lose. Check your Captain's Legacy from the Lobby.</li>
+  <li>An eligible finished voyage earns Renown XP from positive Reputation, including after bankruptcy. Check your Captain's Legacy from the Lobby.</li>
   <li><kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">Ctrl+S</kbd> saves, <kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">Ctrl/Cmd+K</kbd> opens Quick Actions, and <kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">F1</kbd> opens the full guide.</li>
 </ul>
 <div style="background:#E8F5E9;color:#17212a;border:2px solid #4CAF50;border-radius:8px;padding:12px;text-align:center;margin-top:14px">

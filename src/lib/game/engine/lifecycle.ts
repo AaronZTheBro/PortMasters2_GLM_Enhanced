@@ -189,6 +189,28 @@ export function restartGame(
   showWelcome(state, logs);
 }
 
+export function startVoyage(
+  state: GameState,
+  ctx: GameContext,
+  rules: VoyageRules | undefined,
+  startingGoldBonus: number,
+  logs: string[],
+) {
+  if (state.phase !== 0) return;
+  if (rules && state.currentRound === 1) {
+    const opening = createInitialGameState(
+      startingGoldBonus,
+      state.renownLevel,
+      state.voyageEpoch,
+      state.difficulty,
+      rules,
+    );
+    Object.assign(state, opening);
+  }
+  state.seatSeed = ctx.seedBase;
+  startBoonDrafting(state, logs);
+}
+
 export function showWelcome(state: GameState, logs: string[]) {
   state.phase = 0;
   logs.push("=".repeat(50));

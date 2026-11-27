@@ -11,10 +11,13 @@ import {
 import { DIFFICULTY_ORDER, type Difficulty } from "../src/lib/game/difficulty";
 import {
   CLASSIC_HARBOR_RULES,
+  CURRENT_HARBOR_RULES,
+  REVISED_HARBOR_RULES,
   OPEN_HARBOR_RULES,
   REBALANCED_RULES,
 } from "../src/lib/game/expansion";
 import {
+  buildClassicHarborRules,
   buildCurrentVoyageRules,
   buildOpenHarborRules,
   buildForecasts,
@@ -35,6 +38,7 @@ import {
   type OrderCard,
 } from "../src/lib/game/types";
 import {
+  draftBoons,
   finalizeModuleSwap,
   handleModuleSelect,
   selectBoon,
@@ -47,6 +51,7 @@ import {
   displayLedgerLine,
   finishSettlement,
   snapToCheckpoint,
+  startVoyage,
   startPhase3,
 } from "../src/lib/game/engine/lifecycle";
 import {
@@ -131,6 +136,9 @@ test("Saved rule versions retain their recipes, prices, forecasts and settlement
       { version: 2, forecasts: buildForecasts(ctx.roomSeed, 10, difficulty) },
       buildVoyageRules(ctx.roomSeed, 10, difficulty),
       buildOpenHarborRules(ctx.roomSeed, 10, difficulty),
+      buildClassicHarborRules(ctx.roomSeed, 10, difficulty),
+      buildClassicHarborRules(ctx.roomSeed, 10, difficulty, REVISED_HARBOR_RULES),
+      buildCurrentVoyageRules(ctx.roomSeed, 10, difficulty),
     ];
     for (const rules of plans) {
       const data = rules.version === 2 ? rules.forecasts : rules;
@@ -329,10 +337,14 @@ test("Starter choice unlocks the Boon draft and later Shipyard swaps consume one
   assert.equal(restored.phase, 4);
 });
 
-for (const makeGame of [game, classicHarborGame]) {
+for (const [version, makeGame] of [
+  [4, game],
+  [5, classicHarborGame],
+  [6, currentHarborGame],
+] as const) {
   test(
     "Silk modifiers are additive and capped, and match the ledger" +
-      (makeGame === classicHarborGame ? " under version 5" : ""),
+      ` under version ${version}`,
     () => {
       const state = makeGame();
       const logs: string[] = [];
@@ -363,10 +375,14 @@ for (const makeGame of [game, classicHarborGame]) {
   );
 }
 
-for (const makeGame of [game, classicHarborGame]) {
+for (const [version, makeGame] of [
+  [4, game],
+  [5, classicHarborGame],
+  [6, currentHarborGame],
+] as const) {
   test(
     "Open Hold and Market Momentum trigger separately from the Exchange" +
-      (makeGame === classicHarborGame ? " under version 5" : ""),
+      ` under version ${version}`,
     () => {
       const state = makeGame();
       state.phase = 2;
@@ -412,10 +428,14 @@ for (const makeGame of [game, classicHarborGame]) {
   );
 }
 
-for (const makeGame of [game, classicHarborGame]) {
+for (const [version, makeGame] of [
+  [4, game],
+  [5, classicHarborGame],
+  [6, currentHarborGame],
+] as const) {
   test(
     "Traveling Commission, Storm Dividend and Collector's Seal preserve their timing across saves" +
-      (makeGame === classicHarborGame ? " under version 5" : ""),
+      ` under version ${version}`,
     () => {
       const state = makeGame("monsoon");
       state.phase = 2;
@@ -471,10 +491,14 @@ for (const makeGame of [game, classicHarborGame]) {
   );
 }
 
-for (const makeGame of [game, classicHarborGame]) {
+for (const [version, makeGame] of [
+  [4, game],
+  [5, classicHarborGame],
+  [6, currentHarborGame],
+] as const) {
   test(
     "Resourceful Crew saves two distinct recipes and Workshop Supplier honors the same inputs" +
-      (makeGame === classicHarborGame ? " under version 5" : ""),
+      ` under version ${version}`,
     () => {
       const state = makeGame();
       equip(state, "artisans_workshop");
@@ -703,45 +727,48 @@ function classicHarborGame(difficulty: Difficulty = "fair_winds") {
     1,
     10,
     difficulty,
-    buildCurrentVoyageRules(ctx.roomSeed, 10, difficulty),
+    buildClassicHarborRules(ctx.roomSeed, 10, difficulty),
   );
   state.seatSeed = ctx.seedBase;
   return state;
 }
 
-test("The original opening uses the founding catalog, six lots, and six buyers", () => {
-  for (const [index, difficulty] of DIFFICULTY_ORDER.entries()) {
-    const state = classicHarborGame(difficulty);
-    assert.equal(state.rulesVersion, CLASSIC_HARBOR_RULES);
-    assert.equal(state.money, [100, 100, 90][index]);
-    assert.equal(state.fixedCost, [15, 18, 22][index]);
-    assert.equal(state.maxRounds, [8, 12, 16][index]);
-    assert.deepEqual(state.arrivals?.length, state.maxRounds);
-    state.arrivals?.forEach((port, round) =>
-      assert.ok(unlockedPorts(difficulty, round + 1).includes(port)),
-    );
-    assert.deepEqual(state.shipUpgradeCost, [15, 25, 40]);
-    assert.equal(state.shipLevel, 0);
-    assert.equal(state.specialties, undefined);
-    startBoonDrafting(state, []);
-    assert.equal(state.phase, 5);
-    assert.equal(state.equippedModules.length, 0);
-    startPhase1(state, ctx, []);
-    const original = createInitialGameState(0, 1, 10, difficulty);
-    startPhase1(original, ctx, []);
-    assert.deepEqual(state.resourceCards, original.resourceCards);
-    assert.equal(state.resourceCards.length, 6);
-    assert.deepEqual(poolsFor(state).products, poolsFor(original).products);
-    assert.deepEqual(poolsFor(state).resources, ["Hemp", "Silk", "Tea"]);
-    startPhase2(state, ctx, []);
-    startPhase2(original, ctx, []);
-    assert.equal(state.customerCards.length, 6);
-    assert.deepEqual(
-      state.customerCards.map(({ buyer: _classification, ...buyer }) => buyer),
-      original.customerCards,
-    );
-  }
-});
+for (const version of [CLASSIC_HARBOR_RULES, REVISED_HARBOR_RULES, CURRENT_HARBOR_RULES]) {
+  test(`Rules version ${version} preserves the original opening lots, buyers and prices`, () => {
+    for (const [index, difficulty] of DIFFICULTY_ORDER.entries()) {
+      const rules = buildClassicHarborRules(ctx.roomSeed, 10, difficulty, version);
+      const state = createInitialGameState(0, 1, 10, difficulty, rules);
+      state.seatSeed = ctx.seedBase;
+      assert.equal(state.money, [100, 100, 90][index]);
+      assert.equal(state.fixedCost, [15, 18, 22][index]);
+      assert.equal(state.maxRounds, [8, 12, 16][index]);
+      assert.deepEqual(state.arrivals?.length, state.maxRounds);
+      state.arrivals?.forEach((port, round) =>
+        assert.ok(unlockedPorts(difficulty, round + 1).includes(port)),
+      );
+      assert.deepEqual(state.shipUpgradeCost, [15, 25, 40]);
+      assert.equal(state.shipLevel, 0);
+      assert.equal(state.specialties, undefined);
+      startBoonDrafting(state, []);
+      assert.equal(state.phase, 5);
+      assert.equal(state.equippedModules.length, 0);
+      startPhase1(state, ctx, []);
+      const original = createInitialGameState(0, 1, 10, difficulty);
+      startPhase1(original, ctx, []);
+      assert.deepEqual(state.resourceCards, original.resourceCards);
+      assert.equal(state.resourceCards.length, 6);
+      assert.deepEqual(poolsFor(state).products, poolsFor(original).products);
+      assert.deepEqual(poolsFor(state).resources, ["Hemp", "Silk", "Tea"]);
+      startPhase2(state, ctx, []);
+      startPhase2(original, ctx, []);
+      assert.equal(state.customerCards.length, 6);
+      assert.deepEqual(
+        state.customerCards.map(({ buyer: _classification, ...buyer }) => buyer),
+        original.customerCards,
+      );
+    }
+  });
+}
 
 test("Classic recipes and sale ranges remain the same while imports rotate into existing slots", () => {
   const examples = [
@@ -767,7 +794,7 @@ test("Classic recipes and sale ranges remain the same while imports rotate into 
         seedBase: `rotations ${seed}:captain`,
       };
       const state = classicHarborGame(difficulty);
-      state.arrivals = buildCurrentVoyageRules(
+      state.arrivals = buildClassicHarborRules(
         context.roomSeed,
         10,
         difficulty,
@@ -846,6 +873,102 @@ test("Broker, Farsight, and Coastal Forecast reveal distinct terms from the froz
     restored.plannedOrders?.find(({ id }) => id === lantern.id),
     lantern,
   );
+});
+
+test("Announced commissions survive a Shipyard swap and cannot be sold as new intel", () => {
+  for (const hadLantern of [false, true]) {
+    const state = createInitialGameState(
+      0,
+      1,
+      10,
+      "fair_winds",
+      buildCurrentVoyageRules(ctx.roomSeed, 10, "fair_winds"),
+    );
+    if (hadLantern) equip(state, "signal_lantern");
+    startPhase1(state, ctx, []);
+    const commission = upcomingBuyer(state, ctx, 2)!;
+    const lantern = upcomingBuyer(state, ctx, 2, true);
+    assert.equal(Boolean(lantern), hadLantern);
+    const known = lantern ? [commission, lantern] : [commission];
+    startPhase2(state, ctx, []);
+    equip(
+      state,
+      ...(hadLantern ? [] : ["signal_lantern"]),
+      "brokers_network",
+      "ocean_relay",
+    );
+    const restored = JSON.parse(JSON.stringify(state)) as GameState;
+    restored.currentRound = 2;
+    startBoonDrafting(restored, []);
+    restored.modifierFlags = { free_intel: 1 };
+    startPhase1(restored, ctx, []);
+    for (const buyer of known) {
+      assert.deepEqual(
+        restored.scoutedOrders?.find(({ id }) => id === buyer.id),
+        buyer,
+      );
+    }
+    const available = intelPurchaseCount(restored);
+    assert.equal(available, hadLantern ? 1 : 2);
+    purchaseIntel(restored, [], commission.resources[0].type);
+    assert.equal(restored.revealedIntel.length, available + 1);
+    startPhase2(restored, ctx, []);
+    for (const buyer of known) {
+      const actual = restored.customerCards.find(({ id }) => id === buyer.id)!;
+      assert.deepEqual(actual, buyer);
+      assert.equal(whisperForOrder(restored, actual), undefined);
+    }
+    restored.currentRound = restored.maxRounds;
+    startPhase1(restored, ctx, []);
+    assert.equal(restored.announcedBuyers, undefined);
+  }
+});
+
+test("Market Day announces an existing mixed buyer for the featured import", () => {
+  for (const difficulty of DIFFICULTY_ORDER) {
+    const rules = buildCurrentVoyageRules(ctx.roomSeed, 10, difficulty);
+    const state = createInitialGameState(0, 1, 10, difficulty, rules);
+    const round = Math.floor(state.maxRounds / 2) + 1;
+    state.currentRound = round - 1;
+    state.forecasts = [{ round, kind: "market", item: "Lapis Lazuli" }];
+    equip(state, "signal_lantern", "open_hold");
+    startPhase1(state, ctx, []);
+    const mixed = upcomingBuyer(state, ctx, round)!;
+    assert.equal(mixed.buyer, "mixed");
+    assert.equal(mixed.resources.length, 2);
+    assert.ok(mixed.resources.some(({ type }) => type === "Lapis Lazuli"));
+    const extra = upcomingBuyer(state, ctx, round, true)!;
+    assert.equal(extra.buyer, "commission");
+    state.currentRound = round;
+    startBoonDrafting(state, []);
+    startPhase1(state, ctx, []);
+    assert.ok(
+      state.resourceCards.some(
+        (lot) =>
+          lot.featured &&
+          lot.resources.some(({ type }) => type === "Lapis Lazuli"),
+      ),
+    );
+    assert.deepEqual(
+      state.scoutedOrders?.filter(({ id }) => id === mixed.id),
+      [mixed],
+    );
+    purchaseIntel(state, [], "Lapis Lazuli");
+    startPhase2(state, ctx, []);
+    assert.deepEqual(
+      state.customerCards.find(({ id }) => id === mixed.id),
+      mixed,
+    );
+    for (const { type, required } of mixed.resources)
+      state.inventory[type] = required!;
+    const quote = quoteOrder(state, mixed);
+    assert.equal(bonus(state, mixed, "Open Hold"), 10);
+    const cash = state.money;
+    const logs: string[] = [];
+    completeOrder(state, mixed.id, logs);
+    assert.equal(state.money - cash, quote.reward - quote.freight.final);
+    assert.ok(logs.includes("Open Hold added 10 Gold to the reward"));
+  }
 });
 
 test("Exchange quotes every commodity and local freight matches the ledger", () => {
@@ -927,10 +1050,14 @@ test("Historical ledger losses display as words without altering their saved ent
   );
 });
 
-for (const makeGame of [game, classicHarborGame]) {
+for (const [version, makeGame] of [
+  [4, game],
+  [5, classicHarborGame],
+  [6, currentHarborGame],
+] as const) {
   test(
     "First sale effects are consumed when a percentage bonus rounds to zero" +
-      (makeGame === classicHarborGame ? " under version 5" : ""),
+      ` under version ${version}`,
     () => {
       const state = makeGame();
       state.phase = 2;
@@ -960,3 +1087,100 @@ for (const makeGame of [game, classicHarborGame]) {
     },
   );
 }
+
+function currentHarborGame(difficulty: Difficulty = "fair_winds") {
+  const state = createInitialGameState(
+    0,
+    1,
+    10,
+    difficulty,
+    buildCurrentVoyageRules(ctx.roomSeed, 10, difficulty),
+  );
+  state.seatSeed = ctx.seedBase;
+  return state;
+}
+
+test("A late draft only offers modules with a remaining opportunity to pay", () => {
+  const state = currentHarborGame();
+  assert.equal(state.rulesVersion, CURRENT_HARBOR_RULES);
+  state.currentRound = state.maxRounds - 1;
+  state.shipLevel = 1;
+  const draw = () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 96; i++) {
+      state.phase = 4;
+      state._draftChoices = undefined;
+      state.seatSeed = `late draft ${i}`;
+      startModuleDrafting(state);
+      const choices = (state as GameState)._draftChoices;
+      assert.equal(choices?.length, 3);
+      choices?.forEach(({ id }) => seen.add(id));
+    }
+    return seen;
+  };
+  const first = draw();
+  for (const id of [
+    "artisans_workshop",
+    "wage_ledger",
+    "signal_lantern",
+    "traveling_commission",
+    "storm_dividend",
+    "collectors_seal",
+  ])
+    assert.ok(!first.has(id), id);
+  assert.ok(first.has("open_hold"));
+  state.directPassageRound = state.currentRound;
+  state.ceramicCollection = ["Celadon Ware"];
+  state.travelingCommissionRound = state.maxRounds;
+  const returning = draw();
+  for (const id of [
+    "storm_dividend",
+    "collectors_seal",
+    "traveling_commission",
+  ])
+    assert.ok(returning.has(id), id);
+});
+
+test("Artisan Boons use the actual hire wage and keep already employed artisans eligible", () => {
+  const state = currentHarborGame();
+  state.currentRound = 6;
+  state.money = state.fixedCost + 2;
+  const draw = () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 192; i++) {
+      state.seatSeed = `artisan draft ${i}`;
+      for (const { id } of draftBoons(state)) seen.add(id);
+    }
+    return seen;
+  };
+  const before = draw();
+  assert.ok(before.has("master_apprentice"));
+  assert.ok(!before.has("guild_turnover") && !before.has("resourceful_crew"));
+  state.workers.potter.push({ task: null, isSkilled: false, producedCount: 0 });
+  const staffed = draw();
+  assert.ok(staffed.has("guild_turnover") && staffed.has("resourceful_crew"));
+  state.currentRound = state.maxRounds;
+  const final = draw();
+  for (const id of ["master_apprentice", "guild_turnover", "resourceful_crew"])
+    assert.ok(!final.has(id));
+});
+
+test("A harbor waiting on an older release starts with the new opening and keeps its Renown allowance", () => {
+  const old = buildOpenHarborRules(ctx.roomSeed, 10, "monsoon");
+  const rules = buildCurrentVoyageRules(ctx.roomSeed, 10, "monsoon");
+  for (const savedVersion of [old.version, rules.version]) {
+    const waiting = createInitialGameState(15, 3, 10, "monsoon", old);
+    assert.equal(waiting.shipLevel, 1);
+    waiting.rulesVersion = savedVersion;
+    startVoyage(waiting, ctx, rules, 15, []);
+    assert.equal(waiting.money, 105);
+    assert.equal(waiting.fixedCost, 22);
+    assert.equal(waiting.shipLevel, 0);
+    assert.equal(waiting.rulesVersion, CURRENT_HARBOR_RULES);
+    assert.deepEqual(waiting.arrivals, rules.arrivals);
+    assert.equal(waiting.phase, 5);
+    const underway = structuredClone(waiting);
+    startVoyage(waiting, ctx, old, 0, []);
+    assert.deepEqual(waiting, underway);
+  }
+});

@@ -300,10 +300,10 @@ export function Endgame({
   const crowned = !!mine?.crowned;
 
   // === Voyage comparison vs. personal best ===
-  const bestScore = myLegacy?.bestScore ?? 0;
-  const hasPriorVoyage = !!myLegacy && myLegacy.voyagesCompleted > 0;
+  const bestScore = mine?.previousBestScore ?? 0;
+  const hasPriorVoyage = mine?.previousBestScore !== undefined;
   const beatBest = hasPriorVoyage && game.score > bestScore;
-  const tiedBest = hasPriorVoyage && game.score === bestScore && bestScore > 0;
+  const tiedBest = hasPriorVoyage && game.score === bestScore;
   const delta = game.score - bestScore;
   const cmpPct =
     hasPriorVoyage && bestScore > 0

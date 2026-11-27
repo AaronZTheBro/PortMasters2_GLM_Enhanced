@@ -5,11 +5,24 @@ import { access, rm, unlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { io, type Socket } from "socket.io-client";
 import {
-  CLASSIC_HARBOR_RULES,
+  CURRENT_HARBOR_RULES,
+  REVISED_HARBOR_RULES,
   type VoyageRules,
 } from "../src/lib/game/expansion";
+import {
+  buildForecasts,
+  buildVoyageRules,
+  buildOpenHarborRules,
+  buildClassicHarborRules,
+  buildCurrentVoyageRules,
+} from "../src/lib/game/forecast";
+import { startPhase1 } from "../src/lib/game/engine/market";
+import { nextPhase } from "../src/lib/game/engine/lifecycle";
+import { hireEscort } from "../src/lib/game/engine/pirates";
+import { purchaseIntel, startPhase2 } from "../src/lib/game/engine/orders";
 import { computeHarborPulse } from "../src/lib/game/harborPulse";
 import { unlockedResources } from "../src/lib/game/pools";
 import {
@@ -21,7 +34,7 @@ import {
   applyBarterEntries,
   type BarterUpdate,
 } from "../src/lib/game/barter-ledger";
-import { createInitialGameState } from "../src/lib/game/types";
+import { createInitialGameState, type GameState } from "../src/lib/game/types";
 import type { VoyageCompleteEvent } from "../src/lib/realtime";
 
 const projectRoot = resolve(import.meta.dirname, "..");
@@ -201,15 +214,15 @@ async function waitForProcessExit(server: ChildProcess, timeoutMs: number) {
 
 test(
   "HTTP, authentication, rooms, persistence, and realtime share port 2154",
-  { timeout: 60_000 },
+  { timeout: 120_000 },
   async () => {
-    await removeDevelopmentOutput();
-    await removeDatabase();
     assert.equal(
       await waitForServerStop(10_000),
       true,
-      "Port 2154 is already in use before integration test start",
+      "The test needs port 2154 and the development output to be idle",
     );
+    await removeDevelopmentOutput();
+    await removeDatabase();
     const environment: NodeJS.ProcessEnv = {
       ...process.env,
       DATABASE_URL: databaseUrl,
@@ -219,24 +232,28 @@ test(
 
     await run(npmCommand, ["run", "db:push"], environment);
 
-    const server: ChildProcess = spawn(
-      process.execPath,
-      ["--import", "tsx", join(projectRoot, "server.ts")],
-      {
-        cwd: projectRoot,
-        detached: process.platform !== "win32",
-        env: environment,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
     let serverLogs = "";
-    server.stdout?.on("data", (chunk) => {
-      serverLogs += String(chunk);
-    });
-    server.stderr?.on("data", (chunk) => {
-      serverLogs += String(chunk);
-    });
-
+    function launch() {
+      serverLogs = "";
+      const child = spawn(
+        process.execPath,
+        ["--import", "tsx", join(projectRoot, "server.ts")],
+        {
+          cwd: projectRoot,
+          detached: process.platform !== "win32",
+          env: environment,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      child.stdout.on("data", (chunk) => {
+        serverLogs += String(chunk);
+      });
+      child.stderr.on("data", (chunk) => {
+        serverLogs += String(chunk);
+      });
+      return child;
+    }
+    let server = launch();
     const sockets: Socket[] = [];
     try {
       const health = await waitForServer(server, () => serverLogs);
@@ -347,7 +364,7 @@ test(
         betaStarted,
       ]);
       assert.deepEqual(start, otherStart);
-      assert.equal(start.rules.version, CLASSIC_HARBOR_RULES);
+      assert.equal(start.rules.version, CURRENT_HARBOR_RULES);
       assert.ok(start.rules.forecasts.length > 0);
       assert.equal(start.rules.specialties, undefined);
       assert.equal(start.rules.arrivals?.length, 12);
@@ -533,7 +550,7 @@ test(
         pulse,
         computeHarborPulse(
           totals,
-          unlockedResources("open_waters", 1, CLASSIC_HARBOR_RULES),
+          unlockedResources("open_waters", 1, CURRENT_HARBOR_RULES),
         ),
       );
 
@@ -726,6 +743,112 @@ test(
       }>(reconnected, "venture:update", ({ locked }) => !locked);
       reconnected.emit("room:restart", { roomId: room.id });
       assert.deepEqual((await resetVentures).ventures, []);
+
+      const fixtures = [];
+      for (const version of [
+        1,
+        2,
+        3,
+        4,
+        5,
+        REVISED_HARBOR_RULES,
+        CURRENT_HARBOR_RULES,
+      ]) {
+        const difficulty = "open_waters";
+        const created = await request("/api/rooms", {
+          cookie: alphaCookie,
+          body: { name: `Recovery ${version}`, difficulty },
+        });
+        const id = created.data.room.id as string;
+        const ctx = { roomSeed: id, seedBase: `${id}:${alphaId}` };
+        const epoch = 2;
+        const rules = [
+          { version: 1, forecasts: [] },
+          { version: 2, forecasts: buildForecasts(id, epoch, difficulty) },
+          buildVoyageRules(id, epoch, difficulty, ["wax", "lacquer"]),
+          buildOpenHarborRules(id, epoch, difficulty),
+          buildClassicHarborRules(id, epoch, difficulty),
+          buildClassicHarborRules(id, epoch, difficulty, REVISED_HARBOR_RULES),
+          buildCurrentVoyageRules(id, epoch, difficulty),
+        ][version - 1];
+        const state = createInitialGameState(0, 1, epoch, difficulty, rules);
+        state.currentRound = state.maxRounds;
+        state.seatSeed = ctx.seedBase;
+        state.modifierFlags.transport_flat_discount = 4;
+        const db = new DatabaseSync(databasePath);
+        try {
+          // Create a voyage started by the release that owned these rules.
+          db.prepare(
+            "UPDATE Room SET started = 1, voyageEpoch = ?, currentRound = ?, currentPhase = '2', rulesVersion = ?, forecastPlan = ? WHERE id = ?",
+          ).run(
+            epoch,
+            state.currentRound,
+            version,
+            JSON.stringify(version < 3 ? rules.forecasts : rules),
+            id,
+          );
+        } finally {
+          db.close();
+        }
+        startPhase1(state, ctx, []);
+        purchaseIntel(state, []);
+        startPhase2(state, ctx, []);
+        assert.ok(state.customerCards.length && state.revealedIntel.length);
+        await request("/api/game/state", {
+          cookie: alphaCookie,
+          method: "PUT",
+          body: { roomId: id, data: state, revision: null },
+        });
+        fixtures.push({
+          id,
+          rules,
+          ctx,
+          state: JSON.parse(JSON.stringify(state)) as GameState,
+        });
+      }
+      for (const socket of sockets) socket.disconnect();
+      signalServer(server, "SIGTERM");
+      assert.ok(await waitForProcessExit(server, 15_000), serverLogs);
+      assert.ok(await waitForServerStop(5_000), serverLogs);
+      assert.equal(server.exitCode, 0, serverLogs);
+      server = launch();
+      await waitForServer(server, () => serverLogs);
+      // Leave the server idle past its ordinary departure window.
+      await new Promise((resolve) => setTimeout(resolve, 31_000));
+      const resumed = await connectCaptain(alphaRegistration.data.token);
+      sockets.push(resumed);
+      for (const { id, rules, ctx, state } of fixtures) {
+        const checkpoint = waitForEvent<
+          Started & { round: number; phase: string }
+        >(resumed, "phase:ready_update", (event) => event.roomId === id);
+        resumed.emit("room:join", { roomId: id });
+        const restored = await checkpoint;
+        assert.deepEqual(restored.rules, rules);
+        assert.equal(restored.voyageEpoch, state.voyageEpoch);
+        assert.equal(restored.round, state.maxRounds);
+        assert.equal(restored.phase, "2");
+        const path = `/api/game/state?roomId=${id}`;
+        const loaded = (await request(path, { cookie: alphaCookie })).data;
+        assert.deepEqual(loaded.rules, rules);
+        const game = JSON.parse(loaded.state) as GameState;
+        assert.deepEqual(game, state);
+        for (const captain of [game, state]) {
+          nextPhase(captain, ctx, []);
+          hireEscort(captain, []);
+          nextPhase(captain, ctx, []);
+          nextPhase(captain, ctx, []);
+          assert.equal(captain.phase, "endgame");
+        }
+        assert.deepEqual(game, state);
+        await request("/api/game/state", {
+          cookie: alphaCookie,
+          method: "PUT",
+          body: { roomId: id, data: game, revision: loaded.revision },
+        });
+        const finished = (await request(path, { cookie: alphaCookie })).data;
+        assert.equal(JSON.parse(finished.state).phase, "endgame");
+        assert.deepEqual(finished.rules, rules);
+      }
     } finally {
       for (const socket of sockets) socket.disconnect();
       let forced = false;
