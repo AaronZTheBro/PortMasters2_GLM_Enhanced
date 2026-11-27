@@ -428,7 +428,7 @@ export function RumorBoardModal({
           </DialogDescription>
         </DialogHeader>
         {rebalanced(game) &&
-          !bundleBought &&
+          count > 0 &&
           game.phase === 1 &&
           game.phase2DemandTags.length > 0 && (
             <label className="grid min-w-0 gap-1 text-sm">
@@ -491,8 +491,9 @@ export function RumorBoardModal({
             </>
           ) : (
             <div className="text-muted-foreground text-center py-5 text-sm">
-              ✨ No rumors revealed yet... Spend gold to listen to the Broker's
-              whispers.
+              {classic && count === 0 && game.phase === 1
+                ? "You already know every buyer on this board."
+                : "You have no Broker whispers this round."}
             </div>
           )}
         </div>

@@ -407,6 +407,7 @@ function VoyageBrief({
             ...game,
             modifierFlags: {},
             effectUses: {},
+            completedOrders: [],
             currentRound: game.currentRound + 1,
           },
           buyer,
@@ -419,7 +420,11 @@ function VoyageBrief({
               <strong>
                 {index === 0
                   ? classicHarbor(game)
-                    ? "Next round commission"
+                    ? buyer.isProductOrder
+                      ? "Next round commission"
+                      : buyer.resources.length > 1
+                        ? "Next round mixed order"
+                        : "Next round merchant"
                     : "Next round featured buyer"
                   : "Signal Lantern"}
               </strong>{" "}

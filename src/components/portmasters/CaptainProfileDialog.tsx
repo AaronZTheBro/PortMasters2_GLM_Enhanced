@@ -16,7 +16,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type PublicUser } from "@/lib/api";
 import { Avatar, Pill, MeritIcon } from "./shared";
-import { cn, formatReputation } from "@/lib/utils";
+import { cn, formatReputation, reputationActivityText } from "@/lib/utils";
 import { useCountUp } from "@/lib/use-count-up";
 import {
   Anchor,
@@ -40,8 +40,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { difficultyConfig } from "@/lib/game/difficulty";
-import { meritById } from "@/lib/game/merits";
+import { DIFFICULTY_ORDER, difficultyConfig } from "@/lib/game/difficulty";
+import { MERITS, type MeritDef } from "@/lib/game/merits";
 
 // Groups activity records into completed voyage summaries.
 type VoyageLogEntry = {
@@ -50,73 +50,70 @@ type VoyageLogEntry = {
   startedAt: string | null;
   reputation: number | null;
   crowned: boolean;
-  merits: Array<{ id: string; name: string; detail: string }>;
+  merits: MeritDef[];
   difficulty: string | null;
 };
 
-// Missing start records produce summaries without a duration.
-function buildVoyageLog(
-  activities: Array<{
-    id: string;
-    type: string;
-    detail: string | null;
-    createdAt: string;
-  }>,
+export function buildVoyageLog(
+  activities: Awaited<ReturnType<typeof api.getProfile>>["activities"],
 ): VoyageLogEntry[] {
-  // Index by id for stable React keys and easy lookup.
   const log: VoyageLogEntry[] = [];
-  // Process oldest first so events attach to the next voyage_complete record.
-  const ascending = [...activities].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-  );
-  let pendingStart: string | null = null;
-  let pendingMerits: Array<{ id: string; name: string; detail: string }> = [];
-  let pendingCrowned = false;
-  let pendingDifficulty: string | null = null;
-
-  for (const act of ascending) {
-    if (act.type === "voyage_start") {
-      // A new voyage begins. Reset the pending bucket; any earlier
-      // voyage_start without a matching complete is orphaned (truncated by
-      // the activity window).
-      pendingStart = act.createdAt;
-      pendingMerits = [];
-      pendingCrowned = false;
-      pendingDifficulty = act.detail;
-    } else if (act.type === "merit_earned") {
-      const merit = act.detail ? meritById(act.detail) : undefined;
-      if (merit) {
-        pendingMerits.push({
-          id: act.detail!,
-          name: merit.name,
-          detail: merit.desc,
-        });
-      }
-    } else if (act.type === "sea_master") {
-      pendingCrowned = true;
-    } else if (act.type === "voyage_complete") {
-      // Extract the number from detail such as "with 1450 reputation".
-      const repMatch = act.detail?.match(/(\d[\d,]*)/);
-      const reputation = repMatch
-        ? Number(repMatch[1].replace(/,/g, ""))
-        : null;
-      log.push({
-        id: act.id,
-        completedAt: act.createdAt,
-        startedAt: pendingStart,
-        reputation,
-        crowned: pendingCrowned,
-        merits: pendingMerits,
-        difficulty: pendingDifficulty,
-      });
-      // Reset for the next voyage.
-      pendingStart = null;
-      pendingMerits = [];
-      pendingCrowned = false;
-      pendingDifficulty = null;
+  const groups = new Map<
+    string,
+    {
+      start?: (typeof activities)[number];
+      merits: MeritDef[];
+      completed?: VoyageLogEntry;
+    }
+  >();
+  const eventOrder: Record<string, number> = {
+    voyage_start: 0,
+    merit_earned: 1,
+    voyage_complete: 2,
+    sea_master: 3,
+  };
+  const ordered = activities
+    .filter((event) => event.type in eventOrder)
+    .sort(
+      (a, b) =>
+        Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
+        eventOrder[a.type] - eventOrder[b.type],
+    );
+  for (const event of ordered) {
+    const group = (event.roomId && groups.get(event.roomId)) || { merits: [] };
+    if (event.roomId) groups.set(event.roomId, group);
+    if (event.type === "voyage_start") {
+      group.start = event;
+      group.completed = undefined;
+      group.merits = [];
+    } else if (event.type === "merit_earned") {
+      const merit = MERITS.find(
+        (m) => m.id === event.detail || m.name === event.detail,
+      );
+      if (merit) group.merits.push(merit);
+    } else if (event.type === "sea_master") {
+      if (group.completed) group.completed.crowned = true;
+    } else {
+      const repMatch = event.detail?.match(/[-−]?\d[\d,]*/);
+      const difficulty = DIFFICULTY_ORDER.find(
+        (key) => key === group.start?.detail,
+      );
+      group.completed = {
+        id: event.id,
+        completedAt: event.createdAt,
+        startedAt: group.start?.createdAt ?? null,
+        reputation: repMatch
+          ? Number(repMatch[0].replace(/,/g, "").replace("−", "-"))
+          : null,
+        crowned: false,
+        merits: group.merits,
+        difficulty: difficulty ? difficultyConfig(difficulty).name : null,
+      };
+      log.push(group.completed);
+      group.start = undefined;
+      group.merits = [];
     }
   }
-  // Newest first for display.
   return log.reverse();
 }
 
@@ -164,12 +161,14 @@ const ACTIVITY_META: Record<
   voyage_complete: {
     icon: Flag,
     tone: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
-    label: (d) => `Completed a voyage${d ? ` with ${d}` : ""}`,
+    label: (d) =>
+      `Completed a voyage${d ? ` with ${reputationActivityText(d)}` : ""}`,
   },
   sea_master: {
     icon: Crown,
     tone: "bg-amber-500/20 text-amber-700 dark:text-amber-300",
-    label: (d) => `Won the Sea Master crown${d ? ` (${d})` : ""}`,
+    label: (d) =>
+      `Won the Sea Master crown${d ? ` (${reputationActivityText(d)})` : ""}`,
   },
   merit_earned: {
     icon: Medal,
@@ -221,7 +220,7 @@ const STAT_CARDS: Array<{
   },
   {
     key: "bestScore",
-    label: "Best Score",
+    label: "Best Reputation",
     icon: Trophy,
     tone: "from-violet-500/15 to-violet-500/5",
     accent: "text-violet-600 dark:text-violet-300",
@@ -633,7 +632,7 @@ function ProfileBody({
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium">{d.name}</div>
                       <div className="text-[10px] text-muted-foreground">
-                        Best score: {d.bestScore.toLocaleString()}
+                        Best Reputation: {d.bestScore.toLocaleString()}
                       </div>
                     </div>
                     {d.crowns > 0 && (
@@ -754,18 +753,11 @@ function ProfileBody({
                             </Pill>
                           )}
                           {voyage.difficulty && (
-                            <Pill tone="sea">
-                              {voyage.difficulty.replace(/_/g, " ")}
-                            </Pill>
+                            <Pill tone="sea">{voyage.difficulty}</Pill>
                           )}
                           {voyage.merits.map((m) => (
                             <Pill key={m.id} tone="rose">
-                              <MeritIcon
-                                id={
-                                  m.id as Parameters<typeof MeritIcon>[0]["id"]
-                                }
-                                className="h-3 w-3"
-                              />
+                              <MeritIcon id={m.id} className="h-3 w-3" />
                               {m.name}
                             </Pill>
                           ))}

@@ -18,7 +18,7 @@ export function ChatPanel({
   mode,
   roomId,
   other,
-  initialMessages,
+  messages,
   className,
   disabled,
   draft,
@@ -29,81 +29,18 @@ export function ChatPanel({
   mode: "room" | "dm";
   roomId?: string;
   other?: PublicUser;
-  initialMessages?: ChatMessage[];
+  messages: ChatMessage[];
   className?: string;
   // Room mute state controls local input. The server enforces the restriction.
   disabled?: boolean;
   draft?: string;
   onDraftChange?: (value: string) => void;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>(
-    initialMessages ?? [],
-  );
   const [localInput, setLocalInput] = useState("");
   const input = draft ?? localInput;
   const setInput = onDraftChange ?? setLocalInput;
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Reset during render when the conversation or seed changes. React discards
-  // this pass, avoiding a second committed render from an effect.
-  const seedKey = `${mode}:${roomId ?? ""}:${other?.id ?? ""}`;
-  const [seed, setSeed] = useState<{
-    key: string;
-    source: ChatMessage[] | undefined;
-  }>({ key: seedKey, source: initialMessages });
-  if (seed.key !== seedKey || seed.source !== initialMessages) {
-    setSeed({ key: seedKey, source: initialMessages });
-    setMessages(initialMessages ?? []);
-  }
-
-  // Live socket listeners.
-  useEffect(() => {
-    if (!socket) return;
-    // Return the same array for duplicate ids so React skips the render.
-    const onRoom = (data: { roomId: string; message: ChatMessage }) => {
-      if (mode !== "room" || data.roomId !== roomId) return;
-      setMessages((prev) =>
-        prev.some((m) => m.id === data.message.id)
-          ? prev
-          : [
-              ...prev,
-              { ...data.message, mine: data.message.sender.id === me.id },
-            ],
-      );
-    };
-    const onDm = (message: ChatMessage) => {
-      if (mode !== "dm") return;
-      const involvesMe =
-        message.sender.id === me.id || message.recipient?.id === me.id;
-      if (!involvesMe) return;
-      // Only show if this DM is between me and `other`.
-      const otherId = other?.id;
-      const peerId =
-        message.sender.id === me.id ? message.recipient?.id : message.sender.id;
-      if (otherId && peerId !== otherId) return;
-      setMessages((prev) =>
-        prev.some((m) => m.id === message.id)
-          ? prev
-          : [...prev, { ...message, mine: message.sender.id === me.id }],
-      );
-    };
-    // Server rejection covers the brief interval before local mute state arrives.
-    const onMuted = (data: { roomId: string }) => {
-      if (mode !== "room" || data.roomId !== roomId) return;
-      toast.error("You're muted", {
-        description: "The host has muted you in room chat this voyage.",
-      });
-    };
-    socket.on("chat:room", onRoom);
-    socket.on("chat:dm", onDm);
-    socket.on("chat:muted", onMuted);
-    return () => {
-      socket.off("chat:room", onRoom);
-      socket.off("chat:dm", onDm);
-      socket.off("chat:muted", onMuted);
-    };
-  }, [socket, mode, roomId, other?.id, me.id]);
 
   // Keep the newest messages visible.
   useEffect(() => {
@@ -113,16 +50,23 @@ export function ChatPanel({
 
   async function send() {
     const content = input.trim();
-    if (!content || sending) return;
+    if (!content || sending || !socket?.connected) return;
     setSending(true);
-    setInput("");
     try {
-      if (mode === "room" && roomId) {
-        // Optimistic echo handled by server broadcast to room (including self).
-        socket?.emit("chat:room", { roomId, content });
-      } else if (mode === "dm" && other) {
-        socket?.emit("chat:dm", { recipientId: other.id, content });
-      }
+      const request = socket.timeout(5000);
+      const error: string | null =
+        mode === "room"
+          ? await request.emitWithAck("chat:room", { roomId, content })
+          : await request.emitWithAck("chat:dm", {
+              recipientId: other?.id,
+              content,
+            });
+      if (error) toast.error(error);
+      else setInput("");
+    } catch {
+      toast.error(
+        "Could not confirm delivery. Check the conversation before sending again.",
+      );
     } finally {
       setSending(false);
     }
@@ -130,8 +74,8 @@ export function ChatPanel({
 
   const emptyText =
     mode === "room"
-      ? "No messages yet. Break the ice with your fellow captains."
-      : "No messages yet between you two.";
+      ? "No harbor messages to display."
+      : "No direct messages to display.";
 
   return (
     <div className={cn("flex h-full flex-col min-h-0", className)}>
@@ -204,6 +148,7 @@ export function ChatPanel({
       ) : (
         <div className="pm-input-glow p-2.5 border-t border-black/5 dark:border-white/10 flex items-center gap-2">
           <Input
+            disabled={sending}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -223,7 +168,8 @@ export function ChatPanel({
           <Button
             size="icon"
             onClick={send}
-            disabled={!input.trim() || sending}
+            aria-label="Send message"
+            disabled={!socket?.connected || !input.trim() || sending}
             className="h-9 w-9 rounded-full pm-grad-primary text-white shrink-0"
           >
             {sending ? (

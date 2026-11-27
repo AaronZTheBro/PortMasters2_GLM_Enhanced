@@ -21,7 +21,7 @@ import {
 import { api } from "@/lib/api";
 import { difficultyConfig } from "@/lib/game/difficulty";
 import { Avatar, Pill } from "./shared";
-import { cn } from "@/lib/utils";
+import { cn, reputationActivityText } from "@/lib/utils";
 import { useCountUp } from "@/lib/use-count-up";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -63,12 +63,14 @@ const ACTIVITY_META: Record<
   voyage_complete: {
     icon: Flag,
     tone: "bg-blue-500/15 text-blue-600 dark:text-blue-300",
-    label: (d) => `completed a voyage${d ? ` with ${d}` : ""}`,
+    label: (d) =>
+      `completed a voyage${d ? ` with ${reputationActivityText(d)}` : ""}`,
   },
   sea_master: {
     icon: Crown,
     tone: "bg-amber-500/20 text-amber-700 dark:text-amber-300",
-    label: (d) => `won the Sea Master crown${d ? ` (${d})` : ""}`,
+    label: (d) =>
+      `won the Sea Master crown${d ? ` (${reputationActivityText(d)})` : ""}`,
   },
   merit_earned: {
     icon: Medal,

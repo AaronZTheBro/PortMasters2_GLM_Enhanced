@@ -708,3 +708,330 @@ test("Negative Reputation remains readable across score views", async () => {
     "🏆 Final Reputation: 8 below zero",
   );
 });
+
+test("Score comparisons use the record before the voyage award", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { TooltipProvider } = await import("../src/components/ui/tooltip");
+  const { Endgame } =
+    await import("../src/components/portmasters/game/phases/Endgame");
+  const { DEFAULT_LEGACY_SUMMARY } = await import("../src/lib/game/legacy");
+  const game = createInitialGameState();
+  const row = {
+    userId: "captain",
+    displayName: "Captain",
+    avatarHue: 0,
+    reputation: 0,
+    gold: 100,
+    crowned: false,
+    bankrupt: false,
+    renownLevel: 1,
+    renownTitle: "Deckhand",
+    xpGained: 0,
+    leveledUp: false,
+    brokersFavorUnlocked: false,
+    newMerits: [],
+  };
+  function render(score: number, previousBestScore?: number) {
+    game.score = score;
+    game.totalCosts = 9;
+    return renderToStaticMarkup(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(Endgame, {
+          game,
+          isHost: false,
+          onRestart() {},
+          myUserId: row.userId,
+          voyageResult: {
+            roomId: "room",
+            voyageEpoch: 0,
+            winnerId: null,
+            standings: [{ ...row, reputation: score, previousBestScore }],
+          },
+          myLegacy: {
+            ...DEFAULT_LEGACY_SUMMARY,
+            bestScore: Math.max(0, score),
+            voyagesCompleted: 1,
+          },
+        }),
+      ),
+    ).replace(/<[^>]+>/g, "");
+  }
+  const record = render(70, 20);
+  assert.match(record, /New Personal Best! \+50 Rep/);
+  const loss = render(-8, 0);
+  assert.match(loss, /Loss 9 Gold/);
+  assert.match(loss, /8 Rep below your best/);
+  assert.doesNotMatch(loss, /[-\u2013\u2014]/);
+  assert.match(render(0, 0), /Tied your best/);
+  assert.doesNotMatch(render(70), /Tied your best|New Personal Best/);
+});
+
+test("Activity summaries preserve signed Reputation and keep awards in their harbor", async () => {
+  const { buildVoyageLog } =
+    await import("../src/components/portmasters/CaptainProfileDialog");
+  const { reputationActivityText } = await import("../src/lib/utils");
+  const event = (id: string, type: string, detail: string, roomId: string) => ({
+    id,
+    type,
+    detail,
+    roomId,
+    createdAt: new Date(0).toISOString(),
+  });
+  const logs = buildVoyageLog([
+    event("crown", "sea_master", "-8 Reputation", "a"),
+    event("merit", "merit_earned", "First Landfall", "a"),
+    event("closed", "voyage_complete", "14 Reputation", "b"),
+    event("start", "voyage_start", "host set sail", "b"),
+    event("open", "voyage_start", "monsoon", "a"),
+    event("done", "voyage_complete", "-8 Reputation", "a"),
+  ]);
+  const first = logs.find(({ id }) => id === "done")!;
+  assert.equal(first.reputation, -8);
+  assert.equal(first.crowned, true);
+  assert.equal(first.difficulty, "Monsoon Season");
+  assert.deepEqual(
+    first.merits.map(({ id }) => id),
+    ["first_voyage"],
+  );
+  const other = logs.find(({ id }) => id === "closed")!;
+  assert.equal(other.crowned, false);
+  assert.equal(other.difficulty, null);
+  assert.equal(
+    reputationActivityText("-8 Reputation"),
+    "Reputation 8 below zero",
+  );
+});
+
+test("Economic reports and the guide show readable losses and shortfalls", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { PriceHistory } =
+    await import("../src/components/portmasters/PriceHistory");
+  const { Settlement } =
+    await import("../src/components/portmasters/game/phases/Settlement");
+  const { deriveChronicleEvents } =
+    await import("../src/components/portmasters/game/GameStatusPanel");
+  const { guideTabs, tipsGroups, tutorialSteps } =
+    await import("../src/lib/game/guide");
+  const { CURRENT_HARBOR_RULES } =
+    await import("../src/lib/game/rules-version");
+  const { DIFFICULTY_ORDER } = await import("../src/lib/game/difficulty");
+  const game = createInitialGameState();
+  game.money = 2;
+  const prices = (values: number[]) =>
+    values.map((price, i) => ({ round: i + 1, price, port: "Ningbo Port" }));
+  const history = renderToStaticMarkup(
+    createElement(PriceHistory, {
+      game,
+      observations: {
+        buy: {
+          Silk: prices([100, 92]),
+          Tea: prices([-10, -5]),
+          Hemp: prices([0, 1]),
+        },
+        sell: {},
+      },
+    }),
+  ).replace(/<[^>]+>/g, "");
+  assert.match(history, /Down 8 percent/);
+  assert.match(history, /Up 50 percent/);
+  assert.match(history, /Cost 5/);
+  assert.doesNotMatch(
+    history,
+    /No items selected|NaN|Infinity|[-\u2013\u2014]/,
+  );
+  const noop = () => {};
+  const settlement = () =>
+    renderToStaticMarkup(
+      createElement(Settlement, {
+        game,
+        act: noop,
+        members: [],
+        myUserId: "captain",
+        aid: {
+          requests: [],
+          error: null,
+          clearError: noop,
+          post: noop,
+          cancel: noop,
+          help: noop,
+          repay: async () => false,
+        },
+        backing: {
+          loans: [],
+          error: null,
+          clearError: noop,
+          offer: noop,
+          redirect: noop,
+        },
+        phaseSync: {
+          waiting: false,
+          ready: null,
+          readyCount: 0,
+          requiredCount: 0,
+          markReady: async () => {},
+          cancelReady: async () => {},
+          startGame: noop,
+          restartVoyage: noop,
+          startError: null,
+        },
+      }),
+    ).replace(/<[^>]+>/g, "");
+  assert.match(settlement(), /short by 13 Gold/);
+  game.pirateAttackResolved = true;
+  assert.match(settlement(), /Short by 13 Gold/);
+  const lines = [
+    "📈 Profit before tax: -4 Gold",
+    "🏆 Final Reputation: -8",
+    "Captain North-West arrived",
+  ];
+  assert.deepEqual(
+    deriveChronicleEvents(lines, 1).map((entry) => entry.description),
+    [
+      "📈 Loss before tax: 4 Gold",
+      "🏆 Final Reputation: 8 below zero",
+      lines[2],
+    ],
+  );
+  for (const waters of DIFFICULTY_ORDER) {
+    for (let version = 1; version <= CURRENT_HARBOR_RULES; version++) {
+      const text = JSON.stringify([
+        guideTabs(waters, version),
+        tipsGroups(waters, version),
+        tutorialSteps(waters, version),
+      ]).replace(/<[^>]+>/g, "");
+      assert.doesNotMatch(text, /[-\u2013\u2014]/);
+    }
+  }
+});
+
+test("Current order previews and receipts agree across the Boon and module catalog", async (t) => {
+  const { buildCurrentVoyageRules } = await import("../src/lib/game/forecast");
+  const { voyageBoon, voyageModule } = await import("../src/lib/game/pools");
+  const { voyageRandom } = await import("../src/lib/game/voyage-rng");
+  const base = createInitialGameState(
+    0,
+    1,
+    1,
+    "monsoon",
+    buildCurrentVoyageRules("matrix", 1, "monsoon"),
+  );
+  const modules = MODULES.map((m) => voyageModule(m, base.rulesVersion));
+  const fits = [
+    [],
+    ...modules.map((m) => [m]),
+    ...modules.flatMap((m, index) =>
+      modules.slice(index + 1).map((other) => [m, other]),
+    ),
+  ];
+  const goods = [
+    { cargo: ["Silk", "Lapis Lazuli"], gross: 76 },
+    { cargo: ["Celadon Ware"], gross: 89 },
+    { cargo: ["Salt Glazed Bowl"], gross: 98 },
+    { cargo: ["Sachet"], gross: 107 },
+    { cargo: ["Sachet"], gross: 200, mandate: true },
+    { cargo: ["Silk"], gross: 50, favor: true },
+  ];
+  base.phase = 2;
+  base.currentRound = 12;
+  base.shipLevel = 2;
+  base.money = 100;
+  base.ceramicCollection = ["Lacquered Jar"];
+  base.directPassageRound = base.currentRound - 1;
+  base.travelingCommissionRound = base.currentRound;
+  base.customerCards = goods.map(({ cargo, gross, mandate, favor }, id) => ({
+    id,
+    resources: cargo.map((type) => ({ type, required: 1 })),
+    totalItems: cargo.length,
+    isProductOrder: id > 0 && !favor,
+    isMandate: mandate,
+    isBrokerFavor: favor,
+    buyer: id === 0 ? "mixed" : "commission",
+    demandPort: "Quanzhou Port",
+    reward: gross,
+  }));
+  for (const { cargo } of goods)
+    for (const item of cargo) base.inventory[item] = 6;
+  let settlements = 0;
+  for (const boon of [undefined, ...BOONS]) {
+    for (const equipped of fits) {
+      const game = structuredClone(base);
+      game.seatSeed = [boon?.id ?? "plain", ...equipped.map((m) => m.id)].join(
+        ":",
+      );
+      game.modifierFlags = boon
+        ? voyageBoon(boon, game.rulesVersion).modifiers
+        : {};
+      game.equippedModules = equipped;
+      for (const order of game.customerCards) {
+        const logs: string[] = [];
+        const quote = quoteOrder(game, order);
+        const draw = voyageRandom(game, `settleOrder:${order.id}`);
+        const freight =
+          quote.salvageChance && draw() < quote.salvageChance
+            ? 0
+            : quote.freight.final;
+        const audit =
+          quote.auditChance && draw() < quote.auditChance
+            ? Math.min(20, game.money + quote.reward - freight)
+            : 0;
+        const net = quote.reward - freight - audit;
+        const wallet = game.money;
+        const score = game.score;
+        completeOrder(game, order.id, logs);
+        assert.equal(order.settledGold, net, game.seatSeed);
+        assert.equal(game.money - wallet, net);
+        assert.equal(game.score - score, net);
+        for (const bonus of quote.bonuses) {
+          assert.ok(
+            logs.includes(
+              `${bonus.name} added ${bonus.gold} Gold to the reward`,
+            ),
+          );
+        }
+        assert.ok(
+          logs.some(
+            (line) =>
+              line.includes(`Freight: ${freight} Gold`) &&
+              line.includes(`${Math.abs(net)} Gold`),
+          ),
+        );
+        assert.doesNotMatch(logs.join(" "), /[-\u2013\u2014]/);
+        const after = game.money;
+        completeOrder(game, order.id, logs);
+        assert.equal(game.money, after);
+        settlements++;
+      }
+    }
+  }
+  t.diagnostic(
+    `${fits.length} module loadouts, ${BOONS.length} Boons plus no Boon, ${settlements} order settlements and retries`,
+  );
+});
+
+test("Voyage milestones survive spending and reload and reset for a new voyage", async () => {
+  const { recordVoyageMilestones } = await import("../src/lib/game/milestones");
+  const { restartGame } = await import("../src/lib/game/engine/lifecycle");
+  const state = createInitialGameState();
+  recordVoyageMilestones(state);
+  assert.equal(state.milestones, undefined);
+  state.phase = 1;
+  state.money = 500;
+  state.inventory["Linen Clothes"] = 1;
+  recordVoyageMilestones(state);
+  const saved = structuredClone(state.milestones);
+  assert.deepEqual(saved, ["gold_100", "gold_500", "first_product"]);
+  state.money = 0;
+  state.inventory["Linen Clothes"] = 0;
+  recordVoyageMilestones(state);
+  const restored = JSON.parse(JSON.stringify(state)) as typeof state;
+  restored.money = 500;
+  recordVoyageMilestones(restored);
+  assert.deepEqual(restored.milestones, saved);
+  restartGame(restored, [], 0, 1, 1);
+  recordVoyageMilestones(restored);
+  assert.equal(restored.milestones, undefined);
+});

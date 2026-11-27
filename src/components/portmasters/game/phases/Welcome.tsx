@@ -33,7 +33,7 @@ import {
   voyageMaintenance,
   voyageStartingGold,
   voyageRaidAdjustment,
-  CLASSIC_HARBOR_RULES,
+  CURRENT_HARBOR_RULES,
 } from "@/lib/game/expansion";
 import { ShipMark, ShipIcon } from "../../ShipVisualizer";
 
@@ -311,7 +311,7 @@ export function Welcome({
   onShowTutorial: () => void;
   difficulty?: Difficulty;
 }) {
-  const rulesVersion = CLASSIC_HARBOR_RULES;
+  const rulesVersion = CURRENT_HARBOR_RULES;
   const harborIds = phaseSync.ready?.requiredUserIds ?? [];
   const canStart = harborIds.length >= 2;
   const cfg = difficultyConfig(difficulty);

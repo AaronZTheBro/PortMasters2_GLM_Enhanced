@@ -5,7 +5,6 @@ import { ShipIcon } from "./ShipVisualizer";
 
 import {
   useCallback,
-  useEffect,
   useMemo,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -49,9 +48,9 @@ type ItemSummary = {
   average: number;
   min: number;
   max: number;
-  trend: "rising" | "falling" | "stable";
+  trend: "rising" | "falling" | "stable" | "first";
   points: PricePoint[];
-  percentChange: number;
+  percentChange: number | null;
 };
 
 // Constants
@@ -68,15 +67,16 @@ function summarize(points: PricePoint[]): ItemSummary | null {
   const average = Math.round(sum / prices.length);
   const min = Math.min(...prices);
   const max = Math.max(...prices);
-  let trend: ItemSummary["trend"] = "stable";
-  let percentChange = 0;
+  let trend: ItemSummary["trend"] = prices.length === 1 ? "first" : "stable";
+  let percentChange: number | null = null;
   if (prices.length >= 2) {
     const prev = prices[prices.length - 2];
-    if (prev > 0) {
-      const delta = (current - prev) / prev;
-      percentChange = Math.round(Math.abs(delta) * 100);
-      if (delta > TREND_THRESHOLD) trend = "rising";
-      else if (delta < -TREND_THRESHOLD) trend = "falling";
+    const change = current - prev;
+    if (prev !== 0) {
+      percentChange = Math.round((Math.abs(change) / Math.abs(prev)) * 100);
+    }
+    if (Math.abs(change) > TREND_THRESHOLD * Math.abs(prev)) {
+      trend = change > 0 ? "rising" : "falling";
     }
   }
   return { current, average, min, max, trend, points, percentChange };
@@ -606,20 +606,23 @@ function TrendChip({
   if (trend === "rising") {
     return (
       <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-        <TrendingUp className="h-2.5 w-2.5" /> Up {percentChange} percent
+        <TrendingUp className="h-2.5 w-2.5" /> Up
+        {percentChange !== null && ` ${percentChange} percent`}
       </span>
     );
   }
   if (trend === "falling") {
     return (
       <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300">
-        <TrendingDown className="h-2.5 w-2.5" /> Down {percentChange} percent
+        <TrendingDown className="h-2.5 w-2.5" /> Down
+        {percentChange !== null && ` ${percentChange} percent`}
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-      <Minus className="h-2.5 w-2.5" /> Stable
+      <Minus className="h-2.5 w-2.5" />{" "}
+      {trend === "first" ? "First quote" : "Stable"}
     </span>
   );
 }
@@ -923,42 +926,15 @@ export function PriceHistory({
     [history],
   );
 
-  // Default to all tracked items selected. We initialize lazily so the
-  // first paint doesn't toggle anything off; subsequent renders respect
-  // the user's choices.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
-
-  // When new items appear in history for the first time, default them on
-  // so the chart starts drawing immediately. Items already in `selected`
-  // are left alone.
-  useEffect(() => {
-    // Defer the update until after the effect body.
-    const id = setTimeout(() => {
-      setSelected((prev) => {
-        let changed = false;
-        const next = new Set(prev);
-        for (const item of trackedItems) {
-          if (!next.has(item)) {
-            next.add(item);
-            changed = true;
-          }
-        }
-        // Also prune any items that have vanished (epoch change wiped them).
-        for (const item of prev) {
-          if (!trackedItems.includes(item)) {
-            next.delete(item);
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-    }, 0);
-    return () => clearTimeout(id);
-  }, [trackedItems]);
+  const selected = useMemo(
+    () => new Set(trackedItems.filter((item) => !hidden.has(item))),
+    [trackedItems, hidden],
+  );
 
   const toggleItem = useCallback((item: string) => {
-    setSelected((prev) => {
+    setHidden((prev) => {
       const next = new Set(prev);
       if (next.has(item)) next.delete(item);
       else next.add(item);
@@ -968,17 +944,14 @@ export function PriceHistory({
 
   const setAll = useCallback(
     (value: boolean) => {
-      setSelected((prev) => {
-        if (value) return new Set(trackedItems);
-        // "Clear" only clears the currently visible (filtered) items so
-        // the user can thin out a category without nuking their full
-        // selection.
-        const q = search.trim().toLowerCase();
-        const visible = trackedItems.filter(
-          (i) => q.length === 0 || i.toLowerCase().includes(q),
-        );
+      const query = search.trim().toLowerCase();
+      setHidden((prev) => {
         const next = new Set(prev);
-        for (const item of visible) next.delete(item);
+        for (const item of trackedItems) {
+          if (!item.toLowerCase().includes(query)) continue;
+          if (value) next.delete(item);
+          else next.add(item);
+        }
         return next;
       });
     },
@@ -1009,12 +982,6 @@ export function PriceHistory({
   }, [trackedItems, history]);
 
   const hasAnyHistory = trackedItems.length > 0;
-  const visibleSelected = useMemo(
-    () =>
-      new Set([...selected].filter((i) => history[i] && history[i].length > 0)),
-    [selected, history],
-  );
-
   return (
     <section
       className={cn(
@@ -1081,7 +1048,7 @@ export function PriceHistory({
               <div className="rounded-xl border border-teal-500/10 bg-teal-500/[0.03] p-2.5">
                 <LineChart
                   history={history}
-                  selectedItems={visibleSelected}
+                  selectedItems={selected}
                   resolveColor={resolveColor}
                 />
               </div>
@@ -1110,7 +1077,7 @@ export function PriceHistory({
                       item={item}
                       summary={summary}
                       color={resolveColor(item) ?? "#64748b"}
-                      visible={visibleSelected.has(item)}
+                      visible={selected.has(item)}
                       onToggle={() => toggleItem(item)}
                     />
                   ))}

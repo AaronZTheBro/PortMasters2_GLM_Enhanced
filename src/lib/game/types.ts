@@ -1,6 +1,7 @@
 // =====================================================================
 // PortMasters 2: game state types
 // =====================================================================
+import type { MilestoneId } from "./milestones";
 import {
   ITEMS,
   STARTING_STOCK,
@@ -115,6 +116,7 @@ export type Loan = {
 };
 
 export type GameState = {
+  milestones?: MilestoneId[];
   inventory: Record<string, number>;
   money: number;
   score: number;
@@ -143,6 +145,7 @@ export type GameState = {
   scoutedOrder?: OrderCard;
   scoutedOrders?: OrderCard[];
   plannedOrders?: OrderCard[];
+  announcedBuyers?: { round: number; buyers: OrderCard[] };
   workshopContracts?: { round: number; item: string; quantity: number }[];
   // The room's voyage epoch (see Room.voyageEpoch in prisma/schema.prisma),
   // stamped onto this state when the voyage is created and folded into the
@@ -350,6 +353,7 @@ export function createInitialGameState(
 ): GameState {
   const cfg = difficultyConfig(difficulty);
   return {
+    milestones: undefined,
     inventory: initialInventory(),
     money: voyageStartingGold(difficulty, rules.version) + startingGoldBonus,
     difficulty,
@@ -370,6 +374,7 @@ export function createInitialGameState(
     scoutedOrder: undefined,
     scoutedOrders: undefined,
     plannedOrders: undefined,
+    announcedBuyers: undefined,
     workshopContracts: undefined,
     renownLevel,
     brokersFavorUsed: false,

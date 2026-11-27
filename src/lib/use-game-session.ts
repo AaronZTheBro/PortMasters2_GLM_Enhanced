@@ -7,6 +7,7 @@ import {
   WORD_ON_THE_DOCKS_LEDGER_ENTRY,
 } from "@/lib/game/constants";
 import { api } from "@/lib/api";
+import { recordVoyageMilestones } from "@/lib/game/milestones";
 import type { Socket } from "socket.io-client";
 import {
   claimWordOnTheDocksReward,
@@ -97,6 +98,7 @@ function reducer(state: SessionState, action: Action): SessionState {
         g.harborPulse = cp.harborPulse ?? {};
         snapToCheckpoint(g, action.ctx, cp.round, cp.phase, logs);
       }
+      recordVoyageMilestones(g);
       return {
         ...state,
         game: g,
@@ -112,6 +114,7 @@ function reducer(state: SessionState, action: Action): SessionState {
       const logs = [...state.logs];
       const before = logs.length;
       action.fn(game, logs);
+      recordVoyageMilestones(game);
       const newLines = logs.slice(before);
       if (logs.length > LEDGER_LINE_CAP)
         logs.splice(0, logs.length - LEDGER_LINE_CAP);
@@ -260,13 +263,17 @@ export function useGameSession(
             ),
           );
           game.lastBoonId ??=
-            BOONS.find(({ modifiers }) => {
-              const keys = Object.keys(modifiers);
-              return (
-                keys.length === Object.keys(game.modifierFlags).length &&
-                keys.every((key) => modifiers[key] === game.modifierFlags[key])
-              );
-            })?.id ?? null;
+            BOONS.map((boon) => voyageBoon(boon, version)).find(
+              ({ modifiers }) => {
+                const keys = Object.keys(modifiers);
+                return (
+                  keys.length === Object.keys(game.modifierFlags).length &&
+                  keys.every(
+                    (key) => modifiers[key] === game.modifierFlags[key],
+                  )
+                );
+              },
+            )?.id ?? null;
           game.boonSwapUsed = game.boonSwapUsed ?? false;
           game.moduleSwapUsed = game.moduleSwapUsed ?? false;
           game.pirateAttackResolved = game.pirateAttackResolved ?? false;
@@ -314,6 +321,7 @@ export function useGameSession(
           const needsDocksReward = docksWon && !game.docksRewardClaimed;
           const restored = needsDocksReward ? { ...game } : game;
           if (needsDocksReward) claimWordOnTheDocksReward(restored, logs);
+          recordVoyageMilestones(restored);
           dispatch({ type: "INIT", game: restored, logs });
           dispatch({
             type: "SAVE_STATUS",
@@ -355,64 +363,40 @@ export function useGameSession(
   const statusPhase = state.game.defaultedDebt
     ? "bankruptcy"
     : state.game.phase;
-  const broadcastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { currentRound, voyageEpoch, money, score, shipLevel, gameOver } =
+    state.game;
   useEffect(() => {
     if (!enabled || !state.loaded || !socket) return;
-    if (broadcastTimer.current) clearTimeout(broadcastTimer.current);
-    broadcastTimer.current = setTimeout(() => {
+    const sendStatus = () =>
       socket.emit("game:status", {
         roomId,
-        round: state.game.currentRound,
+        round: currentRound,
         phase: statusPhase,
-        phaseLabel: phaseLabel({
-          phase: statusPhase,
-          currentRound: state.game.currentRound,
-        }),
-        voyageEpoch: state.game.voyageEpoch,
-        gold: state.game.money,
-        reputation: state.game.score,
-        shipLevel: state.game.shipLevel,
-        gameOver: state.game.gameOver,
+        phaseLabel: phaseLabel({ phase: statusPhase, currentRound }),
+        voyageEpoch,
+        gold: money,
+        reputation: score,
+        shipLevel,
+        gameOver,
       });
-    }, 120);
+    const update = setTimeout(sendStatus, 120);
+    const heartbeat = setInterval(sendStatus, 8000);
     return () => {
-      if (broadcastTimer.current) clearTimeout(broadcastTimer.current);
+      clearTimeout(update);
+      clearInterval(heartbeat);
     };
-  }, [state.game, state.loaded, statusPhase, socket, roomId, enabled]);
-
-  // Heartbeat: broadcast status again every 8s so the server cache stays
-  // fresh and late joiners (or reconnects after a realtime restart) hydrate.
-  useEffect(() => {
-    if (!enabled || !state.loaded || !socket) return;
-    const t = setInterval(() => {
-      socket.emit("game:status", {
-        roomId,
-        round: state.game.currentRound,
-        phase: statusPhase,
-        phaseLabel: phaseLabel({
-          phase: statusPhase,
-          currentRound: state.game.currentRound,
-        }),
-        voyageEpoch: state.game.voyageEpoch,
-        gold: state.game.money,
-        reputation: state.game.score,
-        shipLevel: state.game.shipLevel,
-        gameOver: state.game.gameOver,
-      });
-    }, 8000);
-    return () => clearInterval(t);
   }, [
+    enabled,
     state.loaded,
     socket,
     roomId,
-    enabled,
-    state.game.currentRound,
+    currentRound,
     statusPhase,
-    state.game.voyageEpoch,
-    state.game.money,
-    state.game.score,
-    state.game.shipLevel,
-    state.game.gameOver,
+    voyageEpoch,
+    money,
+    score,
+    shipLevel,
+    gameOver,
   ]);
 
   const saveTail = useRef<Promise<void>>(Promise.resolve());

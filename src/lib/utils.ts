@@ -22,3 +22,10 @@ export function formatGoldProceeds(amount: number): string {
 export function formatReputation(amount: number): string {
   return amount < 0 ? `${Math.abs(amount)} below zero` : String(amount);
 }
+
+export function reputationActivityText(detail: string): string {
+  return detail.replace(
+    /^[-−]([\d,]+) Reputation$/i,
+    "Reputation $1 below zero",
+  );
+}

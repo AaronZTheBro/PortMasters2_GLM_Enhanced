@@ -2,7 +2,7 @@
 
 import { incomeTaxDue, quoteShipUpgrade } from "@/lib/game/engine/pricing";
 import { harborTrading, rebalanced } from "@/lib/game/expansion";
-import { voyageBoon } from "@/lib/game/pools";
+import { unlockedBoons } from "@/lib/game/pools";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,8 +43,6 @@ import {
   MODULES_TIER1,
   MODULES_TIER2,
   type Module,
-  type Boon,
-  BOONS,
 } from "@/lib/game/constants";
 import type { GameState } from "@/lib/game/types";
 import { NEW_MODULES } from "@/lib/game/expansion";
@@ -107,9 +105,7 @@ function moduleTierOf(mod: Module): "common" | "rare" | "legendary" {
   return MODULE_TIER_INDEX[mod.id] ?? "common";
 }
 
-// Module ↔ Boon synergy map. Curated, decorative only: surfaces boons that
-// pair well with a given module so the player can plan across phases. Does
-// not touch game logic.
+// Relevant Boons come from the next round's voyage catalog.
 const MODULE_SYNERGIES: Record<string, string[]> = {
   silk_monopoly: ["silk_wind", "buyers_festival"],
   silk_market_charter: ["buyers_festival"],
@@ -118,25 +114,15 @@ const MODULE_SYNERGIES: Record<string, string[]> = {
   traveling_commission: ["market_momentum"],
   storm_dividend: ["safe_anchorage"],
   wage_ledger: ["resourceful_crew"],
-  tax_evasion: ["tax_shelter", "frontier_tariff_relief"],
+  tax_evasion: ["frontier_tariff_relief"],
   artisans_workshop: ["artisan_inspiration", "master_apprentice"],
-  bulk_hauler: ["favorable_tides"],
   kiln_cellar: ["kiln_and_forge_guild"],
   foreign_quarter_pass: ["exotic_treasures"],
   fleet_of_treasures: ["exotic_treasures"],
   persian_dome_compass: ["deep_sea_escort_pact"],
-  salvage_crane: ["favorable_tides"],
-  overdrive_engine: ["favorable_tides"],
   bureau_token: ["kiln_and_forge_guild"],
   smugglers_hold: ["tax_shelter", "merchant_charm"],
 };
-
-function synergisticBoons(mod: Module): Boon[] {
-  const ids = MODULE_SYNERGIES[mod.id] ?? [];
-  return ids
-    .map((id) => BOONS.find((b) => b.id === id))
-    .filter((b): b is Boon => Boolean(b));
-}
 
 function cargoUnitsOf(game: GameState): number {
   return Object.values(game.inventory).reduce(
@@ -769,20 +755,12 @@ function ModuleCard({
 }) {
   const tier = moduleTierOf(mod);
   const style = MODULE_TIER_STYLE[tier];
-  const synergies = synergisticBoons(mod)
-    .filter(
-      ({ id }) =>
-        harborTrading(game) ||
-        !["buyers_festival", "market_momentum", "resourceful_crew"].includes(
-          id,
-        ),
-    )
-    .map((boon) => voyageBoon(boon, game.rulesVersion));
-  const similar = game.equippedModules.filter(
-    (eq) =>
-      eq.id !== mod.id &&
-      synergisticBoons(eq).some((b) => synergies.some((s) => s.id === b.id)),
-  );
+  const synergies = unlockedBoons(
+    game.difficulty,
+    game.currentRound + 1,
+    game.rulesVersion,
+    game.specialties,
+  ).filter(({ id }) => MODULE_SYNERGIES[mod.id]?.includes(id));
 
   return (
     <motion.div
@@ -878,9 +856,7 @@ function ModuleCard({
               <Ruler className="h-3 w-3" />
               {slotsAvailable
                 ? "Adds to empty slot"
-                : similar.length > 0
-                  ? `Compare with ${similar.length} similar`
-                  : "Compare with equipped"}
+                : "Compare with equipped modules"}
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="max-w-[240px] text-xs">

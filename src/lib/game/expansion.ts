@@ -7,6 +7,7 @@ import {
   REBALANCED_RULES,
   OPEN_HARBOR_RULES,
   CLASSIC_HARBOR_RULES,
+  revisedHarbor,
 } from "./rules-version";
 export {
   CLASSIC_RULES,
@@ -14,6 +15,10 @@ export {
   REBALANCED_RULES,
   OPEN_HARBOR_RULES,
   CLASSIC_HARBOR_RULES,
+  REVISED_HARBOR_RULES,
+  PRE_TUNING_HARBOR_RULES,
+  CURRENT_HARBOR_RULES,
+  revisedHarbor,
 } from "./rules-version";
 
 export function openHarbor(state: { rulesVersion?: number }) {
@@ -21,7 +26,10 @@ export function openHarbor(state: { rulesVersion?: number }) {
 }
 
 export function classicHarbor(state: { rulesVersion?: number }) {
-  return state.rulesVersion === CLASSIC_HARBOR_RULES;
+  return (
+    state.rulesVersion === CLASSIC_HARBOR_RULES ||
+    revisedHarbor(state.rulesVersion)
+  );
 }
 
 export function harborTrading(state: { rulesVersion?: number }) {

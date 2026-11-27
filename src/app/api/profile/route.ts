@@ -37,6 +37,7 @@ export async function GET() {
         take: 20,
         select: {
           id: true,
+          roomId: true,
           type: true,
           detail: true,
           createdAt: true,
@@ -148,6 +149,7 @@ export async function GET() {
     difficulties,
     activities: activities.map((a) => ({
       id: a.id,
+      roomId: a.roomId,
       type: a.type,
       detail: a.detail,
       createdAt: a.createdAt,

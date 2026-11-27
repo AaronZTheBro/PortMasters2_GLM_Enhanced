@@ -37,7 +37,8 @@ import {
   REBALANCE,
   expanded,
   OPEN_HARBOR_RULES,
-  CLASSIC_HARBOR_RULES,
+  revisedHarbor,
+  classicHarbor,
   harborTrading,
   isOceanMaterial,
   specialtyGoods,
@@ -63,7 +64,7 @@ export function unlockedResources(
     difficulty,
     roundNo,
   );
-  if (rulesVersion === CLASSIC_HARBOR_RULES) {
+  if (classicHarbor({ rulesVersion })) {
     const stage = importStage(difficulty, roundNo);
     return stage === 2
       ? [...RESOURCES]
@@ -99,7 +100,7 @@ export function unlockedProducts(
     difficulty,
     roundNo,
   );
-  if (rulesVersion === CLASSIC_HARBOR_RULES) {
+  if (classicHarbor({ rulesVersion })) {
     const raw = unlockedResources(difficulty, roundNo, rulesVersion);
     return PRODUCTS.filter((item) =>
       Object.keys(RECIPES[item].materials).every((good) => raw.includes(good)),
@@ -149,7 +150,7 @@ export function unlockedBoons(
     difficulty,
     roundNo,
   );
-  if (rulesVersion === CLASSIC_HARBOR_RULES) {
+  if (classicHarbor({ rulesVersion })) {
     const stage = importStage(difficulty, roundNo);
     const choices =
       stage === 2
@@ -217,7 +218,7 @@ export function unlockedModules(
     difficulty,
     roundNo,
   );
-  if (rulesVersion === CLASSIC_HARBOR_RULES) {
+  if (classicHarbor({ rulesVersion })) {
     const stage = importStage(difficulty, roundNo);
     const choices =
       stage === 2
@@ -267,7 +268,7 @@ export function unlockedWorkerTypes(
   version?: number,
 ): WorkerType[] {
   if (version === OPEN_HARBOR_RULES) return [...WORKER_TYPES];
-  if (version === CLASSIC_HARBOR_RULES) {
+  if (classicHarbor({ rulesVersion: version })) {
     const products = unlockedProducts(difficulty, roundNo, version);
     return WORKER_TYPES.filter(({ id }) =>
       products.some((product) => canProduce(id, product)),
@@ -416,7 +417,10 @@ const HARBOR_MODULE_REVISIONS: Record<string, string> = {
 };
 
 export function voyageBoon(boon: Boon, version?: number): Boon {
-  if (version === CLASSIC_HARBOR_RULES && boon.id === "merchants_converge")
+  if (
+    classicHarbor({ rulesVersion: version }) &&
+    boon.id === "merchants_converge"
+  )
     return {
       ...boon,
       desc: "Replace one buyer, including a guild buyer, with a finished good commission and see its terms before buying.",
@@ -434,10 +438,15 @@ export function voyageBoon(boon: Boon, version?: number): Boon {
 }
 
 export function voyageModule(module: Module, version?: number): Module {
-  if (version === CLASSIC_HARBOR_RULES && module.id === "signal_lantern")
+  if (
+    classicHarbor({ rulesVersion: version }) &&
+    module.id === "signal_lantern"
+  )
     return {
       ...module,
-      desc: "See a second commission's exact terms one round ahead during buying and Artisan Management.",
+      desc: revisedHarbor(version)
+        ? "See an additional finished good commission one round ahead, with exact cargo, port, and gross reward. Check buying or Artisan Management."
+        : "See a second commission's exact terms one round ahead during buying and Artisan Management.",
     };
   if (
     harborTrading({ rulesVersion: version }) &&

@@ -11,6 +11,8 @@ import {
   REBALANCED_RULES,
   OPEN_HARBOR_RULES,
   CLASSIC_HARBOR_RULES,
+  CURRENT_HARBOR_RULES,
+  revisedHarbor,
   classicHarbor,
   harborTrading,
   rebalanced,
@@ -52,11 +54,7 @@ export function buildForecasts(
 export function readVoyageRules(
   room?: { rulesVersion: number; forecastPlan: string } | null,
 ): VoyageRules {
-  if (
-    room?.rulesVersion === REBALANCED_RULES ||
-    room?.rulesVersion === OPEN_HARBOR_RULES ||
-    room?.rulesVersion === CLASSIC_HARBOR_RULES
-  ) {
+  if (room && rebalanced(room)) {
     const saved = JSON.parse(room.forecastPlan) as
       Omit<VoyageRules, "version"> | [];
     return Array.isArray(saved)
@@ -138,13 +136,13 @@ export function buildOpenHarborRules(
   return { version, arrivals, forecasts };
 }
 
-export function buildCurrentVoyageRules(
+export function buildClassicHarborRules(
   roomId: string,
   epoch: number,
   difficulty: unknown,
+  version = CLASSIC_HARBOR_RULES,
 ): VoyageRules {
   const cfg = difficultyConfig(difficulty);
-  const version = CLASSIC_HARBOR_RULES;
   const random = createRng(`${roomId}:V${epoch}:classicHarbor`);
   const arrivals = Array.from({ length: cfg.rounds }, (_, index) =>
     pick(random, unlockedPorts(cfg.key, index + 1, version)),
@@ -156,6 +154,19 @@ export function buildCurrentVoyageRules(
   };
 }
 
+export function buildCurrentVoyageRules(
+  roomId: string,
+  epoch: number,
+  difficulty: unknown,
+): VoyageRules {
+  return buildClassicHarborRules(
+    roomId,
+    epoch,
+    difficulty,
+    CURRENT_HARBOR_RULES,
+  );
+}
+
 export function describeForecast(
   forecast: HarborForecast,
   state: { rulesVersion?: number } = {},
@@ -164,7 +175,11 @@ export function describeForecast(
     const copy = {
       market: {
         title: "Market Day",
-        detail: `Market Day lowers the price adjustment for ${forecast.item}, subject to the combined adjustment limit and rounding. Look for a featured lot.`,
+        detail: `Market Day lowers the price adjustment for ${forecast.item}, subject to the combined adjustment limit and rounding. Look for a featured lot.${
+          revisedHarbor(state.rulesVersion)
+            ? " The announced mixed buyer requests this material."
+            : ""
+        }`,
       },
       guild: {
         title: "Guild Exhibition",

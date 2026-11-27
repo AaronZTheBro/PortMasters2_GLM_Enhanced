@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type PublicUser, type RoomDetail } from "@/lib/api";
+import { api, type PublicUser, type RoomSummary } from "@/lib/api";
 import { disconnectSocket, setAuthToken } from "@/lib/realtime";
 import { AuthScreen } from "@/components/portmasters/AuthScreen";
 import { Lobby } from "@/components/portmasters/Lobby";
@@ -14,7 +14,7 @@ export default function Home() {
   const [user, setUser] = useState<PublicUser | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [restoreAttempt, setRestoreAttempt] = useState(0);
-  const [room, setRoom] = useState<RoomDetail | null>(null);
+  const [room, setRoom] = useState<RoomSummary | null>(null);
 
   // Restore the session and durable room membership together. Membership
   // defines the synchronized roster, so an active captain returns to the room.
@@ -105,29 +105,6 @@ export default function Home() {
     );
   }
 
-  if (status === "lobby") {
-    return (
-      <Lobby
-        me={user}
-        onEnterRoom={(r) => {
-          // Fetch full room detail (members + chat) before entering.
-          api
-            .getRoom(r.id)
-            .then(({ room: detail }) => {
-              setRoom(detail);
-              setStatus("game");
-            })
-            .catch(() => {
-              // Fall back to the summary if detail fetch fails.
-              setRoom({ ...r, isMember: true } as RoomDetail);
-              setStatus("game");
-            });
-        }}
-        onLogout={handleLogout}
-      />
-    );
-  }
-
   if (status === "game" && room) {
     return (
       <GameRoom
@@ -142,6 +119,14 @@ export default function Home() {
     );
   }
 
-  // Fallback to lobby.
-  return <Lobby me={user} onEnterRoom={() => {}} onLogout={handleLogout} />;
+  return (
+    <Lobby
+      me={user}
+      onEnterRoom={(joined) => {
+        setRoom(joined);
+        setStatus("game");
+      }}
+      onLogout={handleLogout}
+    />
+  );
 }

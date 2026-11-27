@@ -18,7 +18,7 @@ import {
   api,
   type ChatMessage,
   type PublicUser,
-  type RoomDetail,
+  type RoomSummary,
 } from "@/lib/api";
 import type { VoyageCompleteEvent } from "@/lib/realtime";
 import type { CaptainLegacySummary } from "@/lib/game/legacy";
@@ -27,7 +27,7 @@ import {
   WORD_ON_THE_DOCKS_REWARD,
   WORD_ON_THE_DOCKS_THRESHOLD,
 } from "@/lib/game/constants";
-import { CLASSIC_HARBOR_RULES } from "@/lib/game/expansion";
+import { CURRENT_HARBOR_RULES } from "@/lib/game/expansion";
 import { meritById } from "@/lib/game/merits";
 import { useRealtime } from "@/lib/use-realtime";
 import type { GameState } from "@/lib/game/types";
@@ -72,7 +72,12 @@ import {
   NotificationHistoryModal,
 } from "./game/GameModals";
 import { MembersPanel } from "./MembersPanel";
+import {
+  mergeChatMessages,
+  useDirectMessages,
+} from "@/lib/use-direct-messages";
 import { ChatPanel } from "./ChatPanel";
+import { SessionNotice } from "./ConnectionStatus";
 import { Avatar, MeritIcon, OnlineDot, Pill } from "./shared";
 import { NotificationCenter } from "./NotificationCenter";
 import { ThemeToggle } from "./ThemeToggle";
@@ -194,20 +199,10 @@ export function GameRoom({
   onLeave,
 }: {
   me: PublicUser;
-  room:
-    | RoomDetail
-    | (PublicUser & {
-        id: string;
-        code: string;
-        name: string;
-        isPublic: boolean;
-        host: PublicUser;
-        memberCount: number;
-        members: Array<PublicUser & { joinedAt: string }>;
-      });
+  room: RoomSummary;
   onLeave: () => void;
 }) {
-  const { socket, connected, authed, onlineUsers } = useRealtime(me);
+  const { socket, connected, authed, onlineUsers, authError } = useRealtime(me);
   // Sound effects are wired early so any later hook (the voyage complete
   // listener below) can reference `play` without running into a TDZ error
   // from accessing it before initialization.
@@ -687,8 +682,11 @@ export function GameRoom({
 
   // DM state
   const [dmTarget, setDmTarget] = useState<PublicUser | null>(null);
-  const [dmHistory, setDmHistory] = useState<ChatMessage[]>([]);
-  const dmRequest = useRef(0);
+  const { messages: dmHistory } = useDirectMessages(
+    socket,
+    me.id,
+    dmTarget?.id,
+  );
 
   // Which chat tab is showing, lifted out of the Tabs component itself so
   // a notification click can jump the user straight to the right one.
@@ -731,18 +729,10 @@ export function GameRoom({
   );
 
   const openDm = useCallback(
-    async (user: PublicUser) => {
+    (user: PublicUser) => {
       if (user.id === me.id) return;
       setWorkspaceTab("chat");
-      const request = ++dmRequest.current;
-      setDmHistory([]);
       setDmTarget(user);
-      try {
-        const { messages } = await api.getDmHistory(user.id);
-        if (dmRequest.current === request) setDmHistory(messages);
-      } catch {
-        if (dmRequest.current === request) setDmHistory([]);
-      }
     },
     [me.id],
   );
@@ -758,23 +748,23 @@ export function GameRoom({
     };
   }, []);
 
-  // Load room detail (members + chat history) on mount.
+  // Refresh history after joining or reconnecting. The roster arrives by socket.
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const { room: detail, messages } = await api.getRoom(room.id);
-        if (!alive) return;
-        setRoomMessages(messages);
-        setMembers(detail.members);
-      } catch {
-        /* ignore */
-      }
-    })();
+    if (!authed) return;
+    let active = true;
+    api
+      .getRoom(room.id)
+      .then(({ messages }) => {
+        if (active)
+          setRoomMessages((live) => mergeChatMessages(messages, live));
+      })
+      .catch(() => {
+        if (active) toast.error("Could not load the harbor chat history.");
+      });
     return () => {
-      alive = false;
+      active = false;
     };
-  }, [room.id]);
+  }, [authed, room.id]);
 
   // Pop up a 15 second notification for every action's worth of new ledger
   // entries, grouped together. A single action like ending a round can
@@ -814,15 +804,7 @@ export function GameRoom({
     const onRoomMsg = (data: { roomId: string; message: ChatMessage }) => {
       if (data.roomId !== room.id) return;
       setRoomMessages((previous) =>
-        previous.some((message) => message.id === data.message.id)
-          ? previous
-          : [
-              ...previous,
-              {
-                ...data.message,
-                mine: data.message.sender.id === me.id,
-              },
-            ],
+        mergeChatMessages(previous, [data.message]),
       );
       if (data.message.sender.id === me.id) return;
       pushNotification({
@@ -836,21 +818,6 @@ export function GameRoom({
       });
     };
     const onDm = (message: ChatMessage) => {
-      const peerId =
-        message.sender.id === me.id ? message.recipient?.id : message.sender.id;
-      if (peerId && peerId === dmTarget?.id) {
-        setDmHistory((previous) =>
-          previous.some((item) => item.id === message.id)
-            ? previous
-            : [
-                ...previous,
-                {
-                  ...message,
-                  mine: message.sender.id === me.id,
-                },
-              ],
-        );
-      }
       if (message.sender.id === me.id) return;
       pushNotification({
         icon: "✉️",
@@ -869,15 +836,7 @@ export function GameRoom({
       socket.off("chat:room", onRoomMsg);
       socket.off("chat:dm", onDm);
     };
-  }, [
-    socket,
-    room.id,
-    me.id,
-    dmTarget?.id,
-    pushNotification,
-    openDm,
-    openWorkspace,
-  ]);
+  }, [socket, room.id, me.id, pushNotification, openDm, openWorkspace]);
 
   // First time tutorial hint.
   //
@@ -1326,7 +1285,7 @@ export function GameRoom({
               me={me}
               mode="room"
               roomId={room.id}
-              initialMessages={roomMessages}
+              messages={roomMessages}
               disabled={amIMuted}
               draft={roomDraft}
               onDraftChange={setRoomDraft}
@@ -1358,8 +1317,6 @@ export function GameRoom({
               ]}
               onPick={openDm}
               onClear={() => {
-                dmRequest.current++;
-                setDmHistory([]);
                 setDmTarget(null);
               }}
             />
@@ -1430,7 +1387,7 @@ export function GameRoom({
   );
 
   const helpRules =
-    state.game.phase === 0 ? CLASSIC_HARBOR_RULES : state.game.rulesVersion;
+    state.game.phase === 0 ? CURRENT_HARBOR_RULES : state.game.rulesVersion;
   const helpSpecialties = state.game.specialties;
 
   const view = (
@@ -1495,10 +1452,14 @@ export function GameRoom({
             </div>
           )}
           <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
-            <Pill tone="emerald" className="hidden lg:inline-flex">
-              <OnlineDot online={connected && authed} size={8} />{" "}
-              {connected && authed ? "Live" : "Linking…"}
-            </Pill>
+            {authError ? (
+              <SessionNotice reason={authError} />
+            ) : (
+              <Pill tone="emerald" className="hidden lg:inline-flex">
+                <OnlineDot online={connected && authed} size={8} />{" "}
+                {connected && authed ? "Live" : "Linking…"}
+              </Pill>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -1664,7 +1625,8 @@ export function GameRoom({
                 <p className="truncate text-sm font-medium">{me.displayName}</p>
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <OnlineDot online={connected && authed} size={7} />
-                  {connected && authed ? "Connected" : "Connecting"}
+                  {authError ??
+                    (connected && authed ? "Connected" : "Connecting")}
                   {isHost ? " · Host" : ""}
                 </p>
               </div>
@@ -1874,7 +1836,7 @@ function DmTab({
             me={me}
             mode="dm"
             other={target}
-            initialMessages={history}
+            messages={history}
             draft={draft}
             onDraftChange={onDraftChange}
           />

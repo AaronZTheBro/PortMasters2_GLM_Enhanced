@@ -24,8 +24,9 @@ export function displayLedgerLine(line: string) {
     )
     .replace(/^(🏆 Final Reputation: )[-−](\d+)/, "$1$2 below zero")
     .replace(
-      /^([ \t]*💰 Reward: \d+ Gold · ⚓ Freight: \d+ Gold = 📊 )?Net Proceeds: [-−](\d+ Gold)/,
-      "$1Net Cost: $2",
+      /^([ \t]*💰 Reward: \d+ Gold · ⚓ Freight: \d+ Gold = 📊 )?Net (?:Profit|Proceeds): ([-−]?)(\d+ Gold)/,
+      (_, prefix = "", loss, amount) =>
+        `${prefix}Net ${loss ? "Cost" : "Proceeds"}: ${amount}`,
     );
 }
 
@@ -187,6 +188,28 @@ export function restartGame(
   Object.assign(state, fresh);
   logs.length = 0;
   showWelcome(state, logs);
+}
+
+export function startVoyage(
+  state: GameState,
+  ctx: GameContext,
+  rules: VoyageRules | undefined,
+  startingGoldBonus: number,
+  logs: string[],
+) {
+  if (state.phase !== 0) return;
+  if (rules && state.currentRound === 1) {
+    const opening = createInitialGameState(
+      startingGoldBonus,
+      state.renownLevel,
+      state.voyageEpoch,
+      state.difficulty,
+      rules,
+    );
+    Object.assign(state, opening);
+  }
+  state.seatSeed = ctx.seedBase;
+  startBoonDrafting(state, logs);
 }
 
 export function showWelcome(state: GameState, logs: string[]) {

@@ -4,12 +4,7 @@ import { ShipMark, ShipIcon } from "./ShipVisualizer";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  api,
-  type ChatMessage,
-  type PublicUser,
-  type RoomSummary,
-} from "@/lib/api";
+import { api, type PublicUser, type RoomSummary } from "@/lib/api";
 import { useRealtime } from "@/lib/use-realtime";
 import {
   DIFFICULTIES,
@@ -18,6 +13,7 @@ import {
   type Difficulty,
 } from "@/lib/game/difficulty";
 import { Avatar, OnlineDot, Pill } from "./shared";
+import { useDirectMessages } from "@/lib/use-direct-messages";
 import { ChatPanel } from "./ChatPanel";
 import { CaptainLegacyCard } from "./CaptainLegacyCard";
 import { ThemeToggle } from "./ThemeToggle";
@@ -26,7 +22,11 @@ import { DailyRewardBanner } from "./DailyRewardBanner";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { CaptainsDirectoryDialog } from "./CaptainsDirectoryDialog";
-import { ConnectionStatus, deriveConnectionState } from "./ConnectionStatus";
+import {
+  ConnectionStatus,
+  deriveConnectionState,
+  SessionNotice,
+} from "./ConnectionStatus";
 import { RoomFilters } from "./RoomFilters";
 import { VoyageSummaryCard } from "./VoyageSummaryCard";
 import { Button } from "@/components/ui/button";
@@ -109,7 +109,7 @@ export function Lobby({
   onEnterRoom: (room: RoomSummary) => void;
   onLogout: () => void;
 }) {
-  const { socket, connected, authed, onlineUsers } = useRealtime(me);
+  const { socket, connected, authed, onlineUsers, authError } = useRealtime(me);
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [resumeRoom, setResumeRoom] = useState<RoomSummary | null>(null);
   useEffect(() => {
@@ -165,8 +165,11 @@ export function Lobby({
 
   // DM state
   const [dmTarget, setDmTarget] = useState<PublicUser | null>(null);
-  const [dmHistory, setDmHistory] = useState<ChatMessage[]>([]);
-  const [dmLoading, setDmLoading] = useState(false);
+  const { messages: dmHistory, loading: dmLoading } = useDirectMessages(
+    socket,
+    me.id,
+    dmTarget?.id,
+  );
 
   const refreshRooms = useCallback(async () => {
     setLoadingRooms(true);
@@ -342,42 +345,11 @@ export function Lobby({
     }
   }
 
-  async function openDm(user: PublicUser) {
+  function openDm(user: PublicUser) {
     if (user.id === me.id) return;
     setDmTarget(user);
     setHubTab("messages");
-    setDmLoading(true);
-    setDmHistory([]);
-    try {
-      const { messages } = await api.getDmHistory(user.id);
-      setDmHistory(messages);
-    } catch {
-      /* ignore */
-    } finally {
-      setDmLoading(false);
-    }
   }
-
-  // Fetch DM history when the target changes.
-  const dmTargetId = dmTarget?.id;
-  useEffect(() => {
-    if (!dmTargetId) return;
-    let alive = true;
-    // openDm raises the loading flag before this effect runs. Setting it again
-    // inside the effect would only add another render.
-    api
-      .getDmHistory(dmTargetId)
-      .then(({ messages }) => {
-        if (alive) {
-          setDmHistory(messages);
-          setDmLoading(false);
-        }
-      })
-      .catch(() => alive && setDmLoading(false));
-    return () => {
-      alive = false;
-    };
-  }, [dmTargetId]);
 
   const totalOnline = onlineUsers.length;
 
@@ -400,10 +372,14 @@ export function Lobby({
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
-            <ConnectionStatus
-              state={deriveConnectionState(connected, authed)}
-              className="hidden sm:inline-flex"
-            />
+            {authError ? (
+              <SessionNotice reason={authError} />
+            ) : (
+              <ConnectionStatus
+                state={deriveConnectionState(connected, authed)}
+                className="hidden sm:inline-flex"
+              />
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -1094,7 +1070,8 @@ export function Lobby({
                           me={me}
                           mode="dm"
                           other={dmTarget}
-                          initialMessages={dmHistory}
+                          key={dmTarget.id}
+                          messages={dmHistory}
                         />
                       )
                     ) : (

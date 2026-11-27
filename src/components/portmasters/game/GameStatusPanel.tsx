@@ -23,6 +23,7 @@ import {
   unlockedWorkerTypes,
 } from "@/lib/game/pools";
 import type { ConvoyVenture } from "@/lib/use-convoy";
+import { displayLedgerLine } from "@/lib/game/engine/lifecycle";
 import { cn, formatReputation } from "@/lib/utils";
 import { itemColorResolver } from "@/lib/use-color-preference";
 import { Term } from "../Term";
@@ -57,7 +58,8 @@ export function deriveChronicleEvents(
     : currentRound;
   return logs
     .filter((entry) => entry.trim() && !/^=+$/.test(entry.trim()))
-    .map((description) => {
+    .map((line) => {
+      const description = displayLedgerLine(line);
       const header = description.match(roundHeader);
       if (header) round = Number(header[2]);
       if (header) return { round, type: "round_start", description };

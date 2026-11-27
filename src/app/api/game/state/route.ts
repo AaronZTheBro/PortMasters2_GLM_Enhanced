@@ -22,8 +22,8 @@ export async function GET(req: NextRequest) {
     db.gameState.findUnique({
       where: { userId_roomId: { userId: user.id, roomId } },
     }),
-    db.room.findUnique({
-      where: { id: roomId },
+    db.room.findFirst({
+      where: { id: roomId, members: { some: { userId: user.id } } },
       select: {
         currentRound: true,
         currentPhase: true,
@@ -37,16 +37,17 @@ export async function GET(req: NextRequest) {
       },
     }),
   ]);
-  const difficulty = room?.difficulty ?? "fair_winds";
-  const checkpoint =
-    !state && room
-      ? {
-          currentRound: room.currentRound,
-          currentPhase: room.currentPhase,
-          voyageEpoch: room.voyageEpoch,
-          harborPulse: JSON.parse(room.phasePulse),
-        }
-      : null;
+  if (!room)
+    return NextResponse.json({ error: "Harbor not found" }, { status: 404 });
+  const difficulty = room.difficulty;
+  const checkpoint = !state
+    ? {
+        currentRound: room.currentRound,
+        currentPhase: room.currentPhase,
+        voyageEpoch: room.voyageEpoch,
+        harborPulse: JSON.parse(room.phasePulse),
+      }
+    : null;
 
   return NextResponse.json({
     state: state?.data ?? null,
@@ -54,8 +55,8 @@ export async function GET(req: NextRequest) {
     revision: state?.revision ?? null,
     difficulty,
     rules: readVoyageRules(room),
-    tidewatchSurge: room?.tidewatchSurge ?? false,
-    docksWon: room?.docksWinnerId === user.id,
+    tidewatchSurge: room.tidewatchSurge,
+    docksWon: room.docksWinnerId === user.id,
   });
 }
 
@@ -92,35 +93,15 @@ export async function PUT(req: NextRequest) {
       { status: 403 },
     );
 
-  // Record integrity findings without rejecting the captain's save.
-  // Use the synchronized room round as the trusted comparison point.
-  const room = await db.room.findUnique({
-    where: { id: roomId },
-    select: { currentRound: true },
-  });
-  const snapshot = snapshotFromSave(data);
-  const verdict = snapshot
-    ? checkSave(snapshot, room?.currentRound ?? 1)
-    : { plausible: true, severity: "ok" as const, findings: [] };
-
-  // Preserve the strongest integrity mark across later saves.
-  const flag = verdict.plausible
-    ? {}
-    : {
-        integritySeverity: verdict.severity,
-        integrityNote: describeFindings(verdict.findings),
-      };
-
-  if (!verdict.plausible) {
-    console.warn(
-      `[integrity] ${verdict.severity} save user=${user.id} room=${roomId} ${describeFindings(verdict.findings)}`,
-    );
-  }
-
   const record = await db.$transaction(async (tx) => {
     const voyage = await tx.room.findUnique({
       where: { id: roomId },
-      select: { voyageEpoch: true, rulesVersion: true, forecastPlan: true },
+      select: {
+        currentRound: true,
+        voyageEpoch: true,
+        rulesVersion: true,
+        forecastPlan: true,
+      },
     });
     if (
       !voyage ||
@@ -142,6 +123,20 @@ export async function PUT(req: NextRequest) {
     });
     if (revision !== undefined && revision !== (previous?.revision ?? null))
       return null;
+    const snapshot = snapshotFromSave(data);
+    const verdict = checkSave(snapshot ?? {}, voyage.currentRound);
+    const flag =
+      verdict.plausible || previous?.integritySeverity === "impossible"
+        ? {}
+        : {
+            integritySeverity: verdict.severity,
+            integrityNote: describeFindings(verdict.findings),
+          };
+    if (!verdict.plausible) {
+      console.warn(
+        `[integrity] ${verdict.severity} save user=${user.id} room=${roomId} ${describeFindings(verdict.findings)}`,
+      );
+    }
     return tx.gameState.upsert({
       where: { userId_roomId: key },
       create: { ...key, data: json, ...flag },
