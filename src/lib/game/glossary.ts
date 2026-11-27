@@ -19,7 +19,7 @@ import { canProduce, voyageBoon, voyageModule, voyageRecipe } from "./pools";
 const GLOSSARY: Record<string, string> = {
   // Core stats
   Reputation:
-    "Your score for the voyage, earned mainly from profitable trade orders. The eligible solvent captain with the highest final Reputation is crowned Sea Master.",
+    "Ordinary orders change your Reputation by their net Gold after freight, VAT and any audit. Cargo costs and wages affect trading profit separately. The eligible solvent captain with the highest final Reputation is crowned Sea Master.",
   Gold: "Your spendable funds. Reaching zero is not an automatic loss, but failing to cover wages or maintenance at settlement causes bankruptcy.",
   VAT: "A base tax of 5% on the positive margin per finished good sold, using average recipe material prices and the recipe's base wage. Raw goods and Imperial Mandates are exempt.",
   "Income Tax":

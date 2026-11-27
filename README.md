@@ -103,7 +103,7 @@ Back up a persistent production database before changing the schema. Schema push
 
 `npm run check` runs lint, tests, and type checking.
 
-`npm run verify` runs every check and a production build.
+`npm run verify` runs lint, unit tests, the server integration test, type checking, and the production build. The balance simulations have separate commands.
 
 `npm run db:push` applies the Prisma schema to the configured SQLite database.
 
@@ -111,15 +111,15 @@ Back up a persistent production database before changing the schema. Schema push
 
 ## Voyage economy
 
-New voyages use rules version 7. Fair Winds, Open Waters, and Monsoon Season begin with 100, 100, and 90 Gold before Renown and pay 15, 18, and 22 Gold in base maintenance. Captains open at ship level zero with six lots and six ordinary buyers. The founding recipes, ordinary finished good price ranges, and charter cadence come from the original economy. Later imports replace existing offers. Hosts do not select a specialty.
+New voyages use rules version 8. Fair Winds, Open Waters, and Monsoon Season begin with 100, 100, and 90 Gold before Renown and pay 15, 18, and 22 Gold in base maintenance. Captains open at ship level zero with six lots and six ordinary buyers. The founding recipes, ordinary finished good price ranges, and charter cadence come from the original economy. Later imports replace existing offers. Hosts do not select a specialty.
 
-From round two, the local merchant posts its terms before purchases. Fair Winds also reveals a mixed buyer from round two. The other waters show a mixed buyer from round three. Ahead of Market Day, the harbor announces a buyer for the featured material and a second material. In other rounds it announces a finished good commission. Signal Lantern reveals an additional finished good commission. Both reports carry forward, even if the Lantern is replaced, and the Broker reveals other buyers. The Workshop Supplier sells the missing inputs for one recipe per round before the final round. A Broker whisper reveals the terms of one distinct existing buyer, including all requested cargo. Imperial Mandates follow their own schedule.
+From round two, the local merchant posts its terms before purchases. On even rounds of Monsoon Season, the merchant requests one unit and the first purchase lot offers exactly one at its local price. Fair Winds also reveals a mixed buyer from round two. The other waters show a mixed buyer from round three. Ahead of Market Day, the harbor announces a buyer for the featured material and a second material. From round three on Fair Winds, other visiting buyers may want raw cargo or finished goods. Returning import commissions keep their product request. Open Waters and Monsoon Season announce a finished good commission outside Market Day. Signal Lantern reveals an additional finished good commission. Both reports carry forward, even if the Lantern is replaced, and the Broker reveals other buyers. The Workshop Supplier sells the missing inputs for one recipe per round before the final round. A Broker whisper reveals the terms of one distinct existing buyer, including all requested cargo. Imperial Mandates follow their own schedule.
 
 The Port Exchange accepts all cargo at fallback prices. The first three units of a good use a higher rate each round, subject to rounding. The quote includes freight and VAT. Exchange sales earn no Reputation. Reserve the Exchange for unwanted stock or bills, and compare any resale with the original purchase cost.
 
-Upgrade in the Shipyard to open module slots. Before the final round, each Shipyard visit allows one installation or swap. The last draft excludes modules whose effects would arrive too late. The Shipyard sets aside Income Tax before upgrades, voluntary loan repayments, and Convoy Venture contributions. A new module affects the following round's tax. Active voyages on rules versions 1 through 6 retain their saved boards, prices, and effects.
+Upgrade in the Shipyard to open module slots. Before the final round, each Shipyard visit allows one installation or swap. The last draft excludes modules whose effects would arrive too late. The Shipyard sets aside Income Tax before upgrades, voluntary loan repayments, and Convoy Venture contributions. A new module affects the following round's tax. Active voyages on rules versions 1 through 7 retain their saved boards, prices, and effects.
 
-The comparison needs the Git history containing commit `773df1c`. Run `npm run test:balance:harbor` to compare the playable original at commit `773df1c` with versions 4, 5, 6, and 7 on 150 shared seeds. The opening report measures what the starting hold can sell to ordinary buyers. Full voyage reports track cash, trading margins, stock before final Exchange sales, and module choices for seven solo strategies. The recovery report compares the same captain with and without a round four cash loss. Live multiplayer standings are covered by the integration test.
+Run `npm run test:balance:harbor` to compare the playable original at commit `773df1c` with versions 4 through 8 on 150 shared seeds. The command reads the original engine from local Git history. The opening report measures what the starting hold can sell to ordinary buyers. Full voyage reports track cash, trading margins, stock before final Exchange sales, and module choices for seven solo strategies. The recovery report compares the same captain with and without a round four cash loss. It also reports how often captains survive the least valuable quarter of opening draws without this extra loss, including draws tied at the cutoff. Live multiplayer standings are covered by the integration test.
 
 ## Verification
 

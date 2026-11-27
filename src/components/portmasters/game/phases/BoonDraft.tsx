@@ -27,6 +27,7 @@ import {
   BOONS_TIER0,
   BOONS_TIER1,
   BOONS_TIER2,
+  PRODUCTS,
   type Boon,
 } from "@/lib/game/constants";
 import { swapBoonChoices } from "@/lib/game/engine";
@@ -36,7 +37,7 @@ import {
 } from "@/lib/game/engine/boons";
 import type { GameState } from "@/lib/game/types";
 import type { PublicUser } from "@/lib/api";
-import { NEW_BOONS, harborTrading } from "@/lib/game/expansion";
+import { NEW_BOONS, harborTrading, rebalanced } from "@/lib/game/expansion";
 import { voyageBoon } from "@/lib/game/pools";
 import { cn } from "@/lib/utils";
 import { ReadyBar } from "../ReadyBar";
@@ -128,9 +129,9 @@ function isRecommended(boon: Boon, game: GameState): boolean {
     case "favorable_tides":
       return game.shipLevel >= 1;
     case "merchants_converge":
-      return game.orderCount === 0;
+      return rebalanced(game) && PRODUCTS.some((item) => inv[item] > 0);
     case "frontier_tariff_relief":
-      return workerCount >= 2;
+      return PRODUCTS.some((item) => inv[item] > 0);
     default:
       return false;
   }

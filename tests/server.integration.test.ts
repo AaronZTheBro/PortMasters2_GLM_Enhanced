@@ -1,3 +1,7 @@
+import {
+  MAX_PLAUSIBLE_SCORE_PER_ROUND,
+  plausibleCeiling,
+} from "../src/lib/game/integrity";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -10,6 +14,7 @@ import { io, type Socket } from "socket.io-client";
 import {
   CURRENT_HARBOR_RULES,
   REVISED_HARBOR_RULES,
+  PRE_TUNING_HARBOR_RULES,
   type VoyageRules,
 } from "../src/lib/game/expansion";
 import {
@@ -290,6 +295,14 @@ test(
       });
       const room = created.data.room as { id: string; code: string };
 
+      const beforeJoining = await fetch(
+        `${baseUrl}/api/game/state?roomId=${room.id}`,
+        {
+          headers: { cookie: betaCookie },
+        },
+      );
+      assert.equal(beforeJoining.status, 404);
+
       const joined = await request("/api/rooms/join", {
         cookie: betaCookie,
         body: { code: room.code },
@@ -316,6 +329,37 @@ test(
       betaSocket.emit("room:join", { roomId: room.id });
       await twoMemberRoster;
 
+      const alphaId = alphaRegistration.data.user.id;
+      const betaId = betaRegistration.data.user.id;
+      const historyDb = new DatabaseSync(databasePath);
+      try {
+        const insertMessage = historyDb.prepare(
+          "INSERT INTO Message (id, roomId, senderId, recipientId, content, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+        );
+        for (let i = 0; i < 204; i++) {
+          const time = new Date(Date.UTC(2020, 0, 1, 0, 0, i)).toISOString();
+          insertMessage.run(
+            `direct ${i}`,
+            null,
+            alphaId,
+            betaId,
+            `Direct ${i}`,
+            time,
+          );
+          if (i < 104)
+            insertMessage.run(
+              `room ${i}`,
+              room.id,
+              alphaId,
+              null,
+              `Harbor ${i}`,
+              time,
+            );
+        }
+      } finally {
+        historyDb.close();
+      }
+
       const chatReceived = waitForEvent<{
         message: { content: string; sender: { username: string } };
       }>(
@@ -323,10 +367,13 @@ test(
         "chat:room",
         ({ message }) => message.content === "Ready to sail",
       );
-      betaSocket.emit("chat:room", {
-        roomId: room.id,
-        content: "Ready to sail",
-      });
+      const delivered = await betaSocket
+        .timeout(5000)
+        .emitWithAck("chat:room", {
+          roomId: room.id,
+          content: "Ready to sail",
+        });
+      assert.equal(delivered, null);
       const chat = await chatReceived;
       assert.equal(chat.message.sender.username, "integration_beta");
 
@@ -334,6 +381,20 @@ test(
         cookie: alphaCookie,
       });
       assert.equal(roomDetail.data.messages.at(-1).content, "Ready to sail");
+
+      assert.equal(roomDetail.data.messages.length, 100);
+      assert.equal(roomDetail.data.messages[0].content, "Harbor 5");
+      const sent = await alphaSocket.timeout(5000).emitWithAck("chat:dm", {
+        recipientId: betaId,
+        content: "Meet at the pier",
+      });
+      assert.equal(sent, null);
+      const direct = await request(`/api/messages/dm/${alphaId}`, {
+        cookie: betaCookie,
+      });
+      assert.equal(direct.data.messages.length, 200);
+      assert.equal(direct.data.messages[0].content, "Direct 5");
+      assert.equal(direct.data.messages.at(-1).content, "Meet at the pier");
 
       const activeRoom = await request("/api/rooms/active", {
         cookie: betaCookie,
@@ -568,8 +629,6 @@ test(
         assert.deepEqual((await checkpoint).harborPulse, pulse);
       }
 
-      const alphaId = alphaRegistration.data.user.id;
-      const betaId = betaRegistration.data.user.id;
       const setupConvoyFunds = async (
         cookie: string,
         gold: number,
@@ -745,15 +804,7 @@ test(
       assert.deepEqual((await resetVentures).ventures, []);
 
       const fixtures = [];
-      for (const version of [
-        1,
-        2,
-        3,
-        4,
-        5,
-        REVISED_HARBOR_RULES,
-        CURRENT_HARBOR_RULES,
-      ]) {
+      for (let version = 1; version <= CURRENT_HARBOR_RULES; version++) {
         const difficulty = "open_waters";
         const created = await request("/api/rooms", {
           cookie: alphaCookie,
@@ -769,6 +820,12 @@ test(
           buildOpenHarborRules(id, epoch, difficulty),
           buildClassicHarborRules(id, epoch, difficulty),
           buildClassicHarborRules(id, epoch, difficulty, REVISED_HARBOR_RULES),
+          buildClassicHarborRules(
+            id,
+            epoch,
+            difficulty,
+            PRE_TUNING_HARBOR_RULES,
+          ),
           buildCurrentVoyageRules(id, epoch, difficulty),
         ][version - 1];
         const state = createInitialGameState(0, 1, epoch, difficulty, rules);
@@ -847,6 +904,38 @@ test(
         });
         const finished = (await request(path, { cookie: alphaCookie })).data;
         assert.equal(JSON.parse(finished.state).phase, "endgame");
+        if (rules.version === CURRENT_HARBOR_RULES) {
+          const auditDb = new DatabaseSync(databasePath);
+          try {
+            auditDb
+              .prepare(
+                "UPDATE GameState SET integritySeverity = 'impossible', integrityNote = 'Earlier finding' WHERE roomId = ? AND userId = ?",
+              )
+              .run(id, alphaId);
+            const data = {
+              ...game,
+              score:
+                plausibleCeiling(
+                  MAX_PLAUSIBLE_SCORE_PER_ROUND,
+                  game.maxRounds,
+                ) / 2,
+            };
+            await request("/api/game/state", {
+              cookie: alphaCookie,
+              method: "PUT",
+              body: { roomId: id, data, revision: finished.revision },
+            });
+            const mark = auditDb
+              .prepare(
+                "SELECT integritySeverity, integrityNote FROM GameState WHERE roomId = ? AND userId = ?",
+              )
+              .get(id, alphaId);
+            assert.equal(mark?.integritySeverity, "impossible");
+            assert.equal(mark?.integrityNote, "Earlier finding");
+          } finally {
+            auditDb.close();
+          }
+        }
         assert.deepEqual(finished.rules, rules);
       }
     } finally {

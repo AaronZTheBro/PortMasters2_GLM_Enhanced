@@ -16,6 +16,7 @@ import {
 import { describeForecast } from "../forecast";
 import {
   expanded,
+  CURRENT_HARBOR_RULES,
   revisedHarbor,
   forecastFor,
   openHarbor,
@@ -482,11 +483,16 @@ function classicHarborOrders(state: GameState, ctx: GameContext, random: Rng) {
     COMMODITIES[item].ports.includes(port),
   );
   const staple = pick(random, local.length ? local : founding.resources);
+  const smallShipment =
+    state.rulesVersion === CURRENT_HARBOR_RULES &&
+    state.difficulty === "monsoon" &&
+    state.currentRound % 2 === 0;
+  const quantity = randInt(random, 2, 3);
   const merchant = genRawOrder(
     random,
     founding,
     staple,
-    randInt(random, 2, 3),
+    smallShipment ? 1 : quantity,
     port,
   );
   cards[0] = { id: 0, ...merchant, buyer: "merchant" };
@@ -495,11 +501,19 @@ function classicHarborOrders(state: GameState, ctx: GameContext, random: Rng) {
     ctx,
   );
   const announced = pastShipment && random() < 0.3 ? pastShipment : null;
-  cards[1] = {
-    id: 1,
-    ...genProductOrder(random, announced ? pools : founding, announced, 1),
-    buyer: "commission",
-  };
+  // Keep the commission draw in the seed sequence for the rest of the board.
+  const commission = genProductOrder(
+    random,
+    announced ? pools : founding,
+    announced,
+    1,
+  );
+  const visitingBuyer =
+    state.rulesVersion === CURRENT_HARBOR_RULES &&
+    state.difficulty === "fair_winds" &&
+    state.currentRound >= 3 &&
+    !announced;
+  if (!visitingBuyer) cards[1] = { id: 1, ...commission, buyer: "commission" };
   const stapleDraw = pick(random, STAPLE_CHOICES);
   const event = forecastFor(state);
   const first =
@@ -608,7 +622,9 @@ function classicHarborLots(
         isProductCard: false,
       };
     };
-    cards[0] = localLot(0, type, required + randInt(random, 0, 1));
+    const spare = randInt(random, 0, 1);
+    const shipment = required === 1 ? 1 : required + spare;
+    cards[0] = localLot(0, type, shipment);
     if (state.currentRound >= 3) {
       const extra = mixed.resources.find((good) => good.type !== type)!;
       cards[1] = localLot(

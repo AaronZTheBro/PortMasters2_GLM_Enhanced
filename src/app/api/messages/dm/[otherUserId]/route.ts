@@ -30,7 +30,7 @@ export async function GET(
         { senderId: otherUserId, recipientId: user.id },
       ],
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 200,
     include: {
       sender: {
@@ -41,7 +41,7 @@ export async function GET(
 
   return NextResponse.json({
     other: publicUser(other),
-    messages: msgs.map((m) => ({
+    messages: msgs.reverse().map((m) => ({
       id: m.id,
       content: m.content,
       createdAt: m.createdAt,

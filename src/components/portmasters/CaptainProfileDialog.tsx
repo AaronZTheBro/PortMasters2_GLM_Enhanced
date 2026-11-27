@@ -220,7 +220,7 @@ const STAT_CARDS: Array<{
   },
   {
     key: "bestScore",
-    label: "Best Score",
+    label: "Best Reputation",
     icon: Trophy,
     tone: "from-violet-500/15 to-violet-500/5",
     accent: "text-violet-600 dark:text-violet-300",
@@ -632,7 +632,7 @@ function ProfileBody({
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium">{d.name}</div>
                       <div className="text-[10px] text-muted-foreground">
-                        Best score: {d.bestScore.toLocaleString()}
+                        Best Reputation: {d.bestScore.toLocaleString()}
                       </div>
                     </div>
                     {d.crowns > 0 && (

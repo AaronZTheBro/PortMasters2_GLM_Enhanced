@@ -24,8 +24,9 @@ export function displayLedgerLine(line: string) {
     )
     .replace(/^(🏆 Final Reputation: )[-−](\d+)/, "$1$2 below zero")
     .replace(
-      /^([ \t]*💰 Reward: \d+ Gold · ⚓ Freight: \d+ Gold = 📊 )?Net Proceeds: [-−](\d+ Gold)/,
-      "$1Net Cost: $2",
+      /^([ \t]*💰 Reward: \d+ Gold · ⚓ Freight: \d+ Gold = 📊 )?Net (?:Profit|Proceeds): ([-−]?)(\d+ Gold)/,
+      (_, prefix = "", loss, amount) =>
+        `${prefix}Net ${loss ? "Cost" : "Proceeds"}: ${amount}`,
     );
 }
 

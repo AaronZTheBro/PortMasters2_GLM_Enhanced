@@ -1,6 +1,7 @@
 // =====================================================================
 // PortMasters 2: game state types
 // =====================================================================
+import type { MilestoneId } from "./milestones";
 import {
   ITEMS,
   STARTING_STOCK,
@@ -115,6 +116,7 @@ export type Loan = {
 };
 
 export type GameState = {
+  milestones?: MilestoneId[];
   inventory: Record<string, number>;
   money: number;
   score: number;
@@ -351,6 +353,7 @@ export function createInitialGameState(
 ): GameState {
   const cfg = difficultyConfig(difficulty);
   return {
+    milestones: undefined,
     inventory: initialInventory(),
     money: voyageStartingGold(difficulty, rules.version) + startingGoldBonus,
     difficulty,

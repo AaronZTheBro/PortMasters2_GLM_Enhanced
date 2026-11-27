@@ -12,8 +12,11 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
 
-  const room = await db.room.findUnique({
-    where: { id },
+  const room = await db.room.findFirst({
+    where: {
+      id,
+      OR: [{ isPublic: true }, { members: { some: { userId: user.id } } }],
+    },
     include: {
       members: {
         include: {
@@ -27,7 +30,7 @@ export async function GET(
       },
       messages: {
         where: { recipientId: null },
-        orderBy: { createdAt: "asc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: 100,
         include: {
           sender: {
@@ -59,7 +62,7 @@ export async function GET(
       })),
       isMember,
     },
-    messages: room.messages.map((m) => ({
+    messages: (isMember ? room.messages : []).reverse().map((m) => ({
       id: m.id,
       content: m.content,
       createdAt: m.createdAt,

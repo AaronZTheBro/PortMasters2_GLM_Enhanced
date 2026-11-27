@@ -55,7 +55,7 @@ const SORT_OPTIONS: Array<{
   { key: "renown", label: "Renown" },
   { key: "voyages", label: "Voyages" },
   { key: "crowns", label: "Crowns" },
-  { key: "best", label: "Best score" },
+  { key: "best", label: "Best Reputation" },
   { key: "joined", label: "Joined" },
   { key: "name", label: "Name" },
 ];

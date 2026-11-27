@@ -35,51 +35,40 @@ import { quoteRecipe } from "./workers";
 import { startPhase1 } from "./market";
 
 export function draftBoons(state: GameState, reroll = false): Boon[] {
-  const gs = {
-    money: state.money,
-    inventory: state.inventory,
-    weavers: state.workers.weaver ?? [],
-    master_weavers: state.workers.master ?? [],
-    sachet_makers: state.workers.sachet_maker ?? [],
-  };
+  const { inventory, money, workers } = state;
+  const hasArtisan = Object.values(workers).some((crew) => crew.length > 0);
   const weightFuncs: Record<string, () => number> = {
     silk_wind: () =>
-      (gs.inventory["Silk"] || 0) > 2 || gs.master_weavers.length > 0
-        ? 2.5
-        : 0.8,
+      (inventory.Silk || 0) > 2 || workers.master?.length ? 2.5 : 0.8,
     favorable_tides: () => 1.5,
-    resourceful_crew: () =>
-      Object.values(state.workers).some((crew) => crew.length) ? 3 : 1.3,
-    buyers_festival: () => (gs.inventory.Silk >= 2 ? 3 : 1),
+    resourceful_crew: () => (hasArtisan ? 3 : 1.3),
+    buyers_festival: () => (inventory.Silk >= 2 ? 3 : 1),
     market_momentum: () =>
-      Object.entries(state.inventory).some(
+      Object.entries(inventory).some(
         ([item, amount]) => RECIPES[item] && amount > 0,
       )
         ? 3
         : 0.8,
-    merchant_charm: () => (gs.money > 40 ? 2.0 : 0.5),
-    artisan_inspiration: () =>
-      Object.values(state.workers).some((crew) => crew.length > 0) ? 3.0 : 0.0,
-    emergency_loan: () => (gs.money < 30 ? 4.0 : 0.2),
+    merchant_charm: () => (money > 40 ? 2.0 : 0.5),
+    artisan_inspiration: () => (hasArtisan ? 3 : 0),
+    emergency_loan: () => (money < 30 ? 4.0 : 0.2),
     tax_shelter: () => 1.5,
     hemp_monopoly: () =>
-      (gs.inventory["Hemp"] || 0) < 5 || gs.weavers.length > 0 ? 2.0 : 1.0,
+      (inventory.Hemp || 0) < 5 || workers.weaver?.length ? 2.0 : 1.0,
     master_apprentice: () => 1.5,
     // Tier one weights favor the conditions each boon rewards.
-    farsight: () => (gs.money < 40 ? 2.5 : 1.2),
+    farsight: () => (money < 40 ? 2.5 : 1.2),
     kiln_and_forge_guild: () =>
-      (gs.inventory["Copper Ore"] ?? 0) > 1 ||
-      (gs.inventory["Porcelain Clay"] ?? 0) > 1
+      (inventory["Copper Ore"] ?? 0) > 1 ||
+      (inventory["Porcelain Clay"] ?? 0) > 1
         ? 2.8
         : 1.0,
     frontier_tariff_relief: () =>
-      gs.sachet_makers.length > 0 || gs.master_weavers.length > 0 ? 3.0 : 0.8,
+      workers.sachet_maker?.length || workers.master?.length ? 3.0 : 0.8,
     // Tier two uses the same weighted selection contract.
     exotic_treasures: () =>
-      (gs.inventory["Spices"] ?? 0) > 1 || (gs.inventory["Pearls"] ?? 0) > 1
-        ? 3.0
-        : 1.0,
-    deep_sea_escort_pact: () => (gs.money > 60 ? 1.8 : 3.2),
+      (inventory.Spices ?? 0) > 1 || (inventory.Pearls ?? 0) > 1 ? 3.0 : 1.0,
+    deep_sea_escort_pact: () => (money > 60 ? 1.8 : 3.2),
     merchants_converge: () => 1.6,
   };
   const usesExpandedRules = expanded(state);
@@ -198,9 +187,6 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
           ].includes(boon.id),
     );
     if (safe.length) take(weightedPick(random, safe));
-    const hasRecipe = Object.values(state.workers).some(
-      (crew) => crew.length > 0,
-    );
     const focused = available.filter(([boon]) => {
       if (
         harbor &&
@@ -210,7 +196,7 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
       )
         return (weightFuncs[boon.id]?.() ?? 0) >= 3;
       if (
-        hasRecipe &&
+        hasArtisan &&
         [
           "artisan_inspiration",
           "guild_turnover",

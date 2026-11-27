@@ -1011,3 +1011,27 @@ test("Current order previews and receipts agree across the Boon and module catal
     `${fits.length} module loadouts, ${BOONS.length} Boons plus no Boon, ${settlements} order settlements and retries`,
   );
 });
+
+test("Voyage milestones survive spending and reload and reset for a new voyage", async () => {
+  const { recordVoyageMilestones } = await import("../src/lib/game/milestones");
+  const { restartGame } = await import("../src/lib/game/engine/lifecycle");
+  const state = createInitialGameState();
+  recordVoyageMilestones(state);
+  assert.equal(state.milestones, undefined);
+  state.phase = 1;
+  state.money = 500;
+  state.inventory["Linen Clothes"] = 1;
+  recordVoyageMilestones(state);
+  const saved = structuredClone(state.milestones);
+  assert.deepEqual(saved, ["gold_100", "gold_500", "first_product"]);
+  state.money = 0;
+  state.inventory["Linen Clothes"] = 0;
+  recordVoyageMilestones(state);
+  const restored = JSON.parse(JSON.stringify(state)) as typeof state;
+  restored.money = 500;
+  recordVoyageMilestones(restored);
+  assert.deepEqual(restored.milestones, saved);
+  restartGame(restored, [], 0, 1, 1);
+  recordVoyageMilestones(restored);
+  assert.equal(restored.milestones, undefined);
+});

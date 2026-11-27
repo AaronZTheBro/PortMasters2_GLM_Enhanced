@@ -22,6 +22,21 @@ type Props = {
   className?: string;
 };
 
+export function SessionNotice({ reason }: { reason: string }) {
+  return (
+    <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">
+      {reason}.{" "}
+      <button
+        type="button"
+        className="font-medium underline"
+        onClick={() => window.location.reload()}
+      >
+        Reload session
+      </button>
+    </div>
+  );
+}
+
 export function ConnectionStatus({ state, className }: Props) {
   // Fire the "Connection lost" toast at most once per disconnect cycle,
   // not on every reconnection attempt. Reset when we reconnect.

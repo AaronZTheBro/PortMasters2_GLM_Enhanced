@@ -422,7 +422,9 @@ function VoyageBrief({
                   ? classicHarbor(game)
                     ? buyer.isProductOrder
                       ? "Next round commission"
-                      : "Next round mixed order"
+                      : buyer.resources.length > 1
+                        ? "Next round mixed order"
+                        : "Next round merchant"
                     : "Next round featured buyer"
                   : "Signal Lantern"}
               </strong>{" "}

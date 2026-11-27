@@ -17,6 +17,7 @@ import {
   CLASSIC_HARBOR_RULES,
   CLASSIC_RULES,
   REVISED_HARBOR_RULES,
+  PRE_TUNING_HARBOR_RULES,
   CURRENT_HARBOR_RULES,
   OPEN_HARBOR_RULES,
   REBALANCED_RULES,
@@ -118,6 +119,7 @@ const versions = [
   OPEN_HARBOR_RULES,
   CLASSIC_HARBOR_RULES,
   REVISED_HARBOR_RULES,
+  PRE_TUNING_HARBOR_RULES,
   CURRENT_HARBOR_RULES,
 ].filter((version) =>
   selectedVersion === undefined
@@ -126,7 +128,7 @@ const versions = [
 );
 assert.ok(
   versions.length,
-  "Choose a saved rules version from 1, 3, 4, 5, 6, or 7.",
+  "Choose a saved rules version from 1, 3, 4, 5, 6, 7, or 8.",
 );
 
 const modern = {
@@ -306,7 +308,11 @@ function rulesFor(
   seed: number,
 ) {
   if (version === CLASSIC_RULES) return;
-  if (version === CLASSIC_HARBOR_RULES || version === REVISED_HARBOR_RULES)
+  if (
+    version === CLASSIC_HARBOR_RULES ||
+    version === REVISED_HARBOR_RULES ||
+    version === PRE_TUNING_HARBOR_RULES
+  )
     return buildClassicHarborRules(roomSeed, 1, difficulty, version);
   if (version === CURRENT_HARBOR_RULES)
     return buildCurrentVoyageRules(roomSeed, 1, difficulty);
@@ -322,6 +328,7 @@ function rulesFor(
 function measureOpening(
   difficulty: (typeof DIFFICULTY_ORDER)[number],
   version: number,
+  originalTerms?: string[],
 ) {
   const engine = engineFor(version);
   const outputs = Array.from({ length: seeds }, (_, seed) => {
@@ -361,14 +368,48 @@ function measureOpening(
       return gold + order.net > skip[0] ? [gold + order.net, count + 1] : skip;
     }
     const [net, sales] = best(0, game.inventory);
+    const terms = JSON.stringify({
+      gold: game.money,
+      upkeep: game.fixedCost,
+      ship: game.shipLevel,
+      rounds: game.maxRounds,
+      inventory: Object.entries(game.inventory).filter(([, qty]) => qty > 0),
+      lots: game.resourceCards.map((lot) => [
+        lot.port,
+        lot.resources.map(({ type, quantity, price }) => [
+          type,
+          quantity,
+          price,
+        ]),
+        engine.getCardFinalCost(game, lot),
+      ]),
+      buyers: game.customerCards.map((order) => {
+        const { reward, freight } = engine.quoteOrder(game, order);
+        return [
+          order.demandPort,
+          order.resources,
+          order.reward,
+          reward,
+          freight.final,
+        ];
+      }),
+    });
+    if (originalTerms && version >= CLASSIC_HARBOR_RULES) {
+      assert.equal(
+        terms,
+        originalTerms[seed],
+        `Opening differs from the original for ${difficulty} seed ${seed}`,
+      );
+    }
     return {
       net,
       sales,
+      terms,
       netLessBaseUpkeep: net - game.fixedCost,
       buyers: choices.length,
     };
   });
-  const spread = (key: keyof (typeof outputs)[number]) => {
+  const spread = (key: "net" | "netLessBaseUpkeep" | "sales" | "buyers") => {
     const values = outputs.map((row) => row[key]).sort((a, b) => a - b);
     return [0.1, 0.5, 0.9].map(
       (p) => values[Math.max(0, Math.ceil(seeds * p) - 1)],
@@ -384,8 +425,19 @@ function measureOpening(
       netLessBaseUpkeepP10P50P90: spread("netLessBaseUpkeep"),
       ordersFilledP10P50P90: spread("sales"),
       buyerCountP10P50P90: spread("buyers"),
+      openingsMatchedToOriginal:
+        originalTerms && version >= CLASSIC_HARBOR_RULES ? seeds : undefined,
     }),
   );
+  const ordered = outputs.map(({ net }) => net).sort((a, b) => a - b);
+  const lowerQuartile = ordered[Math.ceil(seeds / 4) - 1];
+  return {
+    terms: outputs.map((row) => row.terms),
+    lowerQuartile,
+    poorOpeningSeeds: outputs.flatMap((row, seed) =>
+      row.net <= lowerQuartile ? [seed] : [],
+    ),
+  };
 }
 
 function play(
@@ -1063,8 +1115,10 @@ function play(
 }
 
 for (const difficulty of DIFFICULTY_ORDER) {
+  let originalOpening: string[] | undefined;
   for (const version of versions) {
-    measureOpening(difficulty, version);
+    const opening = measureOpening(difficulty, version, originalOpening);
+    if (version === CLASSIC_RULES) originalOpening = opening.terms;
     const groups = new Map(
       strategies.map((strategy) => [strategy, [] as ReturnType<typeof run>[]]),
     );
@@ -1156,6 +1210,9 @@ for (const difficulty of DIFFICULTY_ORDER) {
       const exposed = results.filter(
         (result) => result.cashBeforeShock !== undefined,
       );
+      const solvent = results.filter(
+        ({ game }) => game.phase === "endgame",
+      ).length;
       const recovery =
         strategy === "recovery"
           ? {
@@ -1166,12 +1223,17 @@ for (const difficulty of DIFFICULTY_ORDER) {
               regainedCashAndOneBillByEndOfRoundFive: exposed.filter(
                 ({ recoveredByRoundFive }) => recoveredByRoundFive,
               ).length,
-              solventWithShock: results.filter(
-                ({ game }) => game.phase === "endgame",
-              ).length,
+              solventWithShock: solvent,
               solventWithoutShock: unshockedRecovery.filter(
                 ({ game }) => game.phase === "endgame",
               ).length,
+              naturalPoorOpening: {
+                startingSaleGoldAtMost: opening.lowerQuartile,
+                voyages: opening.poorOpeningSeeds.length,
+                solventWithoutShock: opening.poorOpeningSeeds.filter(
+                  (seed) => unshockedRecovery[seed].game.phase === "endgame",
+                ).length,
+              },
             }
           : undefined;
       console.log(
@@ -1180,6 +1242,7 @@ for (const difficulty of DIFFICULTY_ORDER) {
           version,
           strategy,
           seeds,
+          solvent,
           finish: avg(({ game }) => Number(game.phase === "endgame")),
           score: avg(({ game }) => game.score),
           gold: avg(({ game }) => game.money),

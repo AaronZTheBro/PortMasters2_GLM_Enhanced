@@ -2157,28 +2157,36 @@ export function attachRealtime(httpServer: HttpServer): Server {
 
     socket.on(
       "chat:room",
-      async (payload: { roomId?: string; content?: string }) => {
+      async (
+        payload: { roomId?: string; content?: string },
+        ack?: (error: string | null) => void,
+      ) => {
         const s = requireAuth();
-        if (!s) return;
+        if (!s) return ack?.("Reconnect before sending a message.");
         const roomId = payload?.roomId ?? s.roomId;
         const content = (payload?.content ?? "").trim();
-        if (!roomId || !content) return;
-        if (content.length > 1000) return;
+        if (!roomId || roomId !== s.roomId)
+          return ack?.("Join the harbor before sending a message.");
+        if (!content || content.length > 1000)
+          return ack?.("Messages must contain 1 to 1000 characters.");
         // A muted captain keeps playing but cannot persist room chat messages
         // until the voyage ends.
         if (roomMutedUsers.get(roomId)?.has(s.userId)) {
-          socket.emit("chat:muted", { roomId });
-          return;
+          if (!ack) socket.emit("chat:muted", { roomId });
+          return ack?.("The host has muted you in harbor chat this voyage.");
         }
 
-        const msg = await db.message.create({
-          data: { roomId, senderId: s.userId, recipientId: null, content },
-          include: {
-            sender: {
-              select: PUBLIC_USER_SELECT,
+        const msg = await db.message
+          .create({
+            data: { roomId, senderId: s.userId, recipientId: null, content },
+            include: {
+              sender: {
+                select: PUBLIC_USER_SELECT,
+              },
             },
-          },
-        });
+          })
+          .catch(() => null);
+        if (!msg) return ack?.("Could not save this message.");
         io.to(`room:${roomId}`).emit("chat:room", {
           roomId,
           message: {
@@ -2188,31 +2196,39 @@ export function attachRealtime(httpServer: HttpServer): Server {
             sender: publicUser(msg.sender),
           },
         });
+        ack?.(null);
       },
     );
 
     socket.on(
       "chat:dm",
-      async (payload: { recipientId?: string; content?: string }) => {
+      async (
+        payload: { recipientId?: string; content?: string },
+        ack?: (error: string | null) => void,
+      ) => {
         const s = requireAuth();
-        if (!s) return;
+        if (!s) return ack?.("Reconnect before sending a message.");
         const recipientId = payload?.recipientId;
         const content = (payload?.content ?? "").trim();
-        if (!recipientId || !content || recipientId === s.userId) return;
-        if (content.length > 1000) return;
+        if (!recipientId || recipientId === s.userId)
+          return ack?.("Choose another captain to message.");
+        if (!content || content.length > 1000)
+          return ack?.("Messages must contain 1 to 1000 characters.");
 
-        const msg = await db.message.create({
-          data: { roomId: null, senderId: s.userId, recipientId, content },
-          include: {
-            sender: {
-              select: PUBLIC_USER_SELECT,
+        const msg = await db.message
+          .create({
+            data: { roomId: null, senderId: s.userId, recipientId, content },
+            include: {
+              sender: {
+                select: PUBLIC_USER_SELECT,
+              },
+              recipient: {
+                select: PUBLIC_USER_SELECT,
+              },
             },
-            recipient: {
-              select: PUBLIC_USER_SELECT,
-            },
-          },
-        });
-
+          })
+          .catch(() => null);
+        if (!msg) return ack?.("Could not save this message.");
         const messagePayload = {
           id: msg.id,
           content: msg.content,
@@ -2232,6 +2248,7 @@ export function attachRealtime(httpServer: HttpServer): Server {
             io.to(sid).emit("chat:dm", messagePayload);
           }
         }
+        ack?.(null);
       },
     );
 
