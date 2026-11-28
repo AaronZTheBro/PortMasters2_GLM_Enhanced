@@ -7,9 +7,22 @@ import {
   harborTrading,
   forecastFor,
   rebalanced,
+  reagentRules,
   SPECIALTIES,
   specialtyOpens,
 } from "../expansion";
+import {
+  addAttunement,
+  engineUsesModule,
+  favorDraftPool,
+  favorDraftWeight,
+  favorName,
+  favorRankFor,
+  favorSlots,
+  favorSlotsUsed,
+  moduleSlotsUsed,
+  refreshFavorModifiers,
+} from "../reagents";
 import { CERAMICS } from "../harbor-catalog";
 import { describeForecast } from "../forecast";
 import { voyageRandom } from "../voyage-rng";
@@ -230,6 +243,31 @@ export function draftBoons(state: GameState, reroll = false): Boon[] {
   return picks;
 }
 
+// The Reagent draft has no safe slot. Every card is a commitment, and a
+// duplicate attunes a Favor the captain already owns.
+export function draftFavors(state: GameState, reroll = false): Boon[] {
+  const available = favorDraftPool(
+    state,
+    unlockedBoons(
+      state.difficulty,
+      state.currentRound,
+      state.rulesVersion,
+      state.specialties,
+    ),
+  ).map((boon) => [boon, favorDraftWeight(state, boon)] as [Boon, number]);
+  const random = voyageRandom(state, reroll ? "favorReroll" : "favorDraft");
+  const picks: Boon[] = [];
+  while (picks.length < 3 && available.length) {
+    const pick = weightedPick(random, available);
+    picks.push(pick);
+    available.splice(
+      available.findIndex(([boon]) => boon.id === pick.id),
+      1,
+    );
+  }
+  return picks;
+}
+
 export function applyBoon(state: GameState, boon: Boon, logs: string[]) {
   state.lastBoonId = boon.id;
   state.modifierFlags = { ...boon.modifiers };
@@ -279,7 +317,7 @@ export function startBoonDrafting(state: GameState, logs: string[]) {
     state.finishedSales = [];
     state.resourcefulRecipes = [];
     if (
-      openHarbor(state) &&
+      (openHarbor(state) || reagentRules(state)) &&
       state.currentRound === 1 &&
       !state.equippedModules.length
     ) {
@@ -287,7 +325,13 @@ export function startBoonDrafting(state: GameState, logs: string[]) {
       state._draftChoices = rollModuleChoices(state);
     }
   }
-  state.boonChoices = draftBoons(state);
+  if (reagentRules(state)) {
+    state.silkShippedThisRound = 0;
+    refreshFavorModifiers(state);
+  }
+  state.boonChoices = reagentRules(state)
+    ? draftFavors(state)
+    : draftBoons(state);
   state.pirateAttackResolved = false;
   state.escortHired = false;
   state.brokerTippedPirates = false;
@@ -304,7 +348,15 @@ export function startBoonDrafting(state: GameState, logs: string[]) {
           `${SPECIALTIES[key].name} opens this round. Available cargo includes ${SPECIALTIES[key].goods.join(", ")}.`,
         );
     });
-  logs.push("Choose a Boon for this round.");
+  if (reagentRules(state)) {
+    logs.push(
+      state.charterId
+        ? "Choose a Favor. Favors stay on your Rack until you replace them. A duplicate attunes one you own."
+        : "Choose a Patron Charter, then choose a Favor for your Rack.",
+    );
+  } else {
+    logs.push("Choose a Boon for this round.");
+  }
 }
 
 // Rerolls the boon pool once per round for 10 Gold.
@@ -318,9 +370,71 @@ export function swapBoonChoices(state: GameState, logs: string[]) {
     return;
   }
   state.money -= 10;
-  state.boonChoices = draftBoons(state, true);
+  state.boonChoices = reagentRules(state)
+    ? draftFavors(state, true)
+    : draftBoons(state, true);
   state.boonSwapUsed = true;
-  logs.push("🔄 Swapped Boon Choices for 10 Gold");
+  logs.push(
+    reagentRules(state)
+      ? "🔄 Swapped Favor Choices for 10 Gold"
+      : "🔄 Swapped Boon Choices for 10 Gold",
+  );
+}
+
+export function selectFavor(
+  state: GameState,
+  ctx: GameContext,
+  favorId: string,
+  logs: string[],
+) {
+  const boon = state.boonChoices.find((b) => b.id === favorId);
+  if (state.phase !== 5 || !boon || needsStarterModule(state)) return;
+  if (!state.charterId) {
+    logs.push("Choose a Patron Charter before locking a Favor.");
+    return;
+  }
+  const owned = (state.favors ?? []).indexOf(favorId);
+  if (owned >= 0) {
+    const before = favorRankFor(state, favorId);
+    addAttunement(state, favorId, 2);
+    const after = favorRankFor(state, favorId);
+    logs.push(
+      after > before
+        ? `✨ ${boon.icon} ${boon.name} attunes to rank ${after}.`
+        : `✨ ${boon.icon} ${boon.name} gains two attunement marks.`,
+    );
+  } else {
+    const used = favorSlotsUsed(state);
+    const slots = favorSlots(state);
+    if (used < slots) {
+      state.favors = [...(state.favors ?? []), favorId];
+      addAttunement(state, favorId, 1);
+      logs.push(`🧭 Favor gained: ${boon.icon} ${boon.name}.`);
+    } else {
+      const slot = state.pendingFavorSlot;
+      const replaces = (state.favors ?? [])[slot ?? -1];
+      if (slot === undefined || !replaces) {
+        logs.push("Your Favor Rack is full. Choose a Favor to replace.");
+        return;
+      }
+      state.favors = (state.favors ?? []).map((id, index) =>
+        index === slot ? favorId : id,
+      );
+      // Marks belong to a place on the Rack. A Favor that leaves starts over
+      // if the draft offers it again.
+      delete state.favorMarks?.[replaces];
+      addAttunement(state, favorId, 1);
+      logs.push(
+        `🧭 ${favorName(replaces)} makes way. ${boon.icon} ${boon.name} joins the rack.`,
+      );
+    }
+  }
+  state.lastBoonId = favorId;
+  refreshFavorModifiers(state);
+  state.pendingFavorSlot = undefined;
+  state.boonChoices = [];
+  state._draftChoices = undefined;
+  startPhase1(state, ctx, logs);
 }
 
 export function selectBoon(
@@ -329,6 +443,10 @@ export function selectBoon(
   boonId: string,
   logs: string[],
 ) {
+  if (reagentRules(state)) {
+    selectFavor(state, ctx, boonId, logs);
+    return;
+  }
   const boon = state.boonChoices.find((b) => b.id === boonId);
   if (state.phase !== 5 || !boon || needsStarterModule(state)) return;
   if (openHarbor(state) && state.currentRound === 1)
@@ -341,10 +459,11 @@ export function selectBoon(
 
 export function needsStarterModule(state: GameState) {
   return (
-    openHarbor(state) &&
+    (openHarbor(state) || reagentRules(state)) &&
     state.phase === 5 &&
     state.currentRound === 1 &&
-    !state.equippedModules.length
+    !state.equippedModules.length &&
+    Boolean(state._draftChoices?.length)
   );
 }
 
@@ -368,7 +487,7 @@ function rollModuleChoices(state: GameState, reroll = false): Module[] {
     state.rulesVersion,
     state.specialties,
   ).filter(({ id }) => {
-    if (hasModule(state, id)) return false;
+    if (hasModule(state, id) || engineUsesModule(state, id)) return false;
     if (
       !revisedHarbor(state.rulesVersion) ||
       state.currentRound + 1 !== state.maxRounds
@@ -474,8 +593,12 @@ export function handleModuleSelect(
 ) {
   const choices = state._draftChoices ?? [];
   const mod = choices[idx];
-  if (!mod || hasModule(state, mod.id)) return;
-  if (state.equippedModules.length < state.shipLevel) {
+  if (!mod || hasModule(state, mod.id) || engineUsesModule(state, mod.id))
+    return;
+  const used = reagentRules(state)
+    ? moduleSlotsUsed(state)
+    : state.equippedModules.length;
+  if (used < state.shipLevel) {
     if (rebalanced(state)) state.roundIncomeTaxDue ??= incomeTaxDue(state);
     state.equippedModules.push(mod);
     logs.push(`✅ Installed ${mod.name}!`);
@@ -497,7 +620,13 @@ export function finalizeModuleSwap(
 ) {
   const mod = state._newModule;
   const previous = state.equippedModules[slotIdx];
-  if (!mod || !previous || hasModule(state, mod.id)) return;
+  if (
+    !mod ||
+    !previous ||
+    hasModule(state, mod.id) ||
+    engineUsesModule(state, mod.id)
+  )
+    return;
   if (rebalanced(state)) state.roundIncomeTaxDue ??= incomeTaxDue(state);
   state.equippedModules[slotIdx] = mod;
   logs.push(`🔄 Swapped ${previous.name} for ${mod.name}!`);

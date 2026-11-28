@@ -17,8 +17,12 @@ export {
   CLASSIC_HARBOR_RULES,
   REVISED_HARBOR_RULES,
   PRE_TUNING_HARBOR_RULES,
+  TUNED_HARBOR_RULES,
+  REAGENT_RULES,
   CURRENT_HARBOR_RULES,
   revisedHarbor,
+  tunedHarbor,
+  reagentRules,
 } from "./rules-version";
 
 export function openHarbor(state: { rulesVersion?: number }) {

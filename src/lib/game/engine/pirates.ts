@@ -14,9 +14,11 @@ import {
   forecastFor,
   rebalanced,
   harborTrading,
+  reagentRules,
   voyageRaidAdjustment,
 } from "../expansion";
 import { voyageRandom } from "../voyage-rng";
+import { hasEngine, heatRisk } from "../reagents";
 import { quoteDues } from "./pricing";
 
 // Rolls personal raid risk before settlement costs are charged.
@@ -46,9 +48,17 @@ export function quotePirateWaters(state: GameState) {
     state.rulesVersion,
     state.difficulty,
   );
+  // Heat and Quiet Port are allowed to carry risk past the old half ceiling
+  // under Reagent rules, up to three quarters.
+  const riskCap = reagentRules(state) ? 0.75 : usesExpandedRules ? 0.5 : 1;
   let chance = Math.min(
-    usesExpandedRules ? 0.5 : 1,
-    base + leak + weather + harborAdjustment,
+    riskCap,
+    base +
+      leak +
+      weather +
+      harborAdjustment +
+      heatRisk(state) +
+      (hasEngine(state, "quiet_port") ? 0.04 : 0),
   );
   if (state.modifierFlags.pirate_risk_discount)
     chance *= 1 - state.modifierFlags.pirate_risk_discount;
@@ -58,12 +68,16 @@ export function quotePirateWaters(state: GameState) {
   const reservedBills = usesExpandedRules
     ? Math.min(funds, Math.floor(quoteDues(state).total * terms.reserveRate))
     : 0;
+  const anchorageFlag = state.modifierFlags.safe_anchorage ?? 0;
+  const anchorageProtection = anchorageFlag
+    ? anchorageFlag > 1
+      ? anchorageFlag
+      : updated
+        ? REBALANCE.safeAnchorage
+        : EFFECT.safeAnchorage
+    : 0;
   const protection = usesExpandedRules
-    ? (state.modifierFlags.safe_anchorage
-        ? updated
-          ? REBALANCE.safeAnchorage
-          : EFFECT.safeAnchorage
-        : 0) +
+    ? anchorageProtection +
       (hasModule(state, "bonded_warehouse")
         ? updated
           ? REBALANCE.warehouse
@@ -102,7 +116,17 @@ export function quotePirateWaters(state: GameState) {
           updated ? REBALANCE.lantern : EFFECT.stormLantern,
         )
       : 0;
-  const escortCost = escortBase - anchorageSavings - lanternSavings;
+  const stormCharter = hasEngine(state, "storm_charter");
+  const stormSurcharge = stormCharter ? escortBase : 0;
+  const favorRelief = state.modifierFlags.favor_escort_relief ?? 0;
+  const escortCost = Math.max(
+    0,
+    escortBase +
+      stormSurcharge -
+      anchorageSavings -
+      lanternSavings -
+      favorRelief,
+  );
   return {
     chance,
     escortCost,
@@ -161,6 +185,13 @@ export function hireEscort(state: GameState, logs: string[]) {
     logs.push(`Storm Lantern saved ${lanternSavings} Gold on the escort.`);
   state.escortHired = true;
   state.pirateAttackResolved = true;
+  if (hasEngine(state, "storm_charter") && harborTrading(state)) {
+    state.directPassageRound = state.currentRound;
+    if (state.currentRound < state.maxRounds)
+      logs.push(
+        "⛈️ The Storm Charter sails with the escort. Storm Dividend arms for next round.",
+      );
+  }
   logs.push(
     `🛡️ Hired an escort for ${cost} Gold. Safe passage guaranteed this round.`,
   );

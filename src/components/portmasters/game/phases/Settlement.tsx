@@ -32,7 +32,9 @@ function PirateAttack({
 }) {
   const { chance, escortCost, leak, raidLoss, reserve, weather } =
     quotePirateWaters(game);
-  const { total: bills } = quoteDues(game);
+  // Engine upkeep and shadow debt come after the Shipyard, so the pirate
+  // comparison uses the Phase 3 bills only.
+  const { phaseDue: bills } = quoteDues(game);
   const raidPct = Number((chance * 100).toFixed(2));
   return (
     <div className="max-w-xl mx-auto text-center py-4">
@@ -77,11 +79,11 @@ function PirateAttack({
       </div>
       <p className="text-[11px] text-muted-foreground mt-3">
         {game.money >= escortCost + bills
-          ? `After bills, escort leaves ${game.money - escortCost - bills} Gold.`
-          : `After hiring an escort, you would be short by ${escortCost + bills - game.money} Gold for bills.`}{" "}
+          ? `After Phase 3 bills, an escort leaves ${game.money - escortCost - bills} Gold.`
+          : `After hiring an escort, you would be short by ${escortCost + bills - game.money} Gold for Phase 3 bills.`}{" "}
         {game.money >= raidLoss + bills
-          ? `After a raid and bills, direct passage leaves ${game.money - raidLoss - bills} Gold.`
-          : `After a raid, you would be short by ${raidLoss + bills - game.money} Gold for bills.`}
+          ? `After a raid and Phase 3 bills, direct passage leaves ${game.money - raidLoss - bills} Gold.`
+          : `After a raid, you would be short by ${raidLoss + bills - game.money} Gold for Phase 3 bills.`}
       </p>
     </div>
   );
@@ -105,16 +107,26 @@ function SettlementBills({
   // Mirror payWages across every configured artisan so the preview and aid
   // gate use the exact amount that settlement charges.
   const roster = WORKER_TYPES.map((w) => (game.workers[w.id] ?? []).length);
-  const { wages, maintenance: maintCost, total: totalDue } = quoteDues(game);
+  // Phase 3 collects wages and maintenance only. Engine upkeep and shadow debt
+  // are charged after the Shipyard. Unpaid fees rest an Engine or stay on the
+  // books, and at the voyage close they cost Reputation instead.
+  const {
+    wages,
+    maintenance: maintCost,
+    upkeep,
+    shadow,
+    phaseDue,
+  } = quoteDues(game);
   const wagesDue = wages.due;
   const nWorkers = roster.reduce((sum, n) => sum + n, 0);
   const surcharge = maintenanceSurcharge(game);
-  const canAfford = game.money >= totalDue;
-  const balanceAfter = game.money - totalDue;
+  const canAfford = game.money >= phaseDue;
+  const balanceAfter = game.money - phaseDue;
+  const finalRound = game.currentRound >= game.maxRounds;
 
   const myRequest = aid.requests.find((r) => r.fromUserId === myUserId);
   const otherRequests = aid.requests.filter((r) => r.fromUserId !== myUserId);
-  const shortfall = Math.max(1, totalDue - game.money);
+  const shortfall = Math.max(1, phaseDue - game.money);
   const [requestAmount, setRequestAmount] = useState(shortfall);
 
   // Only a loan neither side of, and not already
@@ -151,7 +163,7 @@ function SettlementBills({
         </h3>
         <div className="flex justify-between text-[13px] py-0.5">
           <span>
-            👥 Worker Wages ({nWorkers} worker{nWorkers !== 1 ? "s" : ""})
+            👥 Artisan Wages ({nWorkers} artisan{nWorkers !== 1 ? "s" : ""})
           </span>
           <span className="font-bold">{wagesDue} Gold</span>
         </div>
@@ -169,12 +181,48 @@ function SettlementBills({
             ↳ Base {game.fixedCost}g + module upkeep {surcharge}g
           </div>
         )}
+        {upkeep > 0 && (
+          <>
+            <div className="flex justify-between text-sm py-0.5">
+              <span>⚙️ Engine Upkeep (after the Shipyard)</span>
+              <span className="font-bold">{upkeep} Gold</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {finalRound
+                ? "Engine upkeep is charged at the end of the round. An unpaid fee costs Reputation at the voyage close and still adds 2 Heat instead of forcing bankruptcy."
+                : game.currentRound + 1 >= game.maxRounds
+                  ? "Engine upkeep is charged at the end of the round. With one round left, an unpaid fee costs Reputation, adds 2 Heat, and the Engine will not return."
+                  : "Engine upkeep is charged at the end of the round. If it goes unpaid, the Engine rests for a round and adds 2 Heat instead of forcing bankruptcy."}
+            </p>
+          </>
+        )}
+        {shadow > 0 && (
+          <>
+            <div className="flex justify-between text-sm py-0.5">
+              <span>🕯️ False Manifest Debt (after the Shipyard)</span>
+              <span className="font-bold">{shadow} Gold</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {finalRound
+                ? "The settlement audit takes what it can. Any unpaid balance costs Reputation at the voyage close and adds 1 Heat."
+                : game.currentRound + 1 >= game.maxRounds
+                  ? "The settlement audit takes what it can. Any unpaid balance stays on the books and adds 1 Heat. It will be due again at the voyage close."
+                  : "The settlement audit takes what it can. Any unpaid balance stays on the books and adds 1 Heat."}
+            </p>
+          </>
+        )}
         <div className="flex justify-between text-sm py-0.5 border-t border-orange-500/20 pt-1.5 mt-1.5 font-bold">
-          <span>💸 Total Due</span>
+          <span>💸 Due at Phase 3</span>
           <span className="text-orange-600 dark:text-orange-400">
-            {totalDue} Gold
+            {phaseDue} Gold
           </span>
         </div>
+        {(upkeep > 0 || shadow > 0) && (
+          <div className="flex justify-between text-[13px] py-0.5 font-semibold">
+            <span>Payments after the Shipyard</span>
+            <span>{upkeep + shadow} Gold</span>
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl bg-teal-500/[0.04] border border-teal-500/15 p-3.5 my-3.5">
@@ -186,7 +234,7 @@ function SettlementBills({
           </span>
         </div>
         <div className="flex justify-between text-[13px] py-0.5">
-          <span>After Settlement</span>
+          <span>After Phase 3 bills</span>
           <span
             className={cn(
               "font-bold",
@@ -200,6 +248,22 @@ function SettlementBills({
               : `${balanceAfter} Gold`}
           </span>
         </div>
+        {upkeep > 0 && (
+          <div className="flex justify-between text-[13px] py-0.5">
+            <span>Engine upkeep after the Shipyard</span>
+            <span className="text-rose-600 dark:text-rose-400">
+              {upkeep} Gold
+            </span>
+          </div>
+        )}
+        {shadow > 0 && (
+          <div className="flex justify-between text-[13px] py-0.5">
+            <span>False Manifest debt after the Shipyard</span>
+            <span className="text-rose-600 dark:text-rose-400">
+              {shadow} Gold
+            </span>
+          </div>
+        )}
         <div className="flex justify-between text-[13px] py-0.5">
           <span>Round Revenue</span>
           <span className="text-emerald-600 dark:text-emerald-400">
@@ -382,8 +446,8 @@ function SettlementBills({
         members={members}
         idleLabel={
           canAfford
-            ? `💸 Settle Bills: ${totalDue} Gold`
-            : `⚠️ Force Pay (${game.money}/${totalDue} Gold)`
+            ? `💸 Settle Phase 3: ${phaseDue} Gold`
+            : `⚠️ Force Pay (${game.money}/${phaseDue} Gold)`
         }
         idleClassName="pm-grad-amber text-white h-12 px-8"
         onConfirm={() => void phaseSync.markReady()}

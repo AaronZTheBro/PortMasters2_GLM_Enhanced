@@ -46,6 +46,7 @@ import {
 } from "../lib/game/expansion";
 import { buildCurrentVoyageRules, readVoyageRules } from "../lib/game/forecast";
 import { unlockedResources } from "../lib/game/pools";
+import { readyDraftIsLegal } from "../lib/game/reagents";
 import type { GameState } from "../lib/game/types";
 import type { BarterUpdate } from "../lib/game/barter-ledger";
 import type { VoyageCompleteEvent } from "../lib/realtime";
@@ -1609,6 +1610,35 @@ export function attachRealtime(httpServer: HttpServer): Server {
             await readyStatePayload(roomId, cp),
           );
           return;
+        }
+        // Version 9 draft readiness is a rules decision, not only a quorum.
+        // The captain saves before emitting ready, so a legal pick or the
+        // Engine filled Rack pass is visible in that save. A stale or missing
+        // save is allowed through so a sync problem cannot stall the room.
+        if (cp.phase === "5" && cp.rules.version === CURRENT_HARBOR_RULES) {
+          const saved = await db.gameState.findUnique({
+            where: { userId_roomId: { userId: s.userId, roomId } },
+            select: { data: true },
+          });
+          if (saved) {
+            try {
+              const state = JSON.parse(saved.data) as GameState;
+              if (
+                state.currentRound === cp.round &&
+                state.phase === 5 &&
+                state.rulesVersion === CURRENT_HARBOR_RULES &&
+                !readyDraftIsLegal(state)
+              ) {
+                io.to(socket.id).emit(
+                  "phase:ready_update",
+                  await readyStatePayload(roomId, cp),
+                );
+                return;
+              }
+            } catch {
+              // An unreadable save should not block the rest of the room.
+            }
+          }
         }
         cp.readyUserIds.add(s.userId);
         const ready = await readyStatePayload(roomId, cp);

@@ -37,12 +37,19 @@ import {
 } from "@/lib/game/engine/boons";
 import type { GameState } from "@/lib/game/types";
 import type { PublicUser } from "@/lib/api";
-import { NEW_BOONS, harborTrading, rebalanced } from "@/lib/game/expansion";
+import {
+  NEW_BOONS,
+  harborTrading,
+  rebalanced,
+  reagentRules,
+} from "@/lib/game/expansion";
 import { voyageBoon } from "@/lib/game/pools";
+import { favorMarksFor, favorName } from "@/lib/game/reagents";
 import { cn } from "@/lib/utils";
 import { ReadyBar } from "../ReadyBar";
 import { Term } from "../../Term";
 import { TextWithShipIcons } from "../../ShipVisualizer";
+import { ReagentDraft } from "./ReagentDraft";
 import type { PhaseSync } from "./PhaseShared";
 
 // Tier detection : boons are grouped into three tiers in constants.ts; we
@@ -168,7 +175,7 @@ const HIGHLIGHT_RULES: { word: string; className: string }[] = [
   { word: "Hemp", className: "text-lime-600 dark:text-lime-400 font-semibold" },
   { word: "Escort", className: "text-sky-600 dark:text-sky-400 font-semibold" },
   {
-    word: "Worker",
+    word: "Artisan",
     className: "text-emerald-600 dark:text-emerald-400 font-semibold",
   },
   {
@@ -335,7 +342,7 @@ function SynergyGuideBadge({ game }: { game: GameState }) {
           </div>
           <p>
             Boons bend the rules of <em>this round only</em> : transport costs,
-            taxes, worker output, intel, and more.
+            taxes, artisan output, intel, and more.
           </p>
           <p>
             <span className="text-teal-600 dark:text-teal-400 font-medium">
@@ -533,6 +540,14 @@ export function BoonDraft({
   members: PublicUser[];
 }) {
   const picks = game.boonChoices;
+  const pendingFavor = reagentRules(game) ? game.pendingBoonId : undefined;
+  const pendingOwned = pendingFavor
+    ? (game.favors ?? []).includes(pendingFavor)
+    : false;
+  const pendingMarks = pendingFavor
+    ? Math.min(6, favorMarksFor(game, pendingFavor) + (pendingOwned ? 2 : 1))
+    : 0;
+  const pendingRank = pendingMarks >= 6 ? 3 : pendingMarks >= 3 ? 2 : 1;
   // This is the screen the user specifically called out for a visible
   // ready indicator: once a captain locks in a boon, swap the picker for
   // the same "x/y ready" readout everyone else gets, rather than leaving
@@ -581,10 +596,20 @@ export function BoonDraft({
           </div>
           <div className="text-2xl font-bold mb-1 pm-text-gradient inline-flex items-center gap-2">
             <PartyPopper className="h-6 w-6" />
-            Boon Locked In
+            {reagentRules(game)
+              ? pendingFavor
+                ? "Favor Locked In"
+                : "Draft Passed"
+              : "Boon Locked In"}
           </div>
           <p className="text-sm text-muted-foreground mb-5">
-            The voyage begins once every captain has chosen.
+            {reagentRules(game)
+              ? pendingFavor
+                ? pendingOwned
+                  ? `${favorName(pendingFavor)} gains two marks and rises to rank ${pendingRank} with ${pendingMarks} of 6 marks. The next phase begins once every captain has chosen.`
+                  : `${favorName(pendingFavor)} joins the Rack at rank ${pendingRank} with ${pendingMarks} of 6 marks. The next phase begins once every captain has chosen.`
+                : "The Rack has no legal Favor to take, so the draft passes. The next phase begins once every captain is ready."
+              : "The voyage begins once every captain has chosen."}
           </p>
         </motion.div>
         <div className="relative z-10">
@@ -598,7 +623,11 @@ export function BoonDraft({
             className="rounded-xl"
             onClick={phaseSync.cancelReady}
           >
-            ↩️ Choose a different Boon
+            {reagentRules(game)
+              ? pendingFavor
+                ? "↩️ Choose a different Favor"
+                : "↩️ Return to the draft"
+              : "↩️ Choose a different Boon"}
           </Button>
         </div>
       </div>
@@ -611,7 +640,8 @@ export function BoonDraft({
           <h2 className="text-xl font-semibold">Choose a starting module</h2>
           <p className="text-sm text-muted-foreground">
             Your ship has one open slot. You can change modules at the Shipyard
-            later.
+            later. At rank 2, a Favor can bond with an equipped module at the
+            Shipyard Bond Table.
           </p>
         </div>
         <div className="pm-decision-grid">
@@ -641,6 +671,15 @@ export function BoonDraft({
           ))}
         </div>
       </section>
+    );
+  if (reagentRules(game))
+    return (
+      <ReagentDraft
+        game={game}
+        act={act}
+        phaseSync={phaseSync}
+        members={members}
+      />
     );
   const canSwap = !game.boonSwapUsed && game.money >= 10;
   return (

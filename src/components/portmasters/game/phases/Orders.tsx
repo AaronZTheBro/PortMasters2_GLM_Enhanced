@@ -87,6 +87,15 @@ export function Orders({
           goods={ITEMS.filter((item) => game.inventory[item] > 0)}
         />
       )}
+      {game.charterId === "tidewatch" && (
+        <div className="rounded-lg border border-sky-500/25 bg-sky-500/[0.05] px-3.5 py-2.5 mb-3.5 text-xs">
+          🌊{" "}
+          <strong>
+            The Tidewatch counts the Payout line on completed orders.
+          </strong>{" "}
+          Port Exchange sales do not count.
+        </div>
+      )}
       {game.revealedIntel.length > 0 && (
         <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-2.5 mb-3.5 text-xs">
           <strong>🗣️ Broker's Whispers active this round:</strong>{" "}
@@ -536,7 +545,8 @@ function PortExchange({
       <summary className="cursor-pointer font-semibold">Port Exchange</summary>
       <p className="my-2 text-muted-foreground">
         Sell any cargo for Gold. The first three units of each good use a higher
-        rate each round, subject to rounding. Exchange sales earn no Reputation.
+        rate each round, subject to rounding. Exchange sales earn no Reputation
+        and do not count for the Tidewatch.
       </p>
       {!item ? (
         <p>Your hold is empty.</p>

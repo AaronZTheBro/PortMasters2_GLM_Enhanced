@@ -18,7 +18,7 @@ import {
   CLASSIC_RULES,
   REVISED_HARBOR_RULES,
   PRE_TUNING_HARBOR_RULES,
-  CURRENT_HARBOR_RULES,
+  TUNED_HARBOR_RULES,
   OPEN_HARBOR_RULES,
   REBALANCED_RULES,
   classicHarbor,
@@ -27,7 +27,6 @@ import {
 } from "../src/lib/game/expansion";
 import {
   buildClassicHarborRules,
-  buildCurrentVoyageRules,
   buildOpenHarborRules,
   buildVoyageRules,
 } from "../src/lib/game/forecast";
@@ -120,7 +119,7 @@ const versions = [
   CLASSIC_HARBOR_RULES,
   REVISED_HARBOR_RULES,
   PRE_TUNING_HARBOR_RULES,
-  CURRENT_HARBOR_RULES,
+  TUNED_HARBOR_RULES,
 ].filter((version) =>
   selectedVersion === undefined
     ? version !== REBALANCED_RULES
@@ -311,11 +310,10 @@ function rulesFor(
   if (
     version === CLASSIC_HARBOR_RULES ||
     version === REVISED_HARBOR_RULES ||
-    version === PRE_TUNING_HARBOR_RULES
+    version === PRE_TUNING_HARBOR_RULES ||
+    version === TUNED_HARBOR_RULES
   )
     return buildClassicHarborRules(roomSeed, 1, difficulty, version);
-  if (version === CURRENT_HARBOR_RULES)
-    return buildCurrentVoyageRules(roomSeed, 1, difficulty);
   if (version === OPEN_HARBOR_RULES)
     return buildOpenHarborRules(roomSeed, 1, difficulty);
   return buildVoyageRules(roomSeed, 1, difficulty, [

@@ -136,7 +136,7 @@ export function Bankruptcy({
       <div className="rounded-xl border border-teal-500/15 bg-teal-500/[0.04] px-4 py-3 mt-4 text-sm text-muted-foreground">
         Your voyage has ended, but the others are still sailing. Click any
         captain in the <strong>Harbor Roster</strong> to watch their cargo,
-        workers, and log update live.
+        artisans, and log update live.
       </div>
     </div>
   );

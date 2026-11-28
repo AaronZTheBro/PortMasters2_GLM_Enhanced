@@ -681,6 +681,7 @@ test("The advisor describes a costly Broker order without a minus sign", async (
   game.seatSeed = "t";
   game.money = 1000;
   game.inventory.Hemp = 100;
+  game.shipLevel = 0;
   callBrokersFavor(game, "Hemp", 100, []);
   const quote = quoteOrder(game, game.customerCards[0]);
   const cost = quote.freight.final - quote.reward;
@@ -886,7 +887,7 @@ test("Economic reports and the guide show readable losses and shortfalls", async
   const lines = [
     "📈 Profit before tax: -4 Gold",
     "🏆 Final Reputation: -8",
-    "Captain North-West arrived",
+    "Captain Northwind arrived",
   ];
   assert.deepEqual(
     deriveChronicleEvents(lines, 1).map((entry) => entry.description),

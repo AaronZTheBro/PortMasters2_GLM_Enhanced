@@ -7,6 +7,7 @@ import {
   buyWorkshopSupply,
   chooseStaple,
   poolsFor,
+  quoteCardPayment,
   quoteWorkshopSupply,
   STAPLE_CHOICES,
   stapleOrder,
@@ -14,11 +15,14 @@ import {
 import { quoteOrder } from "@/lib/game/engine/orders";
 import { quoteDues } from "@/lib/game/engine/pricing";
 import { Button } from "@/components/ui/button";
-import { unlockedProducts, unlockedResources } from "@/lib/game/pools";
+import {
+  canProduce,
+  unlockedProducts,
+  unlockedResources,
+} from "@/lib/game/pools";
 import {
   explainCardPrice,
   explainExpectedPrice,
-  getCardFinalCost,
   purchaseCard,
 } from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
@@ -199,7 +203,11 @@ export function Purchase({
   const resolveColor = itemColorResolver(colorFor);
   const [recipe, setRecipe] = useState("Linen Clothes");
   const supply = quoteWorkshopSupply(game, recipe);
-  const supplyCost = supply ? getCardFinalCost(game, supply) : 0;
+  const supplyWorker = Object.entries(game.workers).some(
+    ([type, crew]) => crew.length > 0 && canProduce(type, recipe),
+  );
+  const supplyPayment = supply ? quoteCardPayment(game, supply) : undefined;
+  const supplyCost = supplyPayment?.paid ?? 0;
   const staple = game.resourceCards.find((card) => card.staple);
   const stapleItem = staple?.resources[0]?.type;
   const stapleQuote =
@@ -246,10 +254,17 @@ export function Purchase({
           </span>
         </div>
       )}
+      {rebalanced(game) && game.currentRound >= game.maxRounds && (
+        <div className="mb-3.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-2.5 text-sm">
+          <strong>Final purchase phase.</strong> Artisan assignments are closed
+          for the voyage, so raw lots can only be sold on this round's orders or
+          at the Port Exchange. Buy with a buyer in mind.
+        </div>
+      )}
       <div className="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3.5 py-2.5 text-sm">
         <Wallet className="size-4 text-amber-600 dark:text-amber-400" />
         <strong>{game.money} Gold available</strong>
-        <span>Current wages and maintenance: {due} Gold</span>
+        <span>Current bills due: {due} Gold</span>
         <span>
           {remainingLots} {remainingLots === 1 ? "lot" : "lots"} available
         </span>
@@ -307,8 +322,14 @@ export function Purchase({
                       .join(", ")
                   : game.resourceCards.some((card) => card.workshopSupply)
                     ? "This round's supply lot was purchased."
-                    : "You have the ingredients for one assignment."}
+                    : "No missing ingredients for this recipe."}
               </p>
+              {!supplyWorker && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  No hired artisan can make this recipe yet. The inputs can
+                  still be stocked for a later hire.
+                </p>
+              )}
               {harborTrading(game) && (
                 <p className="text-xs text-muted-foreground">
                   Missing ingredients cost a premium.
@@ -322,7 +343,9 @@ export function Purchase({
                     act((g, logs) => buyWorkshopSupply(g, recipe, logs))
                   }
                 >
-                  Buy workshop supplies for {supplyCost} Gold
+                  {supplyPayment && supplyPayment.deferred > 0
+                    ? `Buy supplies: ${supplyCost} Gold now, ${supplyPayment.deferred} at settlement`
+                    : `Buy workshop supplies for ${supplyCost} Gold`}
                 </Button>
               )}
             </section>
@@ -334,8 +357,9 @@ export function Purchase({
         {game.resourceCards.map((c, index) => {
           const breakdown = explainCardPrice(game, c);
           const finalCost = breakdown.final;
+          const payment = quoteCardPayment(game, c);
           const purchased = game.purchasedCards.includes(c.id);
-          const canAfford = game.money >= finalCost && !purchased;
+          const canAfford = game.money >= payment.paid && !purchased;
           const accent = portAccent(c.port);
           return (
             <motion.div
@@ -446,8 +470,10 @@ export function Purchase({
                 {!purchased && (
                   <p className="mb-2 text-xs text-muted-foreground">
                     {canAfford
-                      ? `Gold after purchase: ${game.money - finalCost}`
-                      : `Need ${finalCost - game.money} more Gold`}
+                      ? payment.deferred > 0
+                        ? `Gold after purchase: ${game.money - payment.paid}. ${payment.deferred} Gold is deferred to settlement.`
+                        : `Gold after purchase: ${game.money - payment.paid}`
+                      : `Need ${payment.paid - game.money} more Gold`}
                   </p>
                 )}
                 <Button
@@ -459,7 +485,11 @@ export function Purchase({
                   disabled={phaseSync.waiting || !canAfford}
                   onClick={() => act((g, l) => purchaseCard(g, c.id, l))}
                 >
-                  {purchased ? "✅ Purchased" : `🛒 Buy (${finalCost}💰)`}
+                  {purchased
+                    ? "✅ Purchased"
+                    : payment.deferred > 0
+                      ? `🛒 Buy (${payment.paid} now, ${payment.deferred} at settlement)`
+                      : `🛒 Buy (${finalCost}💰)`}
                 </Button>
               </div>
             </motion.div>

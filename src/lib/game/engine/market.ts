@@ -16,7 +16,7 @@ import {
 import { describeForecast } from "../forecast";
 import {
   expanded,
-  CURRENT_HARBOR_RULES,
+  tunedHarbor,
   revisedHarbor,
   forecastFor,
   openHarbor,
@@ -24,9 +24,13 @@ import {
   harborTrading,
   harborArrival,
   rebalanced,
+  reagentRules,
+  effectUses,
   spendEffect,
 } from "../expansion";
 import { charterOpensOn, marketCountsFor } from "../difficulty";
+import { hasEngine } from "../reagents";
+import { voyageRandom } from "../voyage-rng";
 import {
   unlockedPorts,
   unlockedProducts,
@@ -45,7 +49,6 @@ import type {
 import { addOwnedAmount } from "./core";
 import {
   explainCardPrice,
-  getCardFinalCost,
   portResourcePrice,
   marketResourceAdjustment,
   productPurchasePrice,
@@ -426,6 +429,8 @@ function harborOrders(
 
 function foundingPools(state: GameState): MarketPools {
   const { difficulty, currentRound, rulesVersion } = state;
+  // Founding goods stay on the base tier schedule for the waters. Later
+  // imports rotate into existing offers through rotationProduct.
   return {
     resources: unlockedResources(difficulty, currentRound),
     products: unlockedProducts(difficulty, currentRound),
@@ -484,7 +489,7 @@ function classicHarborOrders(state: GameState, ctx: GameContext, random: Rng) {
   );
   const staple = pick(random, local.length ? local : founding.resources);
   const smallShipment =
-    state.rulesVersion === CURRENT_HARBOR_RULES &&
+    tunedHarbor(state.rulesVersion) &&
     state.difficulty === "monsoon" &&
     state.currentRound % 2 === 0;
   const quantity = randInt(random, 2, 3);
@@ -509,7 +514,7 @@ function classicHarborOrders(state: GameState, ctx: GameContext, random: Rng) {
     1,
   );
   const visitingBuyer =
-    state.rulesVersion === CURRENT_HARBOR_RULES &&
+    tunedHarbor(state.rulesVersion) &&
     state.difficulty === "fair_winds" &&
     state.currentRound >= 3 &&
     !announced;
@@ -830,25 +835,53 @@ function harborLots(
   return lots;
 }
 
+// The False Manifest splits a lot into cash now and shadow debt at
+// settlement. Keep the calculation in one place so the purchase button and
+// the engine agree on what the captain can afford.
+export function quoteCardPayment(state: GameState, card: ResourceCard) {
+  const { final: cost, steps } = explainCardPrice(state, card);
+  // An unpaid balance is collected at settlement before new deferrals open.
+  // The final round has no settlement after it, so credit closes there.
+  const deferred =
+    hasEngine(state, "false_manifest") &&
+    !(state.shadowGold ?? 0) &&
+    state.currentRound < state.maxRounds
+      ? Math.floor(cost * 0.2)
+      : 0;
+  return { cost, steps, deferred, paid: cost - deferred };
+}
+
 export function purchaseCard(state: GameState, cardId: number, logs: string[]) {
   const card = state.resourceCards.find((c) => c.id === cardId);
   if (!card || (rebalanced(state) && state.phase !== 1)) return;
   if (state.purchasedCards.includes(card.id)) return;
-  const { final: cost, steps } = explainCardPrice(state, card);
-  if (state.money < cost) {
+  const { cost, steps, deferred, paid } = quoteCardPayment(state, card);
+  const paidNote =
+    deferred > 0
+      ? `${paid} Gold now and ${deferred} Gold at settlement`
+      : `${cost} Gold`;
+  if (state.money < paid) {
     logs.push(
-      `❌ Insufficient funds! Need ${cost} Gold, Have ${state.money} Gold`,
+      `❌ Insufficient funds! Need ${paid} Gold, Have ${state.money} Gold`,
     );
     return;
   }
-  card.paidGold = cost;
-  state.money -= cost;
+  card.paidGold = paid;
+  state.money -= paid;
+  // The whole lot is a cost when it is bought. Deferring the cash does not
+  // defer the expense, so profit and the Income Tax quote see the full price.
   state.roundCosts += cost;
   if (!card.isProductCard) {
     state.materialCosts += cost;
     state.totalMaterialCosts = (state.totalMaterialCosts ?? 0) + cost;
   }
   state.totalCosts += cost;
+  if (deferred > 0) {
+    state.shadowGold = (state.shadowGold ?? 0) + deferred;
+    logs.push(
+      `🕯️ The False Manifest defers ${deferred} Gold to settlement. Shadow debt: ${state.shadowGold}.`,
+    );
+  }
   // Ownership helpers safely initialize missing inventory keys.
   for (const r of card.resources)
     addOwnedAmount(state, r.type, r.quantity ?? 0);
@@ -857,7 +890,7 @@ export function purchaseCard(state: GameState, cardId: number, logs: string[]) {
   if (card.isProductCard) {
     const r = card.resources[0];
     logs.push(
-      `🛒 Bought Product at ${card.port}: ${ICONS[r.type]}${r.type}×${r.quantity} (@${r.price} Gold/item, Mat Cost ${r.materialCost} Gold), Total ${cost} Gold`,
+      `🛒 Bought Product at ${card.port}: ${ICONS[r.type]}${r.type}×${r.quantity} (@${r.price} Gold/item, Mat Cost ${r.materialCost} Gold), Total ${paidNote}`,
     );
     logs.push("   💡 Tip: VAT applies when selling finished products");
   } else {
@@ -866,7 +899,7 @@ export function purchaseCard(state: GameState, cardId: number, logs: string[]) {
         (r) => `${ICONS[r.type]}${r.type}×${r.quantity}(${r.price} Gold/item)`,
       )
       .join(" + ");
-    logs.push(`🛒 Bought at ${card.port}: ${txt}, Total ${cost} Gold`);
+    logs.push(`🛒 Bought at ${card.port}: ${txt}, Total ${paidNote}`);
   }
   for (const { label, delta, effect } of steps) {
     if (effect)
@@ -879,6 +912,35 @@ export function purchaseCard(state: GameState, cardId: number, logs: string[]) {
           : 1,
       );
     if (delta < 0) logs.push(`✨ ${label} saved ${-delta} Gold`);
+  }
+  if (reagentRules(state)) {
+    for (const resource of card.resources)
+      spendEffect(state, `bought:${resource.type}`);
+    const distinct = Object.keys(state.effectUses ?? {}).filter((key) =>
+      key.startsWith("bought:"),
+    ).length;
+    if (
+      state.modifierFlags.favor_market_rebate &&
+      distinct >= 3 &&
+      effectUses(state, "market_rebate_paid") === 0
+    ) {
+      const rebate = state.modifierFlags.favor_market_rebate;
+      state.money += rebate;
+      spendEffect(state, "market_rebate_paid");
+      logs.push(
+        `✨ Merchant's Charm rank 3 rebate: three different goods bought, ${rebate} Gold back.`,
+      );
+    }
+    if (
+      state.modifierFlags.favor_hemp_rebate &&
+      card.resources.some(({ type }) => type === "Hemp") &&
+      effectUses(state, "hemp_rebate_paid") === 0
+    ) {
+      const rebate = state.modifierFlags.favor_hemp_rebate;
+      state.money += rebate;
+      spendEffect(state, "hemp_rebate_paid");
+      logs.push(`✨ Hemp Monopoly rank 3 rebate: ${rebate} Gold back.`);
+    }
   }
   logs.push(`📊 Purchased ${state.purchaseCount} cargo batches`);
 }
@@ -910,6 +972,22 @@ export function startPhase1(
         ? previous.buyers
         : [];
     for (const buyer of announced) orders[buyer.id] = buyer;
+    if (reagentRules(state)) {
+      const rng = voyageRandom(state, "standingOrder");
+      const item =
+        marketPools.resources[Math.floor(rng() * marketPools.resources.length)];
+      const standing = genRawOrder(
+        rng,
+        marketPools,
+        item,
+        2 + (state.currentRound % 3),
+        harborArrival(state),
+      );
+      orders.push({ id: 300, ...standing, buyer: "standing" });
+      logs.push(
+        `📦 Standing contract at ${harborArrival(state)}: ${item}×${standing.totalItems} for ${standing.reward} Gold.`,
+      );
+    }
     state.plannedOrders = orders;
     state.resourceCards = classicHarborLots(state, ctx, marketRng, orders);
     state.revealedIntel = [];
@@ -1275,7 +1353,7 @@ export function buyWorkshopSupply(
   logs: string[],
 ) {
   const card = quoteWorkshopSupply(state, product);
-  if (!card || getCardFinalCost(state, card) > state.money) return;
+  if (!card || quoteCardPayment(state, card).paid > state.money) return;
   state.resourceCards.push(card);
   purchaseCard(state, card.id, logs);
 }

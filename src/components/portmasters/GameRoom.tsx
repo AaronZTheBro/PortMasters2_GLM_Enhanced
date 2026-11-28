@@ -28,6 +28,7 @@ import {
   WORD_ON_THE_DOCKS_THRESHOLD,
 } from "@/lib/game/constants";
 import { CURRENT_HARBOR_RULES } from "@/lib/game/expansion";
+import { charterProgress } from "@/lib/game/reagents";
 import { meritById } from "@/lib/game/merits";
 import { useRealtime } from "@/lib/use-realtime";
 import type { GameState } from "@/lib/game/types";
@@ -630,6 +631,16 @@ export function GameRoom({
       workers: state.game.workers,
       equippedModules: state.game.equippedModules,
       logs: state.logs.slice(-30),
+      maxRounds: state.game.maxRounds,
+      charterId: state.game.charterId,
+      charterProgress: charterProgress(state.game),
+      charterMarks: state.game.charterMarks,
+      charterMisses: state.game.charterMisses,
+      charterActsSettled: state.game.charterActsSettled,
+      charterComplete: state.game.charterComplete,
+      favors: state.game.favors,
+      engineIds: state.game.engines?.map(({ id }) => id),
+      heat: state.game.heat,
     }),
     [state.game, state.logs],
   );

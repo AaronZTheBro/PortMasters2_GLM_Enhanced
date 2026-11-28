@@ -6,6 +6,7 @@ import {
   harborTrading,
   rebalanced,
 } from "../expansion";
+import { hasEngine } from "../reagents";
 import type { GameState } from "../types";
 
 export function hasModule(state: GameState, id: string): boolean {
@@ -32,6 +33,7 @@ export function maintenanceSurcharge(state: GameState): number {
 }
 
 export function whisperCost(state: GameState): number {
+  if (hasEngine(state, "quiet_port")) return 1;
   return hasModule(state, "brokers_network") ? 2 : 5;
 }
 

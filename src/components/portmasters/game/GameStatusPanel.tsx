@@ -15,6 +15,14 @@ import {
   workerWagesFor,
 } from "@/lib/game/engine";
 import { taxReserve } from "@/lib/game/engine/pricing";
+import {
+  engineIsActive,
+  engineName,
+  engineUpkeepFor,
+  engineUpkeepTotal,
+  moduleSlotsUsed,
+} from "@/lib/game/reagents";
+import { reagentRules } from "@/lib/game/expansion";
 import type { GameState } from "@/lib/game/types";
 import { difficultyConfig } from "@/lib/game/difficulty";
 import {
@@ -73,7 +81,7 @@ export function deriveChronicleEvents(
       else if (/pirate|raid|escort|clear seas/i.test(description))
         type = "pirate";
       else if (
-        /^\s*(?:👥|💰)?\s*(?:wages|paid wages|paying worker wages)|payroll/i.test(
+        /^\s*(?:👥|💰)?\s*(?:wages|paid wages|paying artisan wages)|payroll/i.test(
           description,
         )
       )
@@ -82,7 +90,12 @@ export function deriveChronicleEvents(
       else if (/upgraded|upgrade the ship/i.test(description)) type = "upgrade";
       else if (/installed |swapped |module draft/i.test(description))
         type = "module";
-      else if (/boon|navigator's compass/i.test(description)) type = "boon";
+      else if (
+        /boon|navigator's compass|favor|attune|patron charter|bond table/i.test(
+          description,
+        )
+      )
+        type = "boon";
       else if (/purchase|bought/i.test(description)) type = "purchase";
       else if (
         /order|trad(?:e|ing)|net (?:profit|proceeds)|freight/i.test(description)
@@ -146,14 +159,26 @@ export function GameStatusPanel({
   });
   const { due: pendWages, discount: wageSavings } = quoteWages(game);
   const pendMaint = game.fixedCost + maintenanceSurcharge(game);
-  const pendTotal = pendWages + pendMaint;
+  const pendUpkeep = engineUpkeepTotal(game);
+  // A dormant Engine still bills in the round it wakes. Project the next
+  // round from the wake schedule rather than this round's active set.
+  const nextRoundUpkeep = (game.engines ?? [])
+    .filter(
+      (engine) => (engine.dormantUntilRound ?? 0) <= game.currentRound + 1,
+    )
+    .reduce((sum, engine) => sum + engineUpkeepFor(engine), 0);
+  const pendShadow = reagentRules(game) ? (game.shadowGold ?? 0) : 0;
+  const pendTotal = pendWages + pendMaint + pendUpkeep + pendShadow;
+  const modulesUsed = moduleSlotsUsed(game);
   const nextRoundDue =
     pendMaint +
+    nextRoundUpkeep +
     roster.reduce(
       (sum, { id, list }) => sum + list.length * getWorkerWage(game, id),
       0,
     );
   const safe = game.money >= pendTotal;
+  const finalRound = reagentRules(game) && game.currentRound >= game.maxRounds;
   const nW = roster.reduce((sum, r) => sum + r.list.length, 0);
   const cfg = difficultyConfig(game.difficulty);
   const shownRound = Math.min(game.currentRound, game.maxRounds);
@@ -359,26 +384,44 @@ export function GameStatusPanel({
           </Row>
           <Row label="Modules">
             <b>
-              {game.equippedModules.length}/{game.shipLevel}
+              {modulesUsed}/{game.shipLevel}
             </b>
           </Row>
-          {game.equippedModules.length === 0 ? (
+          {game.equippedModules.length === 0 &&
+          (game.engines?.length ?? 0) === 0 ? (
             <p className="pt-1 text-[10px] text-muted-foreground/80">
               No modules installed. Upgrade the ship in the Shipyard to unlock
               slots.
             </p>
           ) : (
-            game.equippedModules.map((m) => (
-              <div key={m.id} className="py-0.5 text-[11px]">
-                <span className="mr-1">
-                  <TextWithShipIcons>{m.icon}</TextWithShipIcons>
-                </span>
-                <span className="text-foreground/90">{m.name}</span>
-                <div className="pl-5 text-[10px] text-muted-foreground">
-                  {m.desc}
+            <>
+              {game.equippedModules.map((m) => (
+                <div key={m.id} className="py-0.5 text-[11px]">
+                  <span className="mr-1">
+                    <TextWithShipIcons>{m.icon}</TextWithShipIcons>
+                  </span>
+                  <span className="text-foreground/90">{m.name}</span>
+                  <div className="pl-5 text-[10px] text-muted-foreground">
+                    {m.desc}
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+              {(game.engines ?? []).map((engine) => (
+                <div key={engine.id} className="py-0.5 text-[11px]">
+                  <span className="mr-1">⚙️</span>
+                  <span className="text-foreground/90">
+                    {engineName(engine.id)}
+                  </span>
+                  <div className="pl-5 text-[10px] text-muted-foreground">
+                    {engineIsActive(game, engine)
+                      ? `Bonded Engine. Upkeep ${engineUpkeepFor(engine)} Gold each settlement. It holds one Favor slot and one module slot.`
+                      : (engine.dormantUntilRound ?? 0) > game.maxRounds
+                        ? "Dormant for the rest of the voyage. No upkeep while it rests. It holds one Favor slot and one module slot."
+                        : `Dormant until round ${engine.dormantUntilRound}. No upkeep while it rests. It holds one Favor slot and one module slot.`}
+                  </div>
+                </div>
+              ))}
+            </>
           )}
         </TabsContent>
 
@@ -394,7 +437,7 @@ export function GameStatusPanel({
               <Row
                 label={
                   <Term term="Wages">
-                    Wages{nW > 0 ? ` (${nW} workers)` : ""}
+                    Wages{nW > 0 ? ` (${nW} artisans)` : ""}
                   </Term>
                 }
               >
@@ -403,6 +446,16 @@ export function GameStatusPanel({
                   <span> · Wage Ledger saves {wageSavings} Gold</span>
                 )}
               </Row>
+              {pendUpkeep > 0 && (
+                <Row label="Engine upkeep">
+                  <b>{pendUpkeep} Gold</b>
+                </Row>
+              )}
+              {pendShadow > 0 && (
+                <Row label="False Manifest debt">
+                  <b>{pendShadow} Gold</b>
+                </Row>
+              )}
               {roster
                 .filter((r) => r.due > 0)
                 .map((r) => (
@@ -432,19 +485,38 @@ export function GameStatusPanel({
               </div>
               {safe ? (
                 <div className="mt-2 rounded-md bg-emerald-500/10 py-1.5 text-center text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-                  Funds are ready for round end
+                  {finalRound
+                    ? "Funds are ready for the voyage close"
+                    : "Funds are ready for round end"}
                 </div>
               ) : (
                 <div className="mt-2 rounded-md bg-rose-500/15 py-1.5 text-center text-[10px] text-rose-600 dark:text-rose-300 font-medium">
-                  Funds may fall short at round end
+                  {finalRound
+                    ? "A shortfall in wages or maintenance ends the voyage. Unpaid upkeep or shadow debt costs Reputation."
+                    : "Funds may fall short at round end"}
                 </div>
               )}
             </>
           ) : billsPaid ? (
             <>
               <Row label="Paid this round">
-                <b>{game.workerWages + game.maintenanceCosts} Gold</b>
+                <b>
+                  {game.workerWages +
+                    game.maintenanceCosts +
+                    (game.engineUpkeepCosts ?? 0)}{" "}
+                  Gold
+                </b>
               </Row>
+              {pendUpkeep > 0 && (
+                <Row label="Engine upkeep due at settlement">
+                  <b>{pendUpkeep} Gold</b>
+                </Row>
+              )}
+              {pendShadow > 0 && (
+                <Row label="False Manifest debt due after the Shipyard">
+                  <b>{pendShadow} Gold</b>
+                </Row>
+              )}
               {game.currentRound < game.maxRounds && (
                 <Row label="Projected next round">
                   <b>{nextRoundDue} Gold</b>

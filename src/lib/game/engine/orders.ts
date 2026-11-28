@@ -38,6 +38,7 @@ import {
   forecastFor,
   isOceanMaterial,
   spendEffect,
+  reagentRules,
 } from "../expansion";
 import {
   brokerWhisperCapacity,
@@ -51,6 +52,7 @@ import { createRng } from "../rng";
 import { CERAMICS, TEXTILES } from "../harbor-catalog";
 import { voyageRandom } from "../voyage-rng";
 
+import { hasEngine } from "../reagents";
 import type { GameContext, GameState, OrderCard } from "../types";
 import { hasModule, whisperCost } from "./core";
 import {
@@ -257,7 +259,8 @@ export function quoteOrder(state: GameState, order: OrderCard) {
     )
       applyBonus("Traveling Commission", 0.15, any, "traveling_commission");
     if (
-      hasModule(state, "storm_dividend") &&
+      (hasModule(state, "storm_dividend") ||
+        hasEngine(state, "storm_charter")) &&
       state.directPassageRound === state.currentRound - 1 &&
       !effectUses(state, "storm_dividend")
     )
@@ -290,6 +293,17 @@ export function quoteOrder(state: GameState, order: OrderCard) {
         "collectors_seal",
         "Collector's Seal",
         Math.min(15, (state.ceramicCollection?.length ?? 0) * 5),
+      );
+    if (
+      reagentRules(state) &&
+      hasEngine(state, "patrons_favor") &&
+      !effectUses(state, "patrons_favor")
+    )
+      applyBonus(
+        "Patron's Favor",
+        0.15,
+        (item) => (state.producedLastRound?.[item] ?? 0) >= 3,
+        "patrons_favor",
       );
   }
   const commissionBase = reward;
@@ -417,10 +431,20 @@ export function completeOrder(
     logs.push(`🤝 Broker's Commission (${pct}%): ${commission} Gold`);
   }
   order.settledGold = settleSale(state, reward, transport, audit);
-  if (!order.clearance) state.score += order.settledGold;
+  if (!order.clearance) {
+    state.score += order.settledGold;
+    // Tidewatch asks for the largest order round, so a clearance sale does
+    // not count and neither does anything sold at the Port Exchange.
+    state.roundOrderRevenue = (state.roundOrderRevenue ?? 0) + reward;
+    state.bestRoundRevenue = Math.max(
+      state.bestRoundRevenue ?? 0,
+      state.roundOrderRevenue,
+    );
+  }
   if (harborTrading(state) && ordinarySale(order)) {
     if (
-      hasModule(state, "storm_dividend") &&
+      (hasModule(state, "storm_dividend") ||
+        hasEngine(state, "storm_charter")) &&
       state.directPassageRound === state.currentRound - 1 &&
       !effectUses(state, "storm_dividend")
     )
@@ -473,6 +497,17 @@ export function completeOrder(
         logs.push(
           `Collector's Seal recorded ${novel.join(", ")} for future ceramic sales.`,
         );
+    }
+  }
+  if (reagentRules(state) && !order.clearance) {
+    state.goodsSold = state.goodsSold ?? {};
+    for (const resource of order.resources) {
+      const quantity = resource.required ?? 0;
+      state.goodsSold[resource.type] =
+        (state.goodsSold[resource.type] ?? 0) + quantity;
+      if (resource.type === "Silk")
+        state.silkShippedThisRound =
+          (state.silkShippedThisRound ?? 0) + quantity;
     }
   }
   state.completedOrders.push(order.id);
@@ -557,7 +592,10 @@ export function callBrokersFavor(
 
 export function intelPurchaseCount(state: GameState): number {
   if (harborTrading(state) && effectUses(state, "broker_bundle")) return 0;
-  const base = hasModule(state, "brokers_network") ? 2 : 1;
+  const base =
+    hasModule(state, "brokers_network") || hasEngine(state, "quiet_port")
+      ? 2
+      : 1;
   const extra = hasModule(state, "ocean_relay") ? 1 : 0;
   return Math.max(
     0,
@@ -779,7 +817,7 @@ export function chooseWorkshopContract(
   quantity: number,
   logs: string[],
 ) {
-  if (harborTrading(state)) return;
+  if (harborTrading(state) && !reagentRules(state)) return;
   if (
     !rebalanced(state) ||
     state.phase !== "worker_mgmt" ||
@@ -812,7 +850,7 @@ export function workshopBuyer(
   const contract = state.workshopContracts?.find(
     (entry) => entry.round === round,
   );
-  if (harborTrading(state)) return;
+  if (harborTrading(state) && !reagentRules(state)) return;
   if (!rebalanced(state) || !contract || contract.round !== round) return;
   const { item, quantity } = contract;
   return {

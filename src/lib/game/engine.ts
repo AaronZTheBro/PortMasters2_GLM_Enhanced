@@ -54,12 +54,25 @@ export {
   finalizeModuleSwap,
   handleModuleSelect,
   selectBoon,
+  selectFavor,
   startBoonDrafting,
   startModuleDrafting,
   swapBoonChoices,
   swapModuleChoices,
   upgradeShip,
 } from "./engine/boons";
+
+// Reagent rules: Favors, Charters, Bonded Engines, and Heat.
+export {
+  bribeHeat,
+  charterById,
+  charterProgress,
+  engineRecipe,
+  favorRankFor,
+  fuseEngine,
+  heatRisk,
+  selectCharter,
+} from "./reagents";
 
 // Pirates and escorts.
 export { hireEscort, resolvePirateAttack } from "./engine/pirates";

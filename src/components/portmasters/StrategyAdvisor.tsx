@@ -19,7 +19,11 @@ import {
 import { toast } from "sonner";
 import { cn, formatGoldProceeds } from "@/lib/utils";
 import type { GameState } from "@/lib/game/types";
-import { quoteDues, quoteShipUpgrade } from "@/lib/game/engine/pricing";
+import {
+  laterBillConsequence,
+  quoteDues,
+  quoteShipUpgrade,
+} from "@/lib/game/engine/pricing";
 import { quoteOrder } from "@/lib/game/engine/orders";
 import {
   harborTrading,
@@ -175,16 +179,45 @@ function computeAdvice(game: GameState): Advice[] {
     game.phase,
   );
   const due = quoteDues(game);
-  if (beforeBills && game.money < due.total) {
+  // Phase 3 collects wages and maintenance. Engine upkeep and shadow debt come
+  // later and a missed fee rests the Engine or stays on the books, so they must
+  // not read as a bankruptcy warning.
+  const phaseDue = due.phaseDue;
+  const finalRound = game.currentRound >= game.maxRounds;
+  if (beforeBills && game.money < phaseDue) {
     advice.push({
       id: "bankruptcy",
       priority: "critical",
       title: "Settlement funds are short",
-      description: `Wages and maintenance require ${due.total} Gold. You have ${game.money} Gold.`,
+      description: `Wages and maintenance require ${phaseDue} Gold. You have ${game.money} Gold.`,
       action:
         game.phase === 3
           ? "Request Financial Aid if you need help covering the bills."
           : "Reserve Gold and look for a trade you can complete this round.",
+    });
+  } else if (
+    beforeBills &&
+    due.upkeep + due.shadow > 0 &&
+    game.money < due.total
+  ) {
+    const owed = [];
+    if (due.upkeep > 0) owed.push(`${due.upkeep} Gold of Engine upkeep`);
+    if (due.shadow > 0) owed.push(`${due.shadow} Gold of False Manifest debt`);
+    const consequence = laterBillConsequence(
+      due,
+      game.currentRound,
+      game.maxRounds,
+    );
+    advice.push({
+      id: "engine_upkeep_short",
+      priority: "warning",
+      title: "Payments after the Shipyard may fall short",
+      description: `Wages and maintenance are covered, but ${owed.join(" and ")} come after the Shipyard. ${consequence}`,
+      action: finalRound
+        ? "Hold enough Gold to clear the later payments before the voyage closes."
+        : game.currentRound + 1 >= game.maxRounds
+          ? "Hold enough Gold to clear the later payments, or expect Reputation to pay for an unpaid fee."
+          : "Hold enough Gold for the later payments, or plan for the unpaid fee's Heat.",
     });
   }
 
@@ -198,7 +231,7 @@ function computeAdvice(game: GameState): Advice[] {
     advice.push({
       id: "idle_workers",
       priority: "warning",
-      title: `${idle} idle ${idle === 1 ? "worker" : "workers"}`,
+      title: `${idle} idle ${idle === 1 ? "artisan" : "artisans"}`,
       description: `Idle artisans still draw wages every round without producing goods. Assign them tasks in Artisan Management to start converting materials into more valuable stock.`,
       action:
         "Open Artisan Management and assign a recipe to each idle artisan.",

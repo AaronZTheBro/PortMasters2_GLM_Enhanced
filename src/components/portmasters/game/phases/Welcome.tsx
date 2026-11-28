@@ -16,6 +16,9 @@ import {
   FileCheck2,
   Wrench,
   Anchor,
+  ScrollText,
+  Repeat2,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import type { PublicUser } from "@/lib/api";
@@ -34,6 +37,7 @@ import {
   voyageStartingGold,
   voyageRaidAdjustment,
   CURRENT_HARBOR_RULES,
+  reagentRules,
 } from "@/lib/game/expansion";
 import { ShipMark, ShipIcon } from "../../ShipVisualizer";
 
@@ -206,8 +210,8 @@ function InfoCard({
 }
 
 // === Phase Timeline ======================================================
-// Horizontal step indicator for the 4 phases of each round, connected by
-// dotted lines. Each step has a small icon and a distinct color.
+// Step indicator for a full round, from the Favor draft to the Shipyard,
+// connected by dotted lines. Each step has a small icon and a color.
 const PHASE_STEPS: Array<{
   label: string;
   shortLabel?: string;
@@ -216,10 +220,30 @@ const PHASE_STEPS: Array<{
   dotColor: string;
 }> = [
   {
+    label: "Draft",
+    shortLabel: "Draft",
+    icon: ScrollText,
+    color: "text-indigo-600 dark:text-indigo-400",
+    dotColor: "bg-indigo-500",
+  },
+  {
     label: "Port Market",
+    shortLabel: "Market",
     icon: Store,
     color: "text-teal-600 dark:text-teal-400",
     dotColor: "bg-teal-500",
+  },
+  {
+    label: "Barter",
+    icon: Repeat2,
+    color: "text-sky-600 dark:text-sky-400",
+    dotColor: "bg-sky-500",
+  },
+  {
+    label: "Crew",
+    icon: Users,
+    color: "text-fuchsia-600 dark:text-fuchsia-400",
+    dotColor: "bg-fuchsia-500",
   },
   {
     label: "Trade Orders",
@@ -230,6 +254,7 @@ const PHASE_STEPS: Array<{
   },
   {
     label: "Settlement",
+    shortLabel: "Settle",
     icon: Wrench,
     color: "text-amber-600 dark:text-amber-400",
     dotColor: "bg-amber-500",
@@ -244,7 +269,7 @@ const PHASE_STEPS: Array<{
 
 function PhaseTimeline() {
   return (
-    <div className="flex items-center justify-center gap-0 max-w-md mx-auto">
+    <div className="flex flex-wrap items-center justify-center gap-y-2 max-w-2xl mx-auto">
       {PHASE_STEPS.map((step, i) => {
         const Icon = step.icon;
         return (
@@ -274,7 +299,7 @@ function PhaseTimeline() {
             {/* Dotted connector */}
             {i < PHASE_STEPS.length - 1 && (
               <div
-                className="w-6 h-0 border-t-2 border-dashed border-muted-foreground/25 mx-1 mt-[-12px]"
+                className="w-4 h-0 border-t-2 border-dashed border-muted-foreground/25 mx-0.5 mt-[-12px]"
                 aria-hidden
               />
             )}
@@ -304,14 +329,15 @@ export function Welcome({
   isHost,
   onShowTutorial,
   difficulty,
+  rulesVersion = CURRENT_HARBOR_RULES,
 }: {
   phaseSync: PhaseSync;
   members: PublicUser[];
   isHost: boolean;
   onShowTutorial: () => void;
   difficulty?: Difficulty;
+  rulesVersion?: number;
 }) {
-  const rulesVersion = CURRENT_HARBOR_RULES;
   const harborIds = phaseSync.ready?.requiredUserIds ?? [];
   const canStart = harborIds.length >= 2;
   const cfg = difficultyConfig(difficulty);
@@ -424,7 +450,7 @@ export function Welcome({
           title="Production Delay"
           rows={[
             "Assign work now. Goods arrive in Phase 3.",
-            "Workers don't produce instantly!",
+            "Artisans don't produce instantly!",
           ]}
           icon={Clock}
         />
@@ -468,13 +494,19 @@ export function Welcome({
       {/* == Tips == */}
       <div className="max-w-2xl mx-auto mt-3 space-y-2">
         <div className="rounded-lg bg-teal-500/[0.06] border border-teal-500/15 px-3.5 py-2.5 text-xs">
-          Choose a Boon each round. Upgrade your ship in the Shipyard to open
-          module slots.
+          {reagentRules({ rulesVersion })
+            ? "Choose a starter module, then a Patron Charter, then a Favor each round. Favors persist and attune. Upgrade your ship in the Shipyard to open module slots."
+            : "Choose a Boon each round. Upgrade your ship in the Shipyard to open module slots."}
         </div>
         <div className="rounded-lg bg-amber-500/[0.06] border border-amber-500/15 px-3.5 py-2.5 text-xs">
-          <strong>New player tip:</strong> Rely on raw material orders early.
-          Hire artisans only when you can sustain at least 2 rounds of wages.
-          Keep funds above maintenance plus all wages.
+          <strong>New player tip:</strong>{" "}
+          {reagentRules({ rulesVersion })
+            ? "Raw goods pay early bills. Finished goods carry the larger rewards, and the Tidewatch needs them."
+            : "Rely on raw material orders early."}{" "}
+          Hire artisans only when you can sustain at least 2 rounds of wages.{" "}
+          {reagentRules({ rulesVersion })
+            ? "Keep funds above maintenance, all wages and any Engine upkeep."
+            : "Keep funds above maintenance and all wages."}
         </div>
       </div>
     </div>

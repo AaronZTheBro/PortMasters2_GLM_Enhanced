@@ -15,6 +15,7 @@ import {
 } from "../pools";
 import type { GameState, OrderCard, ResourceCard, Worker } from "../types";
 import { hasModule, maintenanceSurcharge, shipUpgradeSurcharge } from "./core";
+import { engineUpkeepTotal, hasEngine } from "../reagents";
 import {
   EFFECT,
   REBALANCE,
@@ -29,6 +30,7 @@ import {
   effectUses,
   forecastFor,
   isOceanMaterial,
+  reagentRules,
 } from "../expansion";
 
 type PriceStep = { label: string; delta: number; effect?: string };
@@ -101,7 +103,10 @@ export function explainTransportCost(
     );
   const rawSilk = count((item) => item === "Silk");
   const silkProducts = count(isSilkProduct);
-  const freeSilk = hasModule(state, "silk_monopoly") ? rawSilk : 0;
+  const freeSilk =
+    hasModule(state, "silk_monopoly") || hasEngine(state, "silk_reel")
+      ? rawSilk
+      : 0;
   const windSilk = rawSilk - freeSilk + silkProducts;
   const windFactor = state.modifierFlags.transport_silk_discount;
   // Split the remaining freight by cargo quantity. Waived Silk is excluded
@@ -112,12 +117,29 @@ export function explainTransportCost(
       (freightBeforeSilk * (totalItems - discountedUnits)) / totalItems,
     );
   if (freeSilk > 0) {
-    setCost("Silk Road Monopoly module", withSilkDiscount(freeSilk));
+    setCost(
+      hasEngine(state, "silk_reel")
+        ? "The Silk Reel"
+        : "Silk Road Monopoly module",
+      withSilkDiscount(freeSilk),
+    );
   }
   if (windSilk > 0 && windFactor) {
     setCost(
       boonNameForModifierKey("transport_silk_discount"),
       withSilkDiscount(freeSilk + windSilk * windFactor),
+    );
+  }
+  if (windSilk > 0 && state.modifierFlags.favor_silk_freight) {
+    setCost(
+      "Silk Winds rank 2",
+      Math.max(0, cost - state.modifierFlags.favor_silk_freight),
+    );
+  }
+  if (ordinary && state.modifierFlags.favor_freight_relief) {
+    setCost(
+      "Merchant's Charm rank 2",
+      Math.max(0, cost - state.modifierFlags.favor_freight_relief),
     );
   }
   if (hasModule(state, "fleet_of_treasures")) {
@@ -268,9 +290,20 @@ function calcIncomeTax(state: GameState, preTax: number): number {
 }
 
 export function incomeTaxDue(state: GameState) {
+  // Engine upkeep is charged at settlement. The saved tax quote is taken in
+  // the Shipyard before that charge, so project it into the taxable profit.
+  // Once part of it has been paid, only the remaining upkeep is still missing
+  // from the tracked costs.
+  const projectedUpkeep = Math.max(
+    0,
+    engineUpkeepTotal(state) - (state.engineUpkeepCosts ?? 0),
+  );
   return (
     state.roundIncomeTaxDue ??
-    calcIncomeTax(state, state.roundRevenue - state.roundCosts)
+    calcIncomeTax(
+      state,
+      state.roundRevenue - state.roundCosts - projectedUpkeep,
+    )
   );
 }
 
@@ -378,10 +411,16 @@ export function explainCardPrice(
       reduction,
     );
   }
-  if (hasModule(state, "smugglers_hold") && cost > 0) {
+  if (
+    (hasModule(state, "smugglers_hold") ||
+      hasEngine(state, "false_manifest")) &&
+    cost > 0
+  ) {
     const next = Math.floor(cost * 0.85);
     steps.push({
-      label: "Smuggler's Hold module, 15% reduction",
+      label: hasModule(state, "smugglers_hold")
+        ? "Smuggler's Hold module, 15% reduction"
+        : "The False Manifest, 15% reduction",
       delta: next - cost,
     });
     cost = next;
@@ -469,6 +508,20 @@ export function explainCardPrice(
         EFFECT.merchantScales,
         "merchant_scales",
       );
+    }
+  }
+  if (reagentRules(state) && cost < card.totalCost) {
+    const units = card.resources.reduce(
+      (sum, { quantity }) => sum + Math.max(1, quantity ?? 1),
+      0,
+    );
+    const rail = Math.max(units, Math.ceil(card.totalCost * 0.4));
+    if (cost < rail) {
+      steps.push({
+        label: "Discount rail, 60% cap and 1 Gold per unit",
+        delta: rail - cost,
+      });
+      cost = rail;
     }
   }
   return { base: card.totalCost, steps, final: cost };
@@ -579,6 +632,8 @@ export function getWorkerWage(
     wage = Math.floor(wage * (1 - state.modifierFlags.hire_discount));
   }
   if (hasModule(state, "artisans_workshop")) wage = Math.floor(wage * 1.2);
+  if (state.modifierFlags.engine_wage_surcharge)
+    wage = Math.floor(wage * (1 + state.modifierFlags.engine_wage_surcharge));
   return wage;
 }
 
@@ -605,22 +660,66 @@ export function quoteWages(state: GameState) {
   for (const crew of Object.values(state.workers)) {
     for (const worker of crew) if (worker.task) recipes.add(worker.task);
   }
+  const relief =
+    recipes.size > 0 ? (state.modifierFlags.favor_artisan_wage_relief ?? 0) : 0;
+  const adjusted = Math.max(0, base - relief);
   const discount =
     expanded(state) &&
     hasModule(state, "wage_ledger") &&
     recipes.size >= (rebalanced(state) ? 1 : 2)
       ? Math.min(
-          base,
+          adjusted,
           rebalanced(state) ? REBALANCE.wageLedger : EFFECT.wageLedger,
         )
       : 0;
-  return { base, discount, due: base - discount };
+  return { base: adjusted, discount, due: adjusted - discount };
 }
 
 export function quoteDues(state: GameState) {
   const wages = quoteWages(state);
   const maintenance = state.fixedCost + maintenanceSurcharge(state);
-  return { wages, maintenance, total: wages.due + maintenance };
+  const upkeep = engineUpkeepTotal(state);
+  const shadow = reagentRules(state) ? (state.shadowGold ?? 0) : 0;
+  // Phase 3 collects wages and maintenance. Engine upkeep and shadow debt are
+  // charged after the Shipyard, and an unpaid fee rests the Engine or stays on
+  // the books instead of forcing bankruptcy.
+  const phaseDue = wages.due + maintenance;
+  return {
+    wages,
+    maintenance,
+    upkeep,
+    shadow,
+    phaseDue,
+    total: phaseDue + upkeep + shadow,
+  };
+}
+
+// Explains what happens to Engine upkeep and shadow debt that cannot be paid.
+// Phase 3 leaves them for the end of the round. Unpaid upkeep costs Reputation
+// in the last two rounds, because a resting Engine cannot return in time.
+export function laterBillConsequence(
+  due: { upkeep: number; shadow: number },
+  currentRound: number,
+  maxRounds: number,
+) {
+  const both = due.upkeep > 0 && due.shadow > 0;
+  if (currentRound >= maxRounds)
+    return both
+      ? "At the voyage close, unpaid upkeep and shadow debt cost Reputation and still add their Heat."
+      : due.upkeep > 0
+        ? "At the voyage close, unpaid upkeep costs Reputation and still adds 2 Heat."
+        : "At the voyage close, unpaid shadow debt costs Reputation and still adds 1 Heat.";
+  if (currentRound + 1 >= maxRounds)
+    return both
+      ? "With one round left, unpaid upkeep costs Reputation and still adds 2 Heat, and the Engine will not return. Unpaid shadow debt stays on the books, adds 1 Heat, and costs Reputation at the close if it remains unpaid."
+      : due.upkeep > 0
+        ? "With one round left, unpaid upkeep costs Reputation, adds 2 Heat, and the Engine will not return."
+        : "Unpaid shadow debt stays on the books and adds 1 Heat. If it remains unpaid at the close, it costs Reputation.";
+  return both
+    ? "Unpaid upkeep rests an Engine for a round and adds 2 Heat. Unpaid shadow debt stays on the books and adds 1 Heat."
+    : due.upkeep > 0
+      ? "Unpaid upkeep rests an Engine for a round and adds 2 Heat."
+      : "Unpaid shadow debt stays on the books and adds 1 Heat.";
 }
 
 // A saturating commission keeps Broker favor payouts below the configured cap.

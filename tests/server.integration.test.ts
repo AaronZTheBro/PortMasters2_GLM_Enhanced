@@ -15,6 +15,7 @@ import {
   CURRENT_HARBOR_RULES,
   REVISED_HARBOR_RULES,
   PRE_TUNING_HARBOR_RULES,
+  TUNED_HARBOR_RULES,
   type VoyageRules,
 } from "../src/lib/game/expansion";
 import {
@@ -34,7 +35,7 @@ import {
   quotePortExchange,
   sellAtPortExchange,
 } from "../src/lib/game/engine/orders";
-import { WORD_ON_THE_DOCKS_THRESHOLD } from "../src/lib/game/constants";
+import { BOONS, WORD_ON_THE_DOCKS_THRESHOLD } from "../src/lib/game/constants";
 import {
   applyBarterEntries,
   type BarterUpdate,
@@ -585,6 +586,9 @@ test(
         const game = createInitialGameState(0, 1, start.voyageEpoch);
         game.currentRound = 2;
         game.phase = 5;
+        game.charterId = "salt_guild";
+        game.boonChoices = BOONS.filter(({ id }) => id === "silk_wind");
+        game.pendingBoonId = "silk_wind";
         game.lastPurchaseTally = { round: 1, quantities };
         await request("/api/game/state", {
           cookie,
@@ -826,12 +830,30 @@ test(
             difficulty,
             PRE_TUNING_HARBOR_RULES,
           ),
+          buildClassicHarborRules(id, epoch, difficulty, TUNED_HARBOR_RULES),
           buildCurrentVoyageRules(id, epoch, difficulty),
         ][version - 1];
         const state = createInitialGameState(0, 1, epoch, difficulty, rules);
         state.currentRound = state.maxRounds;
         state.seatSeed = ctx.seedBase;
         state.modifierFlags.transport_flat_discount = 4;
+        if (version === CURRENT_HARBOR_RULES) {
+          // Exercise the version 9 fields through the save and restart path.
+          state.charterId = "salt_guild";
+          state.favors = ["merchant_charm"];
+          state.favorMarks = { merchant_charm: 3 };
+          state.engines = [
+            {
+              id: "silk_reel",
+              favorId: "silk_wind",
+              moduleId: "silk_monopoly",
+              rank: 2,
+              fusedRound: 1,
+            },
+          ];
+          state.heat = 3;
+          state.shadowGold = 25;
+        }
         const db = new DatabaseSync(databasePath);
         try {
           // Create a voyage started by the release that owned these rules.

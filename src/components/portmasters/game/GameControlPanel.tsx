@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import type { GameState } from "@/lib/game/types";
 import type { Phase } from "@/lib/game/types";
 import { phaseLabel } from "@/lib/game/engine";
+import { reagentRules } from "@/lib/game/expansion";
 import { cn } from "@/lib/utils";
 import {
   BookOpen,
@@ -116,7 +117,7 @@ export function GameControlPanel({
     }
     nextDisabled = true;
   } else if (game.phase === 5) {
-    startText = "Drafting boon";
+    startText = reagentRules(game) ? "Drafting Favor" : "Drafting boon";
     startDisabled = true;
     nextDisabled = true;
   } else if (

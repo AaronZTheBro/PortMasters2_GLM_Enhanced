@@ -18,6 +18,7 @@ import {
 
 import {
   CLASSIC_RULES,
+  REAGENT_RULES,
   openHarbor,
   type HarborForecast,
   type VoyageRules,
@@ -104,6 +105,17 @@ export type Worker = {
   hiredRound?: number;
 };
 
+// A permanent rule formed by fusing one Favor and one module on the Bond
+// Table. The pair stops being a coupon and starts being a verb.
+export type EngineState = {
+  id: string;
+  favorId: string;
+  moduleId: string;
+  rank: number;
+  fusedRound: number;
+  dormantUntilRound?: number;
+};
+
 // Client view of a loan. Borrower and lender keep mirrored entries;
 // Socket.IO synchronizes them while the server persists the shared record
 // used for repayment, backing, and redirects.
@@ -170,6 +182,7 @@ export type GameState = {
   roundIncomeTaxDue?: number;
   roundRevenue: number;
   roundCosts: number;
+  engineUpkeepCosts?: number;
   // Every artisan the captain employs, keyed by type (see WORKER_TYPES in
   // ./constants). One record rather than a field per type, so new artisan
   // definitions need no new state field; the roster normalizer fills gaps.
@@ -237,6 +250,34 @@ export type GameState = {
   // action below, each capped at one use per round.
   boonChoices: Boon[];
   boonSwapUsed: boolean;
+  // Reagent rules replace the one round boon with a small rack of persistent
+  // Favors. A Favor is stored by id, and favorMarks counts the rounds and
+  // duplicates that attune it toward rank 2 and rank 3.
+  favors?: string[];
+  favorMarks?: Record<string, number>;
+  // The slot a captain chose to replace when the rack is full. The value is
+  // carried in the save so the ready vote does not need a second payload.
+  pendingFavorSlot?: number;
+  // A Patron Charter is picked once at the start of a Reagent voyage and
+  // tracked across three acts.
+  charterId?: string;
+  charterMarks?: number;
+  charterMisses?: number;
+  charterActsSettled?: number;
+  charterComplete?: boolean;
+  engines?: EngineState[];
+  // Heat makes success a target. It raises raid risk and can be bribed down.
+  heat?: number;
+  // The False Manifest engine defers part of a lot price to settlement.
+  shadowGold?: number;
+  goodsSold?: Record<string, number>;
+  // Tidewatch reads the best single round of completed order revenue. Port
+  // Exchange and clearance sales are left out, so only filling orders counts.
+  bestRoundRevenue?: number;
+  // The order revenue banked so far in the current round.
+  roundOrderRevenue?: number;
+  producedLastRound?: Record<string, number>;
+  silkShippedThisRound?: number;
   _draftChoices?: Module[];
   moduleSwapUsed: boolean;
   _newModule?: Module;
@@ -398,7 +439,11 @@ export function createInitialGameState(
     roundCosts: 0,
     workers: emptyWorkerRoster(),
     fixedCost: voyageMaintenance(difficulty, rules.version),
-    shipLevel: openHarbor({ rulesVersion: rules.version }) ? 1 : 0,
+    shipLevel:
+      openHarbor({ rulesVersion: rules.version }) ||
+      rules.version === REAGENT_RULES
+        ? 1
+        : 0,
     shipUpgradeCost: [15, 25, 40],
     phase: 0,
     resourceCards: [],
@@ -420,6 +465,22 @@ export function createInitialGameState(
     equippedModules: [],
     boonChoices: [],
     boonSwapUsed: false,
+    favors: [],
+    favorMarks: {},
+    pendingFavorSlot: undefined,
+    charterId: undefined,
+    charterMarks: 0,
+    charterMisses: 0,
+    charterActsSettled: 0,
+    charterComplete: false,
+    engines: [],
+    heat: 0,
+    shadowGold: 0,
+    goodsSold: {},
+    bestRoundRevenue: 0,
+    roundOrderRevenue: 0,
+    producedLastRound: {},
+    silkShippedThisRound: 0,
     moduleSwapUsed: false,
     pirateAttackResolved: false,
     escortHired: false,

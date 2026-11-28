@@ -2,7 +2,7 @@
 import { formatReputation } from "../../utils";
 import { APP_NAME, MERCHANT_RATINGS, type MerchantRating } from "../constants";
 import { DEFAULT_DIFFICULTY, type Difficulty } from "../difficulty";
-import { rebalanced, type VoyageRules } from "../expansion";
+import { rebalanced, reagentRules, type VoyageRules } from "../expansion";
 import { tallyPurchasesByResource } from "../harborPulse";
 import {
   createInitialGameState,
@@ -11,6 +11,16 @@ import {
 } from "../types";
 import { settleOutstandingDebts } from "./aid";
 import { needsStarterModule, selectBoon, startBoonDrafting } from "./boons";
+import {
+  charterById,
+  charterGateRound,
+  charterProgress,
+  favorDraftHasNoPick,
+  readyDraftIsLegal,
+  settleCharterAct,
+  settleEngines,
+  settleFavorMarks,
+} from "../reagents";
 import { completePhase1, startPhase1 } from "./market";
 import { startPhase2 } from "./orders";
 import { incomeTaxDue } from "./pricing";
@@ -32,12 +42,29 @@ export function displayLedgerLine(line: string) {
 
 export function endRound(state: GameState, logs: string[]) {
   logs.push(`\n📊=== Round ${state.currentRound} Settlement ===`);
+  const charter = charterById(state.charterId);
+  if (charter) {
+    // A gate round reports its own progress in the act result. The plain
+    // progress line is for the rounds between gates.
+    const nextAct = Math.min(3, (state.charterActsSettled ?? 0) + 1) as
+      1 | 2 | 3;
+    if (state.currentRound < charterGateRound(state.maxRounds, nextAct))
+      logs.push(
+        `📜 ${charter.name}: ${charterProgress(state)} ${charter.metricLabel}.`,
+      );
+  }
+  settleCharterAct(state, logs);
+  // The patron pays before the Engine and shadow bills, so a final gate can
+  // cover the later payments instead of arriving after them.
+  settleEngines(state, logs);
   logs.push(`💰 Revenue this round: ${state.roundRevenue} Gold`);
   const totalCost = state.roundCosts;
   logs.push(`💸 Total Cost this round: ${totalCost} Gold`);
   logs.push(`   🔧 Maintenance: ${state.maintenanceCosts} Gold`);
   logs.push(`   📦 Materials: ${state.materialCosts} Gold`);
   logs.push(`   👥 Wages: ${state.workerWages} Gold`);
+  if (state.engineUpkeepCosts)
+    logs.push(`   ⚙️ Engine upkeep: ${state.engineUpkeepCosts} Gold`);
   const preTax = state.roundRevenue - totalCost;
   logs.push(
     `📈 ${preTax < 0 ? "Loss" : "Profit"} before tax: ${Math.abs(preTax)} Gold`,
@@ -58,11 +85,14 @@ export function endRound(state: GameState, logs: string[]) {
     logs.push(`🧾 VAT paid this round: ${state.roundVatPaid} Gold`);
   state.roundVatPaid = 0;
 
+  settleFavorMarks(state);
   state.modifierFlags = {};
   state.phase2DemandTags = [];
   state.revealedIntel = [];
   state.roundRevenue = 0;
+  state.roundOrderRevenue = 0;
   state.roundCosts = 0;
+  state.engineUpkeepCosts = 0;
   state.maintenanceCosts = 0;
   state.materialCosts = 0;
   state.workerWages = 0;
@@ -95,13 +125,13 @@ function completePhase2(state: GameState, logs: string[]) {
 
 export function startPhase3(state: GameState, logs: string[]) {
   state.phase = 3;
-  logs.push("\n👥=== Processing Worker Production ===");
+  logs.push("\n👥=== Processing Artisan Production ===");
   processProduction(state, logs);
 }
 
 // Pays wages and maintenance after the captain has had an opportunity for aid.
 export function finishSettlement(state: GameState, logs: string[]) {
-  logs.push("\n💰=== Paying Worker Wages ===");
+  logs.push("\n💰=== Paying Artisan Wages ===");
   const wageResult = payWages(state, logs);
   if (wageResult === "bankruptcy") {
     state.insolvency = "wages";
@@ -225,10 +255,12 @@ export function canAdvancePhase(state: GameState) {
   if (state.gameOver) return false;
   if (state.phase === 3) return state.pirateAttackResolved;
   if (state.phase === 5) {
-    return (
-      !needsStarterModule(state) &&
-      state.boonChoices.some((boon) => boon.id === state.pendingBoonId)
-    );
+    if (needsStarterModule(state)) return false;
+    if (!reagentRules(state))
+      return state.boonChoices.some((boon) => boon.id === state.pendingBoonId);
+    // A Rack filled by Engines has nothing legal to offer, so pass the
+    // draft rather than stalling the voyage.
+    return readyDraftIsLegal(state);
   }
   return [1, 2, 4, "barter", "worker_mgmt"].includes(state.phase);
 }
@@ -237,9 +269,19 @@ export function nextPhase(state: GameState, ctx: GameContext, logs: string[]) {
   if (!canAdvancePhase(state)) return;
   state.readyVote = undefined;
   if (state.phase === 5) {
-    const boonId = state.pendingBoonId!;
+    const boonId = state.pendingBoonId;
     state.pendingBoonId = undefined;
-    selectBoon(state, ctx, boonId, logs);
+    if (reagentRules(state) && !boonId && favorDraftHasNoPick(state)) {
+      logs.push(
+        "The Rack is full of Engines. No Favor can join this act, so the draft passes.",
+      );
+      state.pendingFavorSlot = undefined;
+      state.boonChoices = [];
+      state._draftChoices = undefined;
+      startPhase1(state, ctx, logs);
+    } else {
+      selectBoon(state, ctx, boonId!, logs);
+    }
   } else if (state.phase === 1) completePhase1(state, logs);
   else if (state.phase === "barter") {
     logs.push("Bartering ended.");
@@ -289,12 +331,13 @@ export function snapToCheckpoint(
 export function phaseLabel(state: {
   phase: GameState["phase"];
   currentRound: GameState["currentRound"];
+  rulesVersion?: number;
 }): string {
   switch (state.phase) {
     case 0:
       return "In Harbor";
     case 5:
-      return "Drafting Boon";
+      return reagentRules(state) ? "Drafting Favor" : "Drafting Boon";
     case 1:
       return `R${state.currentRound} · Buying`;
     case "barter":

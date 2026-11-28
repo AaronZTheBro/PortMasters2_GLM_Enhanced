@@ -27,7 +27,8 @@ import { normalizeDifficulty, type Difficulty } from "@/lib/game/difficulty";
 import type { Module } from "@/lib/game/constants";
 import { voyageBoon, voyageModule } from "@/lib/game/pools";
 import { restoreBrokerWhispers } from "@/lib/game/broker-whispers";
-import { type VoyageRules } from "@/lib/game/expansion";
+import { REAGENT_RULES, type VoyageRules } from "@/lib/game/expansion";
+import { refreshFavorModifiers, repairSavedRack } from "@/lib/game/reagents";
 
 // Maximum retained ledger lines. The APPLY reducer enforces this cap.
 const LEDGER_LINE_CAP = 500;
@@ -279,6 +280,25 @@ export function useGameSession(
           game.pirateAttackResolved = game.pirateAttackResolved ?? false;
           game.escortHired = game.escortHired ?? false;
           game.brokerTippedPirates = game.brokerTippedPirates ?? false;
+          repairSavedRack(game);
+          game.charterMarks = game.charterMarks ?? 0;
+          game.charterMisses = game.charterMisses ?? 0;
+          game.charterActsSettled = game.charterActsSettled ?? 0;
+          game.charterComplete = game.charterComplete ?? false;
+          game.heat = game.heat ?? 0;
+          game.shadowGold = game.shadowGold ?? 0;
+          game.goodsSold =
+            game.goodsSold && typeof game.goodsSold === "object"
+              ? game.goodsSold
+              : {};
+          game.bestRoundRevenue = game.bestRoundRevenue ?? 0;
+          game.roundOrderRevenue = game.roundOrderRevenue ?? 0;
+          game.producedLastRound =
+            game.producedLastRound && typeof game.producedLastRound === "object"
+              ? game.producedLastRound
+              : {};
+          game.silkShippedThisRound = game.silkShippedThisRound ?? 0;
+          if (version === REAGENT_RULES) refreshFavorModifiers(game);
           game.debts = game.debts ?? [];
           game.loansGiven = game.loansGiven ?? [];
           game.defaultedDebt = game.defaultedDebt ?? false;
@@ -363,8 +383,15 @@ export function useGameSession(
   const statusPhase = state.game.defaultedDebt
     ? "bankruptcy"
     : state.game.phase;
-  const { currentRound, voyageEpoch, money, score, shipLevel, gameOver } =
-    state.game;
+  const {
+    currentRound,
+    voyageEpoch,
+    money,
+    score,
+    shipLevel,
+    gameOver,
+    rulesVersion,
+  } = state.game;
   useEffect(() => {
     if (!enabled || !state.loaded || !socket) return;
     const sendStatus = () =>
@@ -372,7 +399,11 @@ export function useGameSession(
         roomId,
         round: currentRound,
         phase: statusPhase,
-        phaseLabel: phaseLabel({ phase: statusPhase, currentRound }),
+        phaseLabel: phaseLabel({
+          phase: statusPhase,
+          currentRound,
+          rulesVersion,
+        }),
         voyageEpoch,
         gold: money,
         reputation: score,
@@ -397,6 +428,7 @@ export function useGameSession(
     score,
     shipLevel,
     gameOver,
+    rulesVersion,
   ]);
 
   const saveTail = useRef<Promise<void>>(Promise.resolve());

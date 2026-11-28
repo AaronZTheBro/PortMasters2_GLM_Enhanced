@@ -51,7 +51,9 @@ export function remainingPlannedBuyers(state: GameState) {
     ...state.revealedIntel.map(({ orderId }) => orderId),
     ...(state.scoutedOrders ?? []).map(({ id }) => id),
   ]);
-  return (state.plannedOrders ?? []).filter(({ id }) => !known.has(id));
+  return (state.plannedOrders ?? []).filter(
+    ({ id, buyer }) => buyer !== "standing" && !known.has(id),
+  );
 }
 
 export function revealPlannedBuyer(

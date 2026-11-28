@@ -14,6 +14,7 @@ import {
   unlockedWorkerTypes,
   voyageRecipe,
 } from "../pools";
+import { hasEngine } from "../reagents";
 import { hasModule, maintenanceSurcharge } from "./core";
 import { getHireCost, quoteDues, quoteWages, workerWagesFor } from "./pricing";
 import {
@@ -26,6 +27,7 @@ import {
   rebalanced,
   spendEffect,
   voyageBaseWage,
+  reagentRules,
 } from "../expansion";
 
 export function hireWorker(state: GameState, type: string, logs: string[]) {
@@ -44,8 +46,11 @@ export function hireWorker(state: GameState, type: string, logs: string[]) {
     return;
   const list = state.workers[def.id];
   const wage = getHireCost(state, type);
-  if (state.money < wage + (rebalanced(state) ? quoteDues(state).total : 0)) {
-    logs.push("❌ Insufficient funds to hire workers!");
+  if (
+    state.money <
+    wage + (rebalanced(state) ? quoteDues(state).phaseDue : 0)
+  ) {
+    logs.push("❌ Insufficient funds to hire artisans!");
     return;
   }
   list.push({
@@ -85,10 +90,11 @@ export function fireWorker(
 export function quoteRecipe(state: GameState, product: string) {
   const recipe = voyageRecipe(product, state.rulesVersion);
   const inputs = { ...recipe.materials };
+  const recipeCap = state.modifierFlags.favor_recipe_cap ?? 2;
   const crew =
     harborTrading(state) &&
     !!state.modifierFlags.resourceful_crew &&
-    (state.resourcefulRecipes?.length ?? 0) < 2 &&
+    (state.resourcefulRecipes?.length ?? 0) < recipeCap &&
     !state.resourcefulRecipes?.includes(product);
   const guild =
     expanded(state) &&
@@ -161,7 +167,9 @@ export function assignTask(
             ...(state.resourcefulRecipes ?? []),
             task,
           ];
-          logs.push(`Resourceful Crew saved one ${saved} on ${task}.`);
+          logs.push(
+            `${hasEngine(state, "workhouse") ? "The Workhouse" : "Resourceful Crew"} saved one ${saved} on ${task}.`,
+          );
         } else {
           spendEffect(state, "guild_turnover");
           logs.push(`Guild Turnover saved one ${saved} on ${task}.`);
@@ -175,48 +183,80 @@ export function assignTask(
       return;
     }
   }
-  logs.push("❌ All workers are already assigned tasks!");
+  logs.push("❌ All artisans are already assigned tasks!");
 }
 
-function craftOutput(state: GameState, worker: Worker, eligible: boolean) {
+function craftOutput(
+  state: GameState,
+  worker: Worker,
+  eligible: boolean,
+  secondEligible = false,
+) {
   const inspiration = eligible
     ? (state.modifierFlags.worker_bonus_production ?? 0)
     : 0;
   const workshop = eligible && hasModule(state, "artisans_workshop") ? 1 : 0;
-  const total = (worker.isSkilled ? 2 : 1) + inspiration + workshop;
-  return { total, inspiration, workshop };
+  const second =
+    secondEligible && state.modifierFlags.favor_artisan_second ? 1 : 0;
+  const total = (worker.isSkilled ? 2 : 1) + inspiration + workshop + second;
+  return { total, inspiration, workshop, second };
 }
 
 export function productionOutput(state: GameState, worker: Worker) {
   if (!rebalanced(state)) return craftOutput(state, worker, true);
+  // Walk the same order as processProduction so the preview matches the
+  // first and second assignment bonuses exactly.
+  let assignmentIndex = 0;
   for (const { id } of WORKER_TYPES) {
-    const first = state.workers[id]?.find(({ task }) => task !== null);
-    if (first) return craftOutput(state, worker, worker === first);
+    for (const assigned of state.workers[id] ?? []) {
+      if (!assigned.task) continue;
+      if (assigned === worker)
+        return craftOutput(
+          state,
+          worker,
+          assignmentIndex === 0,
+          reagentRules(state) && assignmentIndex === 1,
+        );
+      assignmentIndex++;
+    }
   }
   return craftOutput(state, worker, false);
 }
 
 export function processProduction(state: GameState, logs: string[]) {
   const finished = new Set(state.producedRecipes ?? []);
-  let firstAssignment = true;
+  const producedLastRound: Record<string, number> = {};
+  if (reagentRules(state)) state.producedLastRound = producedLastRound;
+  let assignmentIndex = 0;
   for (const type of WORKER_TYPES) {
     const name = type.label;
     for (const w of state.workers[type.id] ?? []) {
       if (w.task) {
         finished.add(w.task);
-        const { total, inspiration, workshop } = craftOutput(
+        const { total, inspiration, workshop, second } = craftOutput(
           state,
           w,
-          firstAssignment || !rebalanced(state),
+          assignmentIndex === 0 || !rebalanced(state),
+          reagentRules(state) && assignmentIndex === 1,
         );
-        firstAssignment = false;
+        assignmentIndex++;
         state.inventory[w.task] = (state.inventory[w.task] || 0) + total;
+        if (reagentRules(state))
+          producedLastRound[w.task] = (producedLastRound[w.task] ?? 0) + total;
         w.producedCount = (w.producedCount || 0) + total;
         if (harborTrading(state))
           w.finishedAssignments = (w.finishedAssignments ?? 0) + 1;
         const bonuses = [];
-        if (inspiration) bonuses.push(`Artisan's Inspiration +${inspiration}`);
+        const workhouse = hasEngine(state, "workhouse");
+        if (inspiration)
+          bonuses.push(
+            `${workhouse ? "The Workhouse" : "Artisan's Inspiration"} +${inspiration}`,
+          );
         if (workshop) bonuses.push(`Artisan's Workshop +${workshop}`);
+        if (second)
+          bonuses.push(
+            `${workhouse ? "The Workhouse" : "Attuned Inspiration"} +${second}`,
+          );
         const details = bonuses.length ? ` (${bonuses.join(", ")})` : "";
         const title = w.isSkilled ? `Skilled ${name}` : name;
         logs.push(
@@ -275,7 +315,7 @@ export function payWages(
   logs.push(
     `⚠️ Insufficient funds! Needed: ${total} Gold, Have: ${state.money} Gold`,
   );
-  logs.push("💥 Could not pay wages, workers strike...");
+  logs.push("💥 Could not pay wages, artisans strike...");
   logs.push("💥 Reputation collapsed, forced bankruptcy!");
   return "bankruptcy";
 }

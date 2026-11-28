@@ -185,7 +185,7 @@ const EVENT_STYLES: Record<ChronicleEventType, EventStyle> = {
     color: "text-pink-600 dark:text-pink-400",
     dotBg: "bg-pink-500",
     dotRing: "ring-pink-500/20",
-    label: "Boon",
+    label: "Favor or Boon",
   },
   loan: {
     icon: HandCoins,

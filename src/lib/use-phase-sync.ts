@@ -19,7 +19,8 @@ import {
 import { renownStartingGoldBonus } from "@/lib/game/legacy";
 import { normalizeDifficulty } from "@/lib/game/difficulty";
 import { api } from "@/lib/api";
-import type { VoyageRules } from "@/lib/game/expansion";
+import { reagentRules, type VoyageRules } from "@/lib/game/expansion";
+import { canLockFavor, favorDraftHasNoPick } from "@/lib/game/reagents";
 
 export type ReadyState = {
   round: number;
@@ -215,12 +216,13 @@ export function usePhaseSync(
       const current = getGame();
       if (current.readyVote) return;
       if (current.phase === 5) {
-        if (
-          needsStarterModule(current) ||
-          !boonId ||
-          !current.boonChoices.some((boon) => boon.id === boonId)
-        )
-          return;
+        const blocked = reagentRules(current)
+          ? !(
+              canLockFavor(current, boonId) ||
+              (favorDraftHasNoPick(current) && !boonId)
+            )
+          : !boonId || !current.boonChoices.some((boon) => boon.id === boonId);
+        if (needsStarterModule(current) || blocked) return;
       } else if (!canAdvancePhase(current)) return;
 
       const vote = { round: current.currentRound, phase: current.phase };
@@ -243,6 +245,7 @@ export function usePhaseSync(
         act((state) => {
           state.readyVote = undefined;
           state.pendingBoonId = undefined;
+          state.pendingFavorSlot = undefined;
         });
         setStartError("Could not save your progress. Try continuing again.");
       } finally {
@@ -278,6 +281,7 @@ export function usePhaseSync(
       act((state) => {
         state.readyVote = undefined;
         state.pendingBoonId = undefined;
+        state.pendingFavorSlot = undefined;
       });
       await flush();
     } catch {

@@ -26,9 +26,25 @@ import {
   classicHarbor,
   harborTrading,
   rebalanced,
+  reagentRules,
   SPECIALTIES,
   specialtyOpens,
 } from "@/lib/game/expansion";
+import {
+  charterById,
+  charterGateRound,
+  charterGoalForAct,
+  charterMetricLabel,
+  charterProgress,
+  engineIsActive,
+  engineName,
+  engineRecipe,
+  engineUpkeepTotal,
+  favorName,
+  favorRankFor,
+  heatLabel,
+  heatRisk,
+} from "@/lib/game/reagents";
 import { announcedMandateRound, describeForecast } from "@/lib/game/forecast";
 import {
   featuredDemand,
@@ -125,6 +141,7 @@ export function GamePhasePanel({
           isHost={isHost}
           onShowTutorial={onShowTutorial}
           difficulty={game.difficulty}
+          rulesVersion={game.rulesVersion}
         />
       );
     if (p === 5)
@@ -240,7 +257,7 @@ function VoyageBrief({
   const updated = rebalanced(game);
   const harbor = harborTrading(game);
   const savedBoon =
-    game.phase === 5
+    game.phase === 5 || reagentRules(game)
       ? undefined
       : BOONS.find(({ id }) => id === game.lastBoonId);
   const activeBoon = savedBoon && voyageBoon(savedBoon, game.rulesVersion);
@@ -279,6 +296,15 @@ function VoyageBrief({
       : undefined;
   const scout = includesPreview ? game.scoutedOrder : undefined;
   const scouts = includesPreview ? game.scoutedOrders : undefined;
+  const reagent = reagentRules(game);
+  const charter = reagent ? charterById(game.charterId) : undefined;
+  // The brief points at the next unresolved act gate, including the draft
+  // that opens right after a gate settles.
+  const charterAct = Math.min(3, (game.charterActsSettled ?? 0) + 1) as
+    1 | 2 | 3;
+  const favors = reagent ? (game.favors ?? []) : [];
+  const engines = reagent ? (game.engines ?? []) : [];
+  const heat = game.heat ?? 0;
   if (
     !harbor &&
     !briefing &&
@@ -287,7 +313,8 @@ function VoyageBrief({
     !scout &&
     !nextBuyers.some(Boolean) &&
     !scouts?.length &&
-    !specialties?.length
+    !specialties?.length &&
+    !(reagent && (charter || favors.length || engines.length || heat > 0))
   )
     return null;
   return (
@@ -304,6 +331,84 @@ function VoyageBrief({
                 Next port: {game.arrivals[game.currentRound]}
               </span>
             )}
+        </div>
+      )}
+      {reagent && (charter || favors.length || engines.length || heat > 0) && (
+        <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/[0.04] px-2.5 py-2 text-xs">
+          {charter && (
+            <>
+              <p>
+                <strong>
+                  {charter.icon} {charter.name}
+                </strong>{" "}
+                ·{" "}
+                {(game.charterActsSettled ?? 0) >= 3
+                  ? "Charter settled"
+                  : charterGoalForAct(game, charterAct) === 0
+                    ? `Act ${charterAct} is a warm up by round ${charterGateRound(game.maxRounds, charterAct)}`
+                    : `Act ${charterAct} asks for ${charterGoalForAct(game, charterAct)} ${charterMetricLabel(charter, charterGoalForAct(game, charterAct))} by round ${charterGateRound(game.maxRounds, charterAct)}, with ${charterProgress(game)} ${charter.metric === "best_round" ? "in the best round so far" : "so far"}`}{" "}
+                · {game.charterMarks ?? 0} of 3 marks
+                {game.charterComplete
+                  ? " · charter complete"
+                  : (game.charterMisses ?? 0) > 0
+                    ? ` · ${game.charterMisses} missed`
+                    : ""}
+              </p>
+              {charter.metric === "best_round" && (
+                <p className="mt-0.5 text-muted-foreground">
+                  This round: {game.roundOrderRevenue ?? 0} Gold of order
+                  revenue.
+                </p>
+              )}
+            </>
+          )}
+          {favors.length ? (
+            <p className="mt-1">
+              <strong>Favors</strong> ·{" "}
+              {favors
+                .map(
+                  (id) => `${favorName(id)} at rank ${favorRankFor(game, id)}`,
+                )
+                .join(", ")}
+            </p>
+          ) : null}
+          {engines.length ? (
+            <div className="mt-1">
+              <p>
+                <strong>Engines</strong> · upkeep {engineUpkeepTotal(game)} Gold
+                each settlement
+              </p>
+              <ul className="mt-0.5 grid gap-0.5">
+                {engines.map((engine) => (
+                  <li key={engine.id}>
+                    <strong>{engineName(engine.id)}</strong>
+                    {engineIsActive(game, engine)
+                      ? ""
+                      : (engine.dormantUntilRound ?? 0) > game.maxRounds
+                        ? " (dormant for the rest of the voyage, no upkeep while it rests)"
+                        : ` (dormant until round ${engine.dormantUntilRound}, no upkeep while it rests)`}
+                    {" · "}
+                    {engineRecipe(engine.id)?.desc}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {engines.some((engine) => engine.id === "patrons_favor") &&
+          Object.keys(game.producedLastRound ?? {}).length > 0 ? (
+            <p className="mt-1">
+              <strong>Made last round</strong> ·{" "}
+              {Object.entries(game.producedLastRound ?? {})
+                .map(([item, count]) => `${count} ${item}`)
+                .join(", ")}
+            </p>
+          ) : null}
+          {heat > 0 ? (
+            <p className="mt-1">
+              <strong>Heat {heat}</strong> · {heatLabel(heat)}. Raid risk is up{" "}
+              {Math.round(heatRisk(game) * 100)} percent.
+            </p>
+          ) : null}
         </div>
       )}
       {harbor && (activeBoon || game.equippedModules.length > 0) && (
@@ -436,7 +541,8 @@ function VoyageBrief({
               {proceeds < 0
                 ? `Estimated cost ${Math.abs(proceeds)}`
                 : `Estimated proceeds ${proceeds}`}{" "}
-              Gold after freight and VAT, before any new Boon.
+              Gold after freight and VAT, before any new{" "}
+              {reagent ? "Favor" : "Boon"}.
             </p>
           </div>
         );

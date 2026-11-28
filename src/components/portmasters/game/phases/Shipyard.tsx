@@ -1,8 +1,14 @@
 "use client";
 
-import { incomeTaxDue, quoteShipUpgrade } from "@/lib/game/engine/pricing";
-import { harborTrading, rebalanced } from "@/lib/game/expansion";
-import { unlockedBoons } from "@/lib/game/pools";
+import { useState } from "react";
+import {
+  incomeTaxDue,
+  quoteDues,
+  quoteShipUpgrade,
+  taxReserve,
+} from "@/lib/game/engine/pricing";
+import { harborTrading, rebalanced, reagentRules } from "@/lib/game/expansion";
+import { unlockedBoons, voyageBoon } from "@/lib/game/pools";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,16 +35,21 @@ import {
   Lock,
   Unlock,
   ChevronRight,
+  Flame,
 } from "lucide-react";
 import {
+  bribeHeat,
   explainTransportCost,
   finalizeModuleSwap,
+  fuseEngine,
   handleModuleSelect,
   startModuleDrafting,
   swapModuleChoices,
   upgradeShip,
 } from "@/lib/game/engine";
 import {
+  BOONS,
+  MODULES,
   MODULES_TIER0,
   MODULES_TIER1,
   MODULES_TIER2,
@@ -46,6 +57,21 @@ import {
 } from "@/lib/game/constants";
 import type { GameState } from "@/lib/game/types";
 import { NEW_MODULES } from "@/lib/game/expansion";
+import {
+  ENGINE_RECIPES,
+  engineIsActive,
+  engineName,
+  engineSlots,
+  engineUpkeepFor,
+  favorDescription,
+  favorMarksFor,
+  favorName,
+  favorRankFor,
+  heatLabel,
+  heatRisk,
+  moduleSlotsUsed,
+  rankText,
+} from "@/lib/game/reagents";
 import { cn } from "@/lib/utils";
 import type { PublicUser } from "@/lib/api";
 import { Term } from "../../Term";
@@ -207,7 +233,9 @@ function ShipStatsPanel({ game }: { game: GameState }) {
   const canUpgrade = game.shipLevel < 3 && !finalRound;
   const cargoUnits = cargoUnitsOf(game);
   const crew = crewCountOf(game);
-  const slotsUsed = game.equippedModules.length;
+  const slotsUsed = reagentRules(game)
+    ? moduleSlotsUsed(game)
+    : game.equippedModules.length;
   const slotsMax = game.shipLevel;
   const slotPct = slotsMax > 0 ? (slotsUsed / slotsMax) * 100 : 0;
   return (
@@ -268,6 +296,243 @@ function ShipStatsPanel({ game }: { game: GameState }) {
             transition={{ duration: 0.6, ease: "easeOut" }}
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// BondTable : permanent Engines fused from one rank 2 Favor and one equipped
+// module, plus the Heat ledger the harbormaster keeps. Reagent rules only.
+function BondTable({
+  game,
+  act,
+}: {
+  game: GameState;
+  act: (fn: (g: GameState, logs: string[]) => void) => void;
+}) {
+  const heat = game.heat ?? 0;
+  const slots = engineSlots(game);
+  const engines = game.engines ?? [];
+  const reserved = taxReserve(game);
+  const available = game.money - reserved;
+  const guarded = Math.round(heatRisk(game) * 100);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  return (
+    <div className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/[0.03] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1 text-[10px] tracking-wide text-muted-foreground/70">
+          <Flame className="h-3 w-3 text-rose-500" />
+          The Bond Table · {engines.length} of {slots} Engine slots
+        </div>
+        <div className="flex items-center gap-2 text-[11px]">
+          <span className="text-muted-foreground">
+            Heat {heat} · {heatLabel(heat)}
+            {heat > 0 ? ` · raid risk up ${guarded} percent` : ""}
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 rounded-lg"
+            title={
+              available < 10 && game.money >= 10
+                ? "The Income Tax reserve covers the rest of your Gold."
+                : "Spend 10 Gold to lower Heat by 1. This round's pirates have already been resolved, so the lower Heat helps next round."
+            }
+            disabled={heat <= 0 || available < 10}
+            onClick={() => act((g, logs) => bribeHeat(g, logs, taxReserve(g)))}
+          >
+            Bribe 10 Gold
+          </Button>
+        </div>
+      </div>
+      <p className="mt-1 text-[10px] text-muted-foreground">
+        A bribe spends 10 Gold to lower Heat by 1. It helps next round, since
+        this round's pirate attack is already resolved. Bonding is optional. A
+        Patron Charter never requires an Engine.
+      </p>
+
+      {engines.length ? (
+        <div className="mt-2 space-y-1">
+          {engines.map((engine) => {
+            const active = engineIsActive(game, engine);
+            return (
+              <div
+                key={engine.id}
+                className="flex flex-wrap items-center gap-2 text-xs"
+              >
+                <span aria-hidden>
+                  {ENGINE_RECIPES.find((recipe) => recipe.id === engine.id)
+                    ?.icon ?? "⚙️"}
+                </span>
+                <strong>{engineName(engine.id)}</strong>
+                <span
+                  className={cn(
+                    "rounded-full border px-1.5 py-0.5 text-[9px] font-semibold",
+                    active
+                      ? "border-teal-500/40 bg-teal-500/10 text-teal-700 dark:text-teal-300"
+                      : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                  )}
+                >
+                  {active
+                    ? "Active"
+                    : (engine.dormantUntilRound ?? 0) > game.maxRounds
+                      ? "Dormant for the rest of the voyage"
+                      : `Dormant until round ${engine.dormantUntilRound}`}
+                </span>
+                <span className="ml-auto text-muted-foreground">
+                  {active
+                    ? `${engineUpkeepFor(engine)} Gold upkeep each settlement`
+                    : (engine.dormantUntilRound ?? 0) > game.maxRounds
+                      ? "No upkeep while dormant, and it will not return before the voyage closes"
+                      : `No upkeep while dormant, then ${engineUpkeepFor(engine)} Gold when it returns`}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Bond a rank 2 Favor with an equipped module to make one permanent
+          Engine. The two pieces merge, so nothing stacks twice.
+        </p>
+      )}
+
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {ENGINE_RECIPES.map((recipe) => {
+          const builtEngine = engines.find((engine) => engine.id === recipe.id);
+          const built = Boolean(builtEngine);
+          const favorOwned = (game.favors ?? []).includes(recipe.favorId);
+          const marks = favorMarksFor(game, recipe.favorId);
+          const rank = favorRankFor(game, recipe.favorId);
+          const savedFavor = favorOwned
+            ? BOONS.find((entry) => entry.id === recipe.favorId)
+            : undefined;
+          const favorBoon = savedFavor
+            ? voyageBoon(savedFavor, game.rulesVersion)
+            : undefined;
+          const pieceModule = MODULES.find(
+            (module) => module.id === recipe.moduleId,
+          );
+          const pieceName = pieceModule?.name ?? recipe.moduleId;
+          const moduleEquipped = game.equippedModules.some(
+            (module) => module.id === recipe.moduleId,
+          );
+          const slotFree = engines.length < slots;
+          const affordable = available >= 12;
+          const ready =
+            !built &&
+            favorOwned &&
+            rank >= 2 &&
+            moduleEquipped &&
+            slotFree &&
+            affordable;
+          const reason = built
+            ? "Bonded"
+            : !slotFree
+              ? "No Engine slot this act"
+              : !favorOwned
+                ? "Favor not in the rack"
+                : rank < 2
+                  ? `Favor needs rank 2 (${marks} of 3 marks)`
+                  : !moduleEquipped
+                    ? `${pieceName} not equipped`
+                    : !affordable
+                      ? game.money >= 12
+                        ? "Tax reserve covers the Bond fee"
+                        : "Need 12 Gold"
+                      : "Ready to bond";
+          return (
+            <div
+              key={recipe.id}
+              className={cn(
+                "rounded-lg border p-2",
+                ready
+                  ? "border-amber-500/40 bg-amber-500/[0.05]"
+                  : "border-black/5 bg-background/40 dark:border-white/10",
+              )}
+            >
+              <div className="flex items-center gap-1.5">
+                <span aria-hidden>{recipe.icon}</span>
+                <strong className="text-xs">{recipe.name}</strong>
+                <span className="ml-auto rounded-full border border-border bg-muted px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">
+                  {recipe.tag}
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                {recipe.desc}
+              </p>
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                {builtEngine
+                  ? `Bonded at rank ${builtEngine.rank}. Upkeep is ${engineUpkeepFor(builtEngine)} Gold each settlement.`
+                  : favorOwned
+                    ? `Consumes ${favorName(recipe.favorId)} at rank ${rank} and ${pieceName}. Upkeep is ${engineUpkeepFor({ rank })} Gold from this settlement. Bonding adds 1 Heat.`
+                    : `Requires ${favorName(recipe.favorId)} at rank 2 and ${pieceName} equipped. Upkeep is 6 Gold from the settlement that bonds them, or 4 at rank 3. Bonding adds 1 Heat.`}
+              </p>
+              {favorBoon && !builtEngine && (
+                <div className="mt-1.5 space-y-0.5 rounded-md bg-background/60 px-2 py-1 text-[10px] leading-snug">
+                  <p>
+                    <span className="font-semibold">Favor now:</span>{" "}
+                    {favorDescription(favorBoon)}
+                    {rank > 1
+                      ? ` ${rankText(recipe.favorId, rank).replace(/^Rank [23]: /, "")}`
+                      : ""}
+                  </p>
+                  {moduleEquipped && pieceModule && (
+                    <p>
+                      <span className="font-semibold">Module now:</span>{" "}
+                      {pieceModule.desc}
+                    </p>
+                  )}
+                  <p>
+                    <span className="font-semibold">Engine after:</span>{" "}
+                    {recipe.desc}
+                  </p>
+                  <p className="text-muted-foreground">
+                    The Bond consumes both pieces. Any effect the Engine line
+                    does not repeat is lost.
+                  </p>
+                </div>
+              )}
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span
+                  className={cn(
+                    "text-[10px]",
+                    ready
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {reason}
+                </span>
+                <Button
+                  size="sm"
+                  variant={ready ? "default" : "secondary"}
+                  className="h-7 rounded-lg text-[11px]"
+                  disabled={!ready}
+                  aria-label={
+                    confirming === recipe.id
+                      ? `Confirm bonding ${recipe.name} for 12 Gold and 1 Heat`
+                      : `Bond ${recipe.name} for 12 Gold`
+                  }
+                  onClick={() => {
+                    if (confirming !== recipe.id) {
+                      setConfirming(recipe.id);
+                      return;
+                    }
+                    setConfirming(null);
+                    act((g, logs) =>
+                      fuseEngine(g, recipe.id, logs, taxReserve(g)),
+                    );
+                  }}
+                >
+                  {confirming === recipe.id
+                    ? "Confirm: 12 Gold, 1 Heat"
+                    : "Bond 12 Gold"}
+                </Button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -371,6 +636,14 @@ export function Shipyard({
     available,
     taxReserved,
   } = quoteShipUpgrade(game);
+  const finalDues = finalRound ? quoteDues(game) : undefined;
+  const laterBills = (finalDues?.upkeep ?? 0) + (finalDues?.shadow ?? 0);
+  const laterBillLabel = [
+    finalDues?.upkeep ? "Engine upkeep" : "",
+    finalDues?.shadow ? "shadow debt" : "",
+  ]
+    .filter(Boolean)
+    .join(" and ");
   const incomeTax = incomeTaxDue(game);
   const affordable = available >= upgCost;
   const canDraft =
@@ -389,8 +662,9 @@ export function Shipyard({
     { ...baseFreight, shipLevel: game.shipLevel + 1 },
     sample,
   ).final;
-  const slotsFull =
-    game.equippedModules.length >= game.shipLevel && game.shipLevel > 0;
+  const slotsFull = reagentRules(game)
+    ? moduleSlotsUsed(game) >= game.shipLevel && game.shipLevel > 0
+    : game.equippedModules.length >= game.shipLevel && game.shipLevel > 0;
   const cargoUnits = cargoUnitsOf(game);
   const crew = crewCountOf(game);
 
@@ -495,6 +769,9 @@ export function Shipyard({
           </div>
         ) : (
           <div className="flex flex-col gap-2.5">
+            {reagentRules(game) && !finalRound && (
+              <BondTable game={game} act={act} />
+            )}
             {canUpgrade && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -550,12 +827,21 @@ export function Shipyard({
                 Upgrade for {upgCost} Gold to open one module slot. With your
                 current modules, four Hemp would cost {currentFreight} Gold to
                 ship now and {upgradedFreight} Gold at the next level, before
-                any new Boon.
+                any new {reagentRules(game) ? "Favor" : "Boon"}.
               </p>
             )}
             {finalRound && (
               <p className="text-sm text-muted-foreground">
-                The voyage ends after this settlement.
+                The voyage ends after this settlement. Ship upgrades, module
+                drafts, the Bond Table, and Heat bribes are closed for the final
+                round.
+              </p>
+            )}
+            {finalRound && laterBills > 0 && (
+              <p className="text-sm text-amber-700 dark:text-amber-300">
+                {laterBills} Gold in {laterBillLabel} is still due after this
+                settlement. A shortfall at the voyage close costs Reputation, so
+                keep that much in hand.
               </p>
             )}
             <Button
@@ -578,9 +864,11 @@ export function Shipyard({
                   canDraft && "group-hover:rotate-90",
                 )}
               />
-              {slotsFull
-                ? "Draft & Swap Module (Slots Full)"
-                : "Draft & Install Module"}
+              {finalRound
+                ? "Module draft closed for this voyage"
+                : slotsFull
+                  ? "Draft & Swap Module (Slots Full)"
+                  : "Draft & Install Module"}
               {canDraft && (
                 <ChevronRight className="h-4 w-4 ml-1.5 inline-block transition-transform group-hover:translate-x-1" />
               )}
@@ -630,7 +918,9 @@ export function ModuleDraft({
 }) {
   const picks = game._draftChoices ?? [];
   const canSwap = !game.moduleSwapUsed && picks.length > 0;
-  const slotsAvailable = game.equippedModules.length < game.shipLevel;
+  const slotsAvailable = reagentRules(game)
+    ? moduleSlotsUsed(game) < game.shipLevel
+    : game.equippedModules.length < game.shipLevel;
   return (
     <div className="max-w-4xl mx-auto text-center relative">
       <ShipyardBackdrop />
@@ -800,7 +1090,8 @@ function ModuleCard({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-[200px] text-xs">
-                <strong>{boon.name}</strong> · {boon.desc}
+                <strong>{boon.name}</strong> ·{" "}
+                {reagentRules(game) ? favorDescription(boon) : boon.desc}
               </TooltipContent>
             </Tooltip>
           ))}
@@ -995,6 +1286,13 @@ export function ModuleSwap({
           </div>
         )}
         <div className="rounded-xl border border-teal-500/15 bg-teal-500/[0.03] p-4 my-4 space-y-2 text-left">
+          {game.equippedModules.length === 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              A bonded Engine holds this module slot, so there is no ordinary
+              module to replace. Bonded Engines are permanent. Return to the
+              draft, or upgrade the ship for another slot.
+            </p>
+          )}
           {game.equippedModules.map((m, i) => (
             <motion.div
               key={m.id}

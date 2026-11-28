@@ -329,7 +329,7 @@ export function Endgame({
     lines.push(
       `Trading ${netProfit < 0 ? "Loss" : "Profit"} Before Income Tax: ${Math.abs(netProfit)} Gold`,
     );
-    lines.push(`Workers Employed: ${workerCount}`);
+    lines.push(`Artisans Employed: ${workerCount}`);
     lines.push(`Cargo Remaining: ${cargoCount}`);
     if (crowned) {
       lines.push("");
@@ -722,7 +722,7 @@ export function Endgame({
             />
             <StatCard
               icon={Users}
-              label="Workers Employed"
+              label="Artisans Employed"
               value={workerCount}
               tone="default"
               index={7}
@@ -745,7 +745,7 @@ export function Endgame({
               />
               <CostRow
                 icon={Banknote}
-                label="Worker Wages"
+                label="Artisan Wages"
                 amount={game.totalWorkerWages ?? game.workerWages}
               />
               <CostRow

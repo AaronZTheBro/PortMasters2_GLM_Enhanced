@@ -13,7 +13,7 @@
     "build": "cross-env NODE_ENV=production prisma generate && cross-env NODE_ENV=production next build --webpack",
     "start": "npm run db:push && cross-env NODE_ENV=production node --import tsx server.ts",
     "lint": "eslint .",
-    "test:unit": "node --import tsx --test tests/game-rules.test.ts tests/expansion.test.ts tests/open-harbor.test.ts",
+    "test:unit": "node --import tsx --test tests/game-rules.test.ts tests/expansion.test.ts tests/open-harbor.test.ts tests/reagents.test.ts",
     "test:integration": "node --import tsx --test tests/server.integration.test.ts",
     "test:balance:harbor": "node --import tsx tests/open-harbor-balance.ts",
     "test:balance": "node --import tsx tests/voyage-balance.ts",

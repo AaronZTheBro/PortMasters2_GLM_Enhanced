@@ -402,7 +402,7 @@ export const BOONS_TIER0: Boon[] = [
     id: "master_apprentice",
     name: "Master's Apprentice",
     icon: "🎓",
-    desc: "Workers hired this round earn half their base wage for their first settlement, before the Artisan's Workshop adjustment.",
+    desc: "Artisans hired this round earn half their base wage for their first settlement, before the Artisan's Workshop adjustment.",
     modifiers: { hire_discount: 0.5 },
   },
 ];

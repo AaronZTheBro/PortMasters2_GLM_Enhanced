@@ -19,6 +19,18 @@ export type PlayerDetailData = {
   workers: GameState["workers"];
   equippedModules: Module[];
   logs: string[];
+  // Version 9 fields. The charter is a public commitment, so it rides with
+  // the on demand snapshot instead of being broadcast to the room.
+  maxRounds?: number;
+  charterId?: string;
+  charterProgress?: number;
+  charterMarks?: number;
+  charterMisses?: number;
+  charterActsSettled?: number;
+  charterComplete?: boolean;
+  favors?: string[];
+  engineIds?: string[];
+  heat?: number;
 };
 
 /**

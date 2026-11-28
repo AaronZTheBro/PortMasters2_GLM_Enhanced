@@ -4,6 +4,7 @@ import { ShipIcon } from "../../ShipVisualizer";
 import { useState } from "react";
 import {
   harborTrading,
+  reagentRules,
   rebalanced,
   voyageBaseWage,
 } from "@/lib/game/expansion";
@@ -13,7 +14,7 @@ import {
   workshopBuyer,
   workshopOptions,
 } from "@/lib/game/engine/orders";
-import { quoteDues } from "@/lib/game/engine/pricing";
+import { laterBillConsequence, quoteDues } from "@/lib/game/engine/pricing";
 import { Button } from "@/components/ui/button";
 import { WAGES } from "@/lib/game/constants";
 import {
@@ -152,7 +153,7 @@ function WorkerList({
                 </div>
                 {w.isSkilled && (
                   <span
-                    title="Skilled workers have a base output of 2 items per round"
+                    title="Skilled artisans have a base output of 2 items per round"
                     className="absolute -top-1 -right-1 grid place-items-center h-3.5 w-3.5 rounded-full bg-amber-400 text-white shadow-[0_0_6px_1px_oklch(0.78_0.16_85/0.6)]"
                   >
                     <Star className="h-2 w-2 fill-current" />
@@ -346,13 +347,26 @@ export function WorkerMgmt({
   });
   const totalWages = quoteWages(game).due;
   const due = quoteDues(game);
+  // Phase 3 pays wages and maintenance. Engine upkeep and shadow debt are
+  // charged at the end of the round, so a shortfall there rests an Engine or
+  // stays on the books instead of bankrupting the captain. At the voyage close
+  // the shortfall costs Reputation.
+  const phaseDue = due.phaseDue;
   const updated = rebalanced(game);
   const finalRound = updated && game.currentRound >= game.maxRounds;
+  // Rules version 9 brings the workshop contract back alongside harbor
+  // trading. It gives the Kiln a dependable ceramic buyer while clay is
+  // still arriving, and it works like the older rebalanced contract.
   const workshops =
-    updated && !finalRound && !harborTrading(game) ? workshopOptions(game) : [];
+    updated && !finalRound && (!harborTrading(game) || reagentRules(game))
+      ? workshopOptions(game)
+      : [];
   const [workshopItem, setWorkshopItem] = useState("");
   const [quantityChoice, setWorkshopQuantity] = useState<number>();
-  const existing = workshopBuyer(game, game.currentRound + 1);
+  // The final round still delivers the contract booked last round, so show
+  // that contract instead of looking for a booking that can never happen.
+  const contractRound = finalRound ? game.currentRound : game.currentRound + 1;
+  const existing = workshopBuyer(game, contractRound);
   const bookedItem = existing?.resources[0]?.type;
   const bookedQuantity = existing?.resources[0]?.required;
   const selected =
@@ -382,18 +396,54 @@ export function WorkerMgmt({
     ? quoteOrder(
         {
           ...game,
-          modifierFlags: {},
-          effectUses: {},
+          // Version 9 Favors persist, so their current modifiers belong in
+          // the estimate. Per round caps reset for the next round. Older
+          // rules draft a fresh Boon, so the estimate stays before bonuses.
+          ...(reagentRules(game)
+            ? { effectUses: {} }
+            : { modifierFlags: {}, effectUses: {} }),
           currentRound: game.currentRound + 1,
         },
         projectedContract,
       )
     : undefined;
+  const workshopStock = selected ? (game.inventory[selected] ?? 0) : 0;
+  const workshopIncoming = selected
+    ? roster.reduce(
+        (sum, r) =>
+          sum +
+          r.list.reduce(
+            (crewSum, w) =>
+              crewSum +
+              (w.task === selected ? productionOutput(game, w).total : 0),
+            0,
+          ),
+        0,
+      )
+    : 0;
+  const bookedStock = bookedItem ? (game.inventory[bookedItem] ?? 0) : 0;
   const nW = roster.reduce((sum, r) => sum + r.list.length, 0);
 
   // Projected balance & bankruptcy warning
-  const projectedBalance = game.money - (updated ? due.total : totalWages);
+  const projectedBalance = game.money - (updated ? phaseDue : totalWages);
   const bankrupt = projectedBalance < 0;
+  const afterShipyard = due.upkeep + due.shadow;
+  const laterOwed = [
+    due.upkeep > 0 ? "upkeep" : "",
+    due.shadow > 0 ? "shadow debt" : "",
+  ]
+    .filter(Boolean)
+    .join(" and ");
+  const laterConsequence = laterBillConsequence(
+    due,
+    game.currentRound,
+    game.maxRounds,
+  );
+  const upkeepShort =
+    updated &&
+    !bankrupt &&
+    afterShipyard > 0 &&
+    projectedBalance < afterShipyard;
 
   // Production preview: items currently being crafted (one entry per
   // active worker task), aggregated by item.
@@ -532,21 +582,53 @@ export function WorkerMgmt({
       {updated && (
         <section className="mb-4 grid gap-2 rounded-xl border bg-card p-4 text-sm">
           <h3 className="font-semibold">
-            {harborTrading(game) ? "Workshop costs" : "Workshop contract"}
+            {harborTrading(game) && !reagentRules(game)
+              ? "Workshop costs"
+              : "Workshop contract"}
           </h3>
           <p className="text-muted-foreground">
             This settlement includes {due.wages.due} Gold in wages and{" "}
             {due.maintenance} Gold in maintenance.
+            {due.upkeep > 0
+              ? ` Engine upkeep of ${due.upkeep} Gold is charged after the Shipyard.`
+              : ""}
           </p>
           {finalRound ? (
-            <p>
-              Buyers leave before the final settlement. Production is closed for
-              this voyage.
-            </p>
-          ) : harborTrading(game) ? (
+            existing ? (
+              <>
+                <p>
+                  The workshop buyer waits at {existing.demandPort} this round
+                  for {existing.resources[0].required}{" "}
+                  {existing.resources[0].type}. Deliver through the Orders board
+                  before the voyage closes. New assignments are closed, but the
+                  final sale still counts.
+                </p>
+                {bookedQuantity !== undefined &&
+                  bookedQuantity > bookedStock && (
+                    <p
+                      role="status"
+                      className="text-amber-700 dark:text-amber-300"
+                    >
+                      You have {bookedStock} {bookedItem} on hand, but the buyer
+                      expects {bookedQuantity}. Production and the Workshop
+                      Supplier are closed, so trade for the difference with
+                      another captain, or the order goes unfilled.
+                    </p>
+                  )}
+              </>
+            ) : (
+              <p>
+                Production is closed for this voyage. The buyers on this round's
+                Orders board still pay.
+              </p>
+            )
+          ) : harborTrading(game) && !reagentRules(game) ? (
             <p>Check the announced buyers when planning production.</p>
           ) : workshops.length ? (
             <>
+              {harborTrading(game) && (
+                <p>Check the announced buyers when planning production.</p>
+              )}
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="grid min-w-0 gap-1">
                   Finished good
@@ -580,13 +662,29 @@ export function WorkerMgmt({
                   {formatGoldProceeds(
                     projectedQuote.reward - projectedQuote.freight.final,
                   )}{" "}
-                  next round at Quanzhou Port after VAT and freight, before any
-                  new Boon.
+                  next round at Quanzhou Port after VAT and freight,{" "}
+                  {reagentRules(game)
+                    ? "at your current Favor ranks and before the next draft."
+                    : "before any new Boon."}
                 </p>
               )}
+              {projectedQuote &&
+                workshopQuantity > workshopStock + workshopIncoming && (
+                  <p
+                    role="status"
+                    className="text-amber-700 dark:text-amber-300"
+                  >
+                    You have {workshopStock} {selected} on hand and{" "}
+                    {workshopIncoming} in production, but the buyer still
+                    expects {workshopQuantity}.{" "}
+                    {game.currentRound + 1 >= game.maxRounds
+                      ? "The next round is the final one. Production and the Workshop Supplier are closed, so trade for the difference with another captain, or the order goes unfilled."
+                      : "Cover the difference in Phase 1 next round, or the order goes unfilled."}
+                  </p>
+                )}
               {existing && (
                 <p role="status">
-                  Booked for round {game.currentRound + 1}. Deliver{" "}
+                  Booked for round {contractRound}. Deliver{" "}
                   {existing.resources[0].required} {existing.resources[0].type}.
                 </p>
               )}
@@ -745,26 +843,29 @@ export function WorkerMgmt({
             {roster
               .filter((r) => r.due > 0)
               .flatMap((r) =>
-                r.list.map((_, i) => (
-                  <div
-                    key={`${r.id}-${i}`}
-                    className={cn(
-                      artisanTint(r.id),
-                      "flex justify-between items-center py-0.5",
-                    )}
-                  >
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className="grid place-items-center h-4 w-4 rounded-full bg-black/5 dark:bg-white/10 text-[10px]">
-                        {r.icon}
+                r.list.map((worker, i) => {
+                  const wage = getWorkerWage(game, r.id, worker);
+                  return (
+                    <div
+                      key={`${r.id}-${i}`}
+                      className={cn(
+                        artisanTint(r.id),
+                        "flex justify-between items-center py-0.5",
+                      )}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="grid place-items-center h-4 w-4 rounded-full bg-black/5 dark:bg-white/10 text-[10px]">
+                          {r.icon}
+                        </span>
+                        <span className="pm-artisan-ink font-medium">
+                          {r.label} #{i + 1}
+                        </span>
+                        <span className="text-muted-foreground">@ {wage}g</span>
                       </span>
-                      <span className="pm-artisan-ink font-medium">
-                        {r.label} #{i + 1}
-                      </span>
-                      <span className="text-muted-foreground">@ {r.cost}g</span>
-                    </span>
-                    <b className="tabular-nums">{r.cost} Gold</b>
-                  </div>
-                )),
+                      <b className="tabular-nums">{wage} Gold</b>
+                    </div>
+                  );
+                }),
               )}
             {/* Subtotal per type */}
             {roster
@@ -804,7 +905,7 @@ export function WorkerMgmt({
           >
             <span className="flex items-center gap-1.5">
               <Coins className="h-3.5 w-3.5" />
-              Projected balance after {updated ? "settlement bills" : "wages"}
+              Projected balance after {updated ? "Phase 3 bills" : "wages"}
             </span>
             <b
               className={cn(
@@ -829,10 +930,21 @@ export function WorkerMgmt({
               <div>
                 <b>Bankruptcy warning!</b> You&apos;ll be{" "}
                 <b>{Math.abs(projectedBalance)} Gold</b> short at Phase 3.
-                Either sell goods in trade, dismiss workers, or raise funds
+                Either sell goods in trade, dismiss artisans, or raise funds
                 before wages come due.
               </div>
             </motion.div>
+          )}
+          {upkeepShort && (
+            <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div>
+                <b>Later payments are short.</b> You expect{" "}
+                {Math.max(0, projectedBalance)} Gold after Phase 3 bills, but{" "}
+                {afterShipyard} Gold is due after the Shipyard, including{" "}
+                {laterOwed}. {laterConsequence}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -841,7 +953,7 @@ export function WorkerMgmt({
       <div className="rounded-xl bg-amber-500/[0.05] border border-teal-500/15 p-4 mb-4">
         <h3 className="text-center font-semibold mb-2 flex items-center justify-center gap-1.5">
           <Anvil className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-          Hire Workers
+          Hire Artisans
         </h3>
         <div className="text-xs space-y-1 mb-3">
           {roster.map((r) => (
@@ -883,7 +995,7 @@ export function WorkerMgmt({
               disabled={
                 phaseSync.waiting ||
                 finalRound ||
-                (updated && game.money < due.total + r.cost)
+                (updated && game.money < phaseDue + r.cost)
               }
               onClick={() => act((g, l) => hireWorker(g, r.id, l))}
             >
@@ -981,7 +1093,11 @@ export function WorkerMgmt({
                 </div>
                 <p className="mt-2 text-[10px] text-muted-foreground flex items-center gap-1">
                   <Sparkles className="h-3 w-3" />
-                  Expected output includes active boon and module bonuses.
+                  Expected output includes active{" "}
+                  {reagentRules(game)
+                    ? "Favor and Engine"
+                    : "boon and module"}{" "}
+                  bonuses.
                 </p>
               </motion.div>
             )}

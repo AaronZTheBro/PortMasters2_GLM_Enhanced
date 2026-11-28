@@ -39,6 +39,13 @@ import { phaseLabel, whisperCost } from "@/lib/game/engine";
 import { describeWhisperCargo } from "@/lib/game/broker-whispers";
 import { brokerOfferItem } from "@/lib/game/engine/market";
 import { intelPurchaseCount } from "@/lib/game/engine/orders";
+import {
+  charterById,
+  charterGateRound,
+  charterMetricLabel,
+  engineName,
+  favorName,
+} from "@/lib/game/reagents";
 import type { PlayerDetailData } from "@/lib/use-player-detail";
 import type { PublicUser } from "@/lib/api";
 import type { CaptainLegacySummary } from "@/lib/game/legacy";
@@ -532,7 +539,7 @@ export function RestartConfirmModal({
           </DialogTitle>
           <DialogDescription>
             Every captain currently in this harbor goes back to round one: gold,
-            cargo, workers, and ship upgrades all reset. The harbor also
+            cargo, artisans, and ship upgrades all reset. The harbor also
             reopens, so new captains can join again. This can't be undone.
           </DialogDescription>
         </DialogHeader>
@@ -735,6 +742,11 @@ export function PlayerDetailModal({
         };
       })
     : [];
+  const charter = detail?.charterId ? charterById(detail.charterId) : undefined;
+  const charterAct = Math.min(3, (detail?.charterActsSettled ?? 0) + 1) as
+    1 | 2 | 3;
+  const favors = detail?.favors ?? [];
+  const engines = detail?.engineIds ?? [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -829,6 +841,50 @@ export function PlayerDetailModal({
                 unavailable if they've stepped away. */}
             {legacy && <CaptainLegacyCard legacy={legacy} compact />}
 
+            {detail.charterId && charter && (
+              <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/[0.04] p-3.5">
+                <h4 className="mb-2 text-xs font-semibold text-muted-foreground">
+                  🧭 Patron Charter
+                </h4>
+                <p className="text-[12px]">
+                  <strong>
+                    {charter.icon} {charter.name}
+                  </strong>{" "}
+                  ·{" "}
+                  {detail.charterComplete
+                    ? "complete"
+                    : `${detail.charterMarks ?? 0} of 3 marks`}
+                  {(detail.charterMisses ?? 0) > 0 && !detail.charterComplete
+                    ? ` · ${detail.charterMisses} missed`
+                    : ""}
+                </p>
+                {!detail.charterComplete &&
+                  (detail.charterActsSettled ?? 0) < 3 && (
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {charter.goals[charterAct - 1] === 0
+                        ? `Act ${charterAct} is a warm up by round ${charterGateRound(detail.maxRounds ?? detail.round, charterAct)}. It grants its mark with no fee.`
+                        : `Act ${charterAct} asks for ${charter.goals[charterAct - 1]} ${charterMetricLabel(charter, charter.goals[charterAct - 1])} by round ${charterGateRound(detail.maxRounds ?? detail.round, charterAct)}, with ${detail.charterProgress ?? 0} ${charter.metric === "best_round" ? "in the best round so far." : "so far."}`}
+                    </p>
+                  )}
+                {(favors.length > 0 || engines.length > 0) && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {favors.length > 0
+                      ? `Favors: ${favors.map(favorName).join(", ")}`
+                      : ""}
+                    {favors.length > 0 && engines.length > 0 ? " · " : ""}
+                    {engines.length > 0
+                      ? `Engines: ${engines.map(engineName).join(", ")}`
+                      : ""}
+                  </p>
+                )}
+                {(detail.heat ?? 0) > 0 && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Heat {detail.heat}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Body: cargo and workers on the left, modules and the log
                 on the right, instead of four boxes stacked one under
                 the other in a single narrow column. */}
@@ -898,7 +954,7 @@ export function PlayerDetailModal({
 
                 <div className="rounded-xl border border-black/10 dark:border-white/10 p-3.5">
                   <h4 className="text-xs font-semibold text-muted-foreground mb-2">
-                    👥 Workers
+                    👥 Artisans
                   </h4>
                   {workerGroups.every((g) => g.list.length === 0) ? (
                     <p className="text-xs text-muted-foreground">

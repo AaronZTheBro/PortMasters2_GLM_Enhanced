@@ -10,6 +10,7 @@ import {
   voyageRaidAdjustment,
   voyageStartingGold,
   rebalanced,
+  reagentRules,
   raidTerms,
   voyageMaintenance,
   type Specialty,
@@ -106,6 +107,7 @@ export function guideTabs(
   const mandates = mandateRounds(cfg, rulesVersion);
   const harbor = harborTrading({ rulesVersion });
   const classic = classicHarbor({ rulesVersion });
+  const reagent = reagentRules({ rulesVersion });
   const resources = unlockedResources(
     difficulty,
     cfg.rounds,
@@ -155,12 +157,14 @@ export function guideTabs(
         intro:
           "The room advances after every active captain is ready. To change your choices while the room is waiting, select Not ready yet.",
         bullets: [
-          openHarbor({ rulesVersion })
-            ? "Install a starting module and draft a Boon for each round"
-            : "Draft a Boon for one round",
+          reagent
+            ? "Install a starter module, choose a Patron Charter, then lock a Favor while the Rack has room"
+            : openHarbor({ rulesVersion })
+              ? "Install a starting module and draft a Boon for each round"
+              : "Draft a Boon for one round",
           "Phase 1 buys cargo and reveals rumors from the Broker's Rumor Board",
           "Barter: exchange goods or Gold with other captains",
-          "Artisan Management: hire workers and assign production",
+          "Artisan Management: hire artisans and assign production",
           harbor
             ? "Phase 2: complete trade orders or sell cargo at the Port Exchange"
             : "Phase 2: complete trade orders",
@@ -178,7 +182,7 @@ export function guideTabs(
     id: "markets",
     label: "Markets",
     emoji: "📦",
-    blurb: "Goods, workers, taxes, and the Broker's rumors.",
+    blurb: "Goods, artisans, taxes, and the Broker's rumors.",
     sections: [
       {
         icon: "📦",
@@ -299,7 +303,7 @@ export function guideTabs(
                 "Reports stay visible when their round opens, even if you replace Signal Lantern. Paid whispers reveal other buyers.",
               ]
             : []),
-          "The usual price is 5 Gold for one rumor. Broker's Network charges 2 Gold for up to two, and Ocean Interpreter adds one when available.",
+          `The usual price is 5 Gold for one rumor. Broker's Network charges 2 Gold for up to two, and Ocean Interpreter adds one when available.${rulesVersion === CURRENT_HARBOR_RULES ? " The Quiet Port Engine charges 1 Gold for two rumors." : ""}`,
           "Farsight reveals one rumor for free, with no chance of a Broker leak. Modules add rumors only to paid purchases.",
           `At Renown Level ${BROKERS_FAVOR_UNLOCK_LEVEL}, Broker's Favor can add one buyer per voyage for a chosen quantity of cargo you hold. The Broker limits the payout before freight to ${BROKERS_FAVOR_PAYOUT_CAP} Gold, so check the buyer's quote before trading.`,
           ...(harbor
@@ -428,7 +432,7 @@ export function guideTabs(
               "Fleet arrivals bring a larger lot. Harvest shortfalls raise the named good's price. Market Day lowers the named material's price adjustment, subject to the combined adjustment limit and rounding.",
               "Guild exhibitions and Harbor Festivals bring premium commissions. Festivals also raise early Exchange prices. Rival merchants pay a premium for mixed cargo.",
             ]),
-        "Heavy Seas adds six percentage points to base direct raid risk, up to 50% before personal effects.",
+        `Heavy Seas adds six percentage points to base direct raid risk, up to ${reagent ? "75%" : "50%"} before personal effects.`,
         "Emergency Loan can be offered while your Gold is less than the bill total plus 8 Gold. Choosing it gives 40 Gold immediately and removes it from later drafts this voyage.",
       ],
     });
@@ -441,7 +445,9 @@ export function guideTabs(
         "Harbor Pulse uses the previous round’s raw purchases. Market Day features a material lot and lowers its price adjustment. The combined change is capped at 15% in either direction. Guild Exhibition reserves two buyers for the named finished good.",
         `Heavy Seas raises base raid risk by ${rebalanced({ rulesVersion }) ? "six" : "four"} percentage points, capped at 50% before personal effects.`,
         "Every round has a staple lot and a staple contract. Confirmed Broker rumors occupy separate slots.",
-        "Emergency Loan can be offered when your Gold is below the estimated bills and you have yet to use the Boon this voyage.",
+        reagent
+          ? "Emergency Loan is not offered as a Favor. Ask another captain for Financial Aid when wages or maintenance are short."
+          : "Emergency Loan can be offered when your Gold is below the estimated bills and you have yet to use the Boon this voyage.",
         `Imperial Mandate cargo is announced up to ${rebalanced({ rulesVersion }) ? "three" : "two"} rounds in advance. Production lands at settlement.`,
       ],
     });
@@ -498,12 +504,43 @@ export function guideTabs(
     emoji: "🔧",
     blurb: "Ship modules and the Renown that survives a restart.",
     sections: [
+      ...(reagent
+        ? [
+            {
+              icon: "🧭",
+              title: "Favors and Patron Charters",
+              intro:
+                "A Patron Charter sets the voyage goal. Favors set the build and stay until you replace them.",
+              bullets: [
+                "The draft offers three Favors each round with tags such as Silk, Kiln, Smuggling, Ocean, Road, and Court.",
+                "Your Rack has one Favor slot in Act I, two in Act II, and three in Act III. A full Rack lets you replace a Favor or take a duplicate. If bonded Engines fill every slot, there is no Favor to replace, so the draft passes.",
+                "A new Favor starts with one Attunement mark. Every Favor you own gains one when a round settles, and a duplicate adds two. Three marks reach rank 2 and six marks reach rank 3.",
+                "Charters ask for raw goods, Silk goods, ceramic goods, best round order revenue, or completed orders. Goals count across the voyage, except Tidewatch, which counts the best single round of completed orders, and the Kiln, which opens with a warm up mark that asks for nothing. A met act gate pays Gold and Reputation but adds a point of Heat, except the Kiln warm up, which grants only its mark. A miss costs Reputation and gives up the completion payout, which needs all three marks.",
+                "Charter goals are 12, 24 and 36 raw goods for the Salt Guild, 3, 6 and 10 Silk goods for the Silk Court, and 0, 1 and 4 ceramic goods for the Kiln. The Tidewatch asks for 70, 105 and 140 Gold of completed order revenue in one round, with Port Exchange sales left out, and the Road Wardens ask for 6, 12 and 18 completed orders. In an eight round voyage Porcelain Clay and potters arrive in round 5, so the first fired sale lands in round 6. The final Kiln gate expects a plus one output effect, a second potter, or a ceramic good traded from another captain.",
+              ],
+            },
+            {
+              icon: "⚙️",
+              title: "The Bond Table and Heat",
+              intro:
+                "At rank 2 a Favor can bond with one equipped module at the Shipyard.",
+              bullets: [
+                "A Bond costs 12 Gold, adds one Heat and merges the Favor and the module into one permanent Engine. The pieces become one Engine that takes their place, so nothing stacks twice. Each Engine recipe lists the benefits it keeps, and some side effects of the original pieces change.",
+                "Each Engine takes a Favor slot and a module slot. The Bond Table holds one Engine in Act I and two from Act II, but a second Engine also needs a second module slot from a ship level 2 upgrade. Each Engine charges upkeep at settlement. Unpaid upkeep makes it dormant for a round and adds two Heat. In the last two rounds an unpaid fee also costs Reputation, since the Engine cannot return in time, and it still adds two Heat.",
+                "Heat adds one percentage point of raid risk per point. A met Charter gate outside the Kiln warm up, a Bond, unpaid Engine upkeep, and unpaid shadow debt add Heat. A 10 Gold bribe at the Shipyard lowers Heat by one. Unpaid shadow debt left at the voyage close costs Reputation and adds one Heat.",
+                "The shop allows a purchase discount of at most 60 percent, and every unit still costs at least one Gold.",
+              ],
+            },
+          ]
+        : []),
       {
         icon: "🔧",
         title: "Ship Modules",
-        intro: openHarbor({ rulesVersion })
-          ? "Start with one module slot and choose a module before your first Boon. Upgrade in Phase 4 for up to three slots."
-          : "Phase 4: Upgrade your ship to unlock module slots.",
+        intro: reagent
+          ? "Start with one module slot and choose a module before your first Favor. Upgrade in Phase 4 for up to three slots."
+          : openHarbor({ rulesVersion })
+            ? "Start with one module slot and choose a module before your first Boon. Upgrade in Phase 4 for up to three slots."
+            : "Phase 4: Upgrade your ship to unlock module slots.",
         bullets: [
           ...(revisedHarbor(rulesVersion)
             ? [
@@ -511,7 +548,9 @@ export function guideTabs(
               ]
             : []),
           "A module stays equipped for the voyage until you replace it. Each upgrade opens one slot, up to three.",
-          "You can reroll the remaining module draft once per round for free. Boon rerolls cost 10 Gold once per round. A redraw can include a previous choice.",
+          reagent
+            ? "You can reroll the remaining module draft once per round for free. Favor rerolls cost 10 Gold once per round. A redraw can include a previous choice."
+            : "You can reroll the remaining module draft once per round for free. Boon rerolls cost 10 Gold once per round. A redraw can include a previous choice.",
           ...(harbor
             ? [
                 "Install or replace one module per Shipyard visit before the final round.",
@@ -618,13 +657,19 @@ export function tipsGroups(
             `${worker.label}: ${voyageBaseWage(worker.wage, rulesVersion)} Gold per round`,
         ),
         "Hire only as needed",
-        ...(harborTrading({ rulesVersion })
+        ...(reagentRules({ rulesVersion })
           ? [
-              "Sell surplus at the Port Exchange when buyers are uncertain. Keep enough Gold for wages and maintenance.",
+              "Book a workshop buyer for stock you expect next round. The final round still delivers a contract booked the round before, though new assignments close. Sell surplus at the Port Exchange when buyers are uncertain. Keep enough Gold for wages, maintenance and later payments such as Engine upkeep.",
             ]
-          : rebalanced({ rulesVersion })
-            ? ["Book a workshop buyer for stock you expect to have next round."]
-            : []),
+          : harborTrading({ rulesVersion })
+            ? [
+                "Sell surplus at the Port Exchange when buyers are uncertain. Keep enough Gold for wages and maintenance.",
+              ]
+            : rebalanced({ rulesVersion })
+              ? [
+                  "Book a workshop buyer for stock you expect to have next round.",
+                ]
+              : []),
       ],
     },
     {
@@ -712,6 +757,7 @@ export function tutorialSteps(
   const mandates = mandateRounds(cfg, rulesVersion);
   const harbor = harborTrading({ rulesVersion });
   const classic = classicHarbor({ rulesVersion });
+  const reagent = reagentRules({ rulesVersion });
   const availableResources = unlockedResources(
     difficulty,
     cfg.rounds,
@@ -769,16 +815,47 @@ export function tutorialSteps(
       title: "🔄 How each round works",
       content: `<p>Each of the ${cfg.rounds} rounds follows the same synchronized sequence:</p>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr));gap:8px;margin:12px 0">
-  <div style="background:#F3E8FF;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #8B5CF6"><strong>Draft</strong><br><span style="font-size:12px;color:#444">Choose a Boon for this round</span></div>
+  <div style="background:#F3E8FF;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #8B5CF6"><strong>Draft</strong><br><span style="font-size:12px;color:#444">${reagent ? "Round one: module, charter, Favor. Later rounds: one Favor" : "Choose a Boon for this round"}</span></div>
   <div style="background:#E8F5E9;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #4CAF50"><strong>1️⃣ Buy</strong><br><span style="font-size:12px;color:#444">Stock up at port markets</span></div>
   <div style="background:#FFF8E1;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #FFA000"><strong>🤝 Barter</strong><br><span style="font-size:12px;color:#444">Swap goods with other captains</span></div>
-  <div style="background:#F0FDFA;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #0D9488"><strong>Artisans</strong><br><span style="font-size:12px;color:#444">Hire workers and assign production</span></div>
+  <div style="background:#F0FDFA;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #0D9488"><strong>Artisans</strong><br><span style="font-size:12px;color:#444">Hire artisans and assign production</span></div>
   <div style="background:#E3F2FD;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #2196F3"><strong>2️⃣ Trade</strong><br><span style="font-size:12px;color:#444">Sell to waiting buyers</span></div>
   <div style="background:#FFF3CD;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #FFC107"><strong>3️⃣ Settle</strong><br><span style="font-size:12px;color:#444">Production lands, pirates resolve, then bills come due</span></div>
   <div style="background:#FCE4EC;color:#17212a;border-radius:6px;padding:10px;border-left:3px solid #E91E63"><strong>4️⃣ Upgrade</strong><br><span style="font-size:12px;color:#444">Improve your ship</span></div>
 </div>
 <p style="font-size:12px;color:var(--muted-foreground);margin:4px 0 0">The room advances only after every active captain is ready. In the game room, <kbd style="background:#eee;color:#17212a;border:1px solid #ccc;padding:1px 6px;border-radius:3px">Ctrl+N</kbd> performs the current Next Phase action.</p>`,
     },
+    ...(reagent
+      ? [
+          {
+            title: "📜 Your Patron Charter",
+            content: `<p>Before your first Favor, choose one Patron Charter. It is a vow for the whole voyage. Three act gates check it near the end of each act.</p>
+<p>The Salt Guild counts raw goods, the Silk Court counts raw Silk and Silk goods, the Kiln Consortium counts ceramic goods, the Tidewatch counts best round order revenue, and the Road Wardens count completed orders. Goals are 12, 24 and 36 raw goods; 3, 6 and 10 Silk goods; 0, 1 and 4 ceramic goods; 70, 105 and 140 Gold of best round order revenue; and 6, 12 and 18 completed orders.</p>
+<p>A met gate pays 20, 25 or 30 Gold and 6 Reputation, and adds 1 Heat. A missed gate costs 4 Reputation and gives up the completion payout of 40 Gold and 60 Reputation, which needs all three marks.</p>
+<div style="background:#FFF8DC;color:#17212a;border:1px solid #FFA000;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
+  💡 The Kiln opens with a warm up act that asks for nothing and grants its mark. The Tidewatch counts the best single round of completed orders. Port Exchange sales do not count.
+</div>`,
+          },
+          {
+            title: "🧪 Favors, marks, and ranks",
+            content: `<p>Each round the draft offers three Favors. A Favor stays on your Rack until you replace it. Your Rack holds one Favor in Act I, two in Act II, and three in Act III.</p>
+<p>A new Favor starts with one Attunement mark. Every Favor you own gains one mark when a round settles, and taking a duplicate adds two marks to the Favor you already own. Three marks reach rank 2 and six marks reach rank 3. The card shows the next rank before you pick.</p>
+<p>When the Rack is full, you can replace a Favor or take a duplicate. Bonded Engines hold their own slots, so plan ahead before Act II opens.</p>
+<div style="background:#FFF8DC;color:#17212a;border:1px solid #FFA000;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
+  💡 A duplicate is often worth more than a new Favor. Ranks are how one Favor becomes a build.
+</div>`,
+          },
+          {
+            title: "⚙️ The Bond Table and Heat",
+            content: `<p>At rank 2, the Shipyard Bond Table can fuse one Favor with one equipped module. The Bond costs 12 Gold, adds 1 Heat, and creates a permanent Engine that holds both the Favor slot and the module slot. The two pieces merge, so their effects do not stack twice.</p>
+<p>Each Engine charges upkeep every settlement. An unpaid fee rests the Engine for a round and adds 2 Heat. In the last two rounds it also costs Reputation, because the Engine cannot return before the voyage closes.</p>
+<p>Heat adds one percentage point to raid risk for each point. A 10 Gold bribe at the Shipyard lowers Heat by one.</p>
+<div style="background:#E8F5E9;color:#17212a;border:1px solid #4CAF50;border-radius:6px;padding:9px;font-size:13px;margin-top:10px;line-height:1.5">
+  💡 Open the full guide with F1 and read the Progression tab before your first Bond.
+</div>`,
+          },
+        ]
+      : []),
     {
       title: "🏪 Phase 1: Buying",
       content: `<p>${marketCopy}${rulesVersion === CURRENT_HARBOR_RULES && difficulty === "monsoon" ? ` ${monsoonMerchantTip}` : ""} Prices and card selection change each round. Buy now, barter if you need to, then sell in Phase 2. That is the core loop.${harbor ? " The opening briefing shows the port and any forecast event." : newRules ? " The opening briefing highlights any forecast event. Look for the staple lot and its matching staple contract each round." : ""}</p>
@@ -810,7 +887,7 @@ ${mandates.length ? `<p style="font-size:13px;margin-top:10px">📜 On round${ma
       title: "⚠️ The artisan trap",
       content: `<p>Artisans turn raw materials into valuable finished goods and collect wages at each Phase 3. That part is simple. What catches most new players is this:</p>
 <div style="background:#C62828;color:#fff;border-radius:6px;padding:12px;margin:12px 0;text-align:center;font-size:14px;font-weight:bold;line-height:1.7">
-  Assign a task this round.<br>Production lands at settlement, after this round's order phase.${classic ? " Check next round's announced cargo before assigning a task. Use the Port Exchange only if no suitable buyer appears. Assignments close in the final round." : harbor ? " Use forecasts, Broker buyers, or the Port Exchange to plan how to sell. Assignments close in the final round." : rebalanced({ rulesVersion }) ? " Check next round's featured buyer or book a personal workshop contract. Surplus can go to the Clearance Buyer. The workshop closes for assignments in the final round." : ""}
+  Assign a task this round.<br>Production lands at settlement, after this round's order phase.${classic ? " Check next round's announced cargo before assigning a task. Use the Port Exchange only if no suitable buyer appears. Assignments close in the final round." : harbor ? (reagent ? " Use forecasts, Broker buyers, or the Port Exchange to plan how to sell, and book a workshop buyer for stock you expect next round. Assignments close in the final round." : " Use forecasts, Broker buyers, or the Port Exchange to plan how to sell. Assignments close in the final round.") : rebalanced({ rulesVersion }) ? " Check next round's featured buyer or book a personal workshop contract. Surplus can go to the Clearance Buyer. The workshop closes for assignments in the final round." : ""}
 </div>
 <p style="font-size:13px;color:var(--foreground);line-height:1.6">Artisans available during this voyage are ${workerCopy}. Every hired artisan charges wages <strong>each round</strong>, even when idle. Hire only when you can cover payroll alongside maintenance.</p>`,
     },
@@ -825,7 +902,39 @@ ${cfg.brokerCorruption ? `<p>In these waters a broker can be corrupt. The rumor 
     },
     {
       title: "💸 Phase 3: Settlement",
-      content: `<p>Once the pirates are dealt with, two bills come due:</p>
+      content: `${
+        reagent
+          ? `<p>Once the pirates are dealt with, settlement charges what you owe:</p>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr));gap:8px;margin:12px 0">
+  <div style="background:#E3F2FD;color:#17212a;border-radius:6px;padding:10px;text-align:center">
+    <div style="font-size:22px;margin-bottom:4px">🔧</div>
+    <strong>Ship Maintenance</strong><br>
+    <span style="font-size:12px;color:#444">${voyageMaintenance(difficulty, rulesVersion)} Gold per round before modifiers</span>
+  </div>
+  <div style="background:#FCE4EC;color:#17212a;border-radius:6px;padding:10px;text-align:center">
+    <div style="font-size:22px;margin-bottom:4px">👥</div>
+    <strong>Artisan Wages</strong><br>
+    <span style="font-size:12px;color:#444">${minimumWage} to ${maximumWage} Gold per artisan per round</span>
+  </div>
+  <div style="background:#FFF3CD;color:#17212a;border-radius:6px;padding:10px;text-align:center">
+    <div style="font-size:22px;margin-bottom:4px">⚙️</div>
+    <strong>Engine Upkeep</strong><br>
+    <span style="font-size:12px;color:#444">4 to 6 Gold per Engine, charged after the Shipyard</span>
+  </div>
+  <div style="background:#EDE9FE;color:#17212a;border-radius:6px;padding:10px;text-align:center">
+    <div style="font-size:22px;margin-bottom:4px">🕯️</div>
+    <strong>Shadow Debt</strong><br>
+    <span style="font-size:12px;color:#444">Deferred False Manifest Gold, audited at settlement</span>
+  </div>
+  <div style="background:#E8F5E9;color:#17212a;border-radius:6px;padding:10px;text-align:center">
+    <div style="font-size:22px;margin-bottom:4px">📜</div>
+    <strong>Charter Gate</strong><br>
+    <span style="font-size:12px;color:#444">Checked near the end of each act</span>
+  </div>
+</div>
+<p style="font-size:13px;color:var(--foreground)">Wages and maintenance are due in full, and a shortfall there ends the voyage. An unpaid Engine fee rests the Engine and adds 2 Heat, and it also costs Reputation in the last two rounds. Unpaid shadow debt stays on the books, adds Heat, and costs Reputation at the close. A met charter gate pays, and a missed gate costs Reputation.</p>
+<p style="font-size:13px;color:var(--foreground)">The <strong>Due</strong> total in Status and the Dues tab show exactly what is owed. Check them before spending anything.</p>`
+          : `<p>Once the pirates are dealt with, two bills come due:</p>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0">
   <div style="background:#E3F2FD;color:#17212a;border-radius:6px;padding:10px;text-align:center">
     <div style="font-size:22px;margin-bottom:4px">🔧</div>
@@ -838,15 +947,17 @@ ${cfg.brokerCorruption ? `<p>In these waters a broker can be corrupt. The rumor 
     <span style="font-size:12px;color:#444">${minimumWage} to ${maximumWage} Gold per artisan per round</span>
   </div>
 </div>
-<p style="font-size:13px;color:var(--foreground)">The <strong>Due</strong> total in Status and the Dues tab show exactly what is owed. Check them before spending anything.</p>
+<p style="font-size:13px;color:var(--foreground)">The <strong>Due</strong> total in Status and the Dues tab show exactly what is owed. Check them before spending anything.</p>`
+      }
 <p style="font-size:13px;color:var(--foreground)">Coming up short isn't the end on its own. Right there on the settlement screen, you can ask another captain in the harbor for a loan, and they can send it to you on the spot if they've got the Gold to spare. Just repay it before the voyage's last round ends, or it comes out of your funds automatically and goes straight to them.</p>`,
     },
     {
       title: "🚢 You are ready",
       content: `<p>Keep these points in mind as you play:</p>
 <ul style="padding-left:18px;line-height:2.1;font-size:14px">
-  <li>Start with raw material orders. Fast money, no complications.</li>
-  <li>Keep a reserve above the exact wages and maintenance shown in Status and Dues.</li>
+  <li>${reagent ? "Raw goods pay early bills. Finished goods carry the larger rewards, and the Tidewatch needs them." : "Start with raw material orders. Fast money, no complications."}</li>
+  ${reagent ? "<li>Check your charter progress each round. A missed gate costs Reputation.</li>" : ""}
+  <li>${reagent ? "Keep a reserve above the exact wages, maintenance and Engine upkeep shown in Status and Dues." : "Keep a reserve above the exact wages and maintenance shown in Status and Dues."}</li>
   <li>Hire artisans only when you can cover their wages for more than the current round.</li>
   <li>Ship upgrades add a module slot and reduce base freight. Keep enough Gold for later bills.</li>
   <li>Caught short by pirates or a bad round? Ask the harbor for a loan before you assume the voyage is over.</li>

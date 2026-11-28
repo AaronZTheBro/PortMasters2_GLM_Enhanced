@@ -12,10 +12,12 @@ import { DIFFICULTY_ORDER, type Difficulty } from "../src/lib/game/difficulty";
 import {
   CLASSIC_HARBOR_RULES,
   CURRENT_HARBOR_RULES,
+  REAGENT_RULES,
   REVISED_HARBOR_RULES,
   PRE_TUNING_HARBOR_RULES,
   OPEN_HARBOR_RULES,
   REBALANCED_RULES,
+  TUNED_HARBOR_RULES,
 } from "../src/lib/game/expansion";
 import {
   buildClassicHarborRules,
@@ -770,7 +772,7 @@ for (const version of [
         assert.ok(unlockedPorts(difficulty, round + 1).includes(port)),
       );
       assert.deepEqual(state.shipUpgradeCost, [15, 25, 40]);
-      assert.equal(state.shipLevel, 0);
+      assert.equal(state.shipLevel, version === REAGENT_RULES ? 1 : 0);
       assert.equal(state.specialties, undefined);
       startBoonDrafting(state, []);
       assert.equal(state.phase, 5);
@@ -784,11 +786,15 @@ for (const version of [
       assert.deepEqual(poolsFor(state).resources, ["Hemp", "Silk", "Tea"]);
       startPhase2(state, ctx, []);
       startPhase2(original, ctx, []);
-      assert.equal(state.customerCards.length, 6);
+      const ordinary = state.customerCards.filter(
+        ({ buyer }) => buyer !== "standing",
+      );
+      assert.equal(
+        state.customerCards.length,
+        version === REAGENT_RULES ? 7 : 6,
+      );
       assert.deepEqual(
-        state.customerCards.map(
-          ({ buyer: _classification, ...buyer }) => buyer,
-        ),
+        ordinary.map(({ buyer: _classification, ...buyer }) => buyer),
         original.customerCards,
       );
     }
@@ -1077,8 +1083,8 @@ test("Historical ledger losses display as words without altering their saved ent
   );
   assert.equal(displayLedgerLine("Net Profit: 6 Gold"), "Net Proceeds: 6 Gold");
   assert.equal(
-    displayLedgerLine("Captain North-West arrived"),
-    "Captain North-West arrived",
+    displayLedgerLine("Captain Northwind arrived"),
+    "Captain Northwind arrived",
   );
 });
 
@@ -1202,7 +1208,7 @@ test("Monsoon captains can buy and fill one small merchant shipment on even roun
       former.resourceCards.slice(1),
     );
     assert.deepEqual(
-      state.plannedOrders!.slice(1),
+      state.plannedOrders!.filter(({ buyer }) => buyer !== "standing").slice(1),
       former.plannedOrders!.slice(1),
     );
     if (round % 2) {
@@ -1305,7 +1311,7 @@ test("A harbor waiting on an older release starts with the new opening and keeps
     startVoyage(waiting, ctx, rules, 15, []);
     assert.equal(waiting.money, 105);
     assert.equal(waiting.fixedCost, 22);
-    assert.equal(waiting.shipLevel, 0);
+    assert.equal(waiting.shipLevel, 1);
     assert.equal(waiting.rulesVersion, CURRENT_HARBOR_RULES);
     assert.deepEqual(waiting.arrivals, rules.arrivals);
     assert.equal(waiting.phase, 5);
@@ -1351,6 +1357,7 @@ test("The Boon draft recommends finished good trades when the hold contains a pr
     await import("../src/components/portmasters/game/phases/BoonDraft");
   const state = currentHarborGame();
   state.phase = 5;
+  state.rulesVersion = TUNED_HARBOR_RULES;
   state.boonChoices = BOONS.filter(({ id }) =>
     ["merchants_converge", "frontier_tariff_relief"].includes(id),
   );
